@@ -2,9 +2,10 @@ FROM rust:alpine AS builder
 USER root
 WORKDIR /app
 RUN apk add musl-dev
+RUN cargo install --locked trunk
 
 COPY . .
-RUN cargo build --release
+RUN cargo build --bin exdviewer-web --release
 
 FROM alpine AS runtime
 WORKDIR /app
