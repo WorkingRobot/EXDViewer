@@ -1,8 +1,8 @@
 FROM rust:alpine AS builder
 USER root
 WORKDIR /app
-RUN apk add musl-dev
-RUN cargo install --locked trunk
+RUN apk add musl-dev trunk
+RUN rustup target add wasm32-unknown-unknown
 
 COPY . .
 RUN cargo build --bin exdviewer-web --release
