@@ -1,0 +1,4 @@
+{
+    "rust-analyzer.cargo.targetDir": true
+    // "rust-analyzer.cargo.target": "x86_64-unknown-linux-gnu"
+}

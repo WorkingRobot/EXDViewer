@@ -1,0 +1,301 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "EXDSchema",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "name",
+        "fields"
+    ],
+    "properties": {
+        "name": {
+            "description": "Name of the underlying .exd sheet",
+            "type": "string",
+            "pattern": "^\\w+$"
+        },
+        "displayField": {
+            "description": "Field to display in a UI. Completely optional, but must link to a valid top-level field name.",
+            "type": "string",
+            "pattern": "^\\w+$"
+        },
+        "fields": {
+            "description": "A list of fields in the sheet, ordered by offset",
+            "type": "array",
+            "uniqueItems": true,
+            "minItems": 1,
+            "items": {
+                "$ref": "#/$defs/namedField"
+            }
+        },
+        "pendingFields": {
+            "description": "A list of new fields in the sheet, ordered by offset. When a new release is made, fields will be replaced with pendingFields.",
+            "type": "array",
+            "uniqueItems": true,
+            "minItems": 1,
+            "items": {
+                "$ref": "#/$defs/namedField"
+            }
+        },
+        "relations": {
+            "$ref": "#/$defs/relations"
+        }
+    },
+    "$defs": {
+        "baseField": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "description": "Type of the field",
+                    "type": "string",
+                    "enum": [
+                        "scalar",
+                        "link",
+                        "array",
+                        "icon",
+                        "modelId",
+                        "color"
+                    ],
+                    "default": "scalar"
+                },
+                "comment": {
+                    "description": "Developer-readable comment",
+                    "type": "string"
+                }
+            },
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {
+                            "type": {
+                                "const": "scalar"
+                            }
+                        }
+                    },
+                    "then": {}
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "type": {
+                                "const": "link"
+                            }
+                        },
+                        "required": [
+                            "type"
+                        ]
+                    },
+                    "then": {
+                        "oneOf": [
+                            {
+                                "properties": {
+                                    "targets": {
+                                        "description": "List of sheets that this field links to",
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "items": {
+                                            "description": "Sheet name",
+                                            "type": "string",
+                                            "pattern": "^\\w+$"
+                                        }
+                                    }
+                                },
+                                "required": [
+                                    "targets"
+                                ]
+                            },
+                            {
+                                "properties": {
+                                    "condition": {
+                                        "description": "Switch case conditional for what sheet(s) this field links to, based on the value of 'switch'",
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "required": [
+                                            "switch",
+                                            "cases"
+                                        ],
+                                        "properties": {
+                                            "switch": {
+                                                "description": "Field to switch on",
+                                                "type": "string",
+                                                "pattern": "^\\w+$"
+                                            },
+                                            "cases": {
+                                                "description": "List of cases to switch on. The key is switch's value, and the value is a list of sheet names",
+                                                "type": "object",
+                                                "patternProperties": {
+                                                    "^[1-9]\\d*$": {
+                                                        "type": "array",
+                                                        "minItems": 1,
+                                                        "items": {
+                                                            "description": "Sheet name",
+                                                            "type": "string",
+                                                            "pattern": "^\\w+$"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "required": [
+                                    "condition"
+                                ]
+                            }
+                        ]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "type": {
+                                "const": "array"
+                            }
+                        },
+                        "required": [
+                            "type"
+                        ]
+                    },
+                    "then": {
+                        "required": [
+                            "count"
+                        ],
+                        "properties": {
+                            "count": {
+                                "description": "Number of elements in the array",
+                                "type": "number",
+                                "exclusiveMinimum": 1
+                            },
+                            "fields": {
+                                "type": "array",
+                                "uniqueItems": true,
+                                "minItems": 1
+                            },
+                            "relations": {
+                                "$ref": "#/$defs/relations"
+                            }
+                        },
+                        "if": {
+                            "properties": {
+                                "fields": {
+                                    "type": "array",
+                                    "maxItems": 1
+                                }
+                            }
+                        },
+                        "then": {
+                            "properties": {
+                                "fields": {
+                                    "type": "array",
+                                    "description": "Field type of the array (single item per array element)",
+                                    "items": {
+                                        "$ref": "#/$defs/unnamedField"
+                                    }
+                                }
+                            }
+                        },
+                        "else": {
+                            "properties": {
+                                "fields": {
+                                    "type": "array",
+                                    "description": "Fields in the array (multiple items per array element)",
+                                    "items": {
+                                        "$ref": "#/$defs/namedField"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "type": {
+                                "const": "icon"
+                            }
+                        },
+                        "required": [
+                            "type"
+                        ]
+                    },
+                    "then": {}
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "type": {
+                                "const": "modelId"
+                            }
+                        },
+                        "required": [
+                            "type"
+                        ]
+                    },
+                    "then": {}
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "type": {
+                                "const": "color"
+                            }
+                        },
+                        "required": [
+                            "type"
+                        ]
+                    },
+                    "then": {}
+                }
+            ]
+        },
+        "unnamedField": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "allOf": [
+                {
+                    "$ref": "#/$defs/baseField"
+                }
+            ]
+        },
+        "namedField": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "description": "Name of the field",
+                    "type": "string",
+                    "pattern": "^\\w+$"
+                },
+                "pendingName": {
+                    "description": "New name of the field. If specified, the old name will be considered deprecated.",
+                    "type": "string",
+                    "pattern": "^\\w+$"
+                }
+            },
+            "allOf": [
+                {
+                    "$ref": "#/$defs/baseField"
+                }
+            ]
+        },
+        "relations": {
+            "description": "Relations between fields in the sheet. Helps with the https://en.wikipedia.org/wiki/AoS_and_SoA problem.",
+            "type": "object",
+            "unevaluatedProperties": false,
+            "patternProperties": {
+                "^\\w+$": {
+                    "description": "List of fields to move into a relation. All fields must be arrays that have the same count.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "description": "Field name (cannot be nested)",
+                        "type": "string",
+                        "pattern": "^\\w+$"
+                    }
+                }
+            }
+        }
+    }
+}

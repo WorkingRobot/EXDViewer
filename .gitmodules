@@ -1,0 +1,3 @@
+[submodule "deps/ironworks"]
+	path = deps/ironworks
+	url = https://github.com/WorkingRobot/ironworks.git
