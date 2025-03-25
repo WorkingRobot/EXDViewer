@@ -184,8 +184,9 @@ impl App {
                     let excel = backend.excel().clone();
                     let schema = backend.schema().clone();
 
+                    let ctx = ui.ctx().clone();
                     Promise::spawn_local(async move {
-                        let sheet = excel.get_sheet(&sheet_name, language).await?;
+                        let ret = async move {
                             let (sheet, schema) = futures_util::try_join!(
                                 excel.get_sheet(&sheet_name, language),
                                 async { Ok(schema.get_schema_text(&sheet_name).await) },
@@ -198,8 +199,12 @@ impl App {
                                     EditableSchema::from_blank(sheet_name, sheet.columns().len())?
                                 }
                             };
-                            ctx.request_repaint();
                             Ok((SheetTable::new(sheet, editor.get_schema().cloned()), editor))
+                        }
+                        .await;
+
+                        ctx.request_repaint();
+                        ret
                     })
                 },
             );
@@ -260,9 +265,6 @@ impl eframe::App for App {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
-
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
 
