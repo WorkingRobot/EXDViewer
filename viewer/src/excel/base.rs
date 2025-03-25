@@ -269,10 +269,15 @@ impl BaseSheet {
         let mut pages = Vec::with_capacity(header.imp.header.pages().len());
         let mut row_id_lookup = Vec::with_capacity(header.imp.header.pages().len());
         let mut current_row_range: Option<(u32, Range<u32>)> = None;
-        for page_def in header.imp.header.pages() {
-            let data = provider
-                .data(&header.imp.name, page_def.start_id(), language)
-                .await?;
+
+        let page_futures = header
+            .imp
+            .header
+            .pages()
+            .iter()
+            .map(|page_def| provider.data(&header.imp.name, page_def.start_id(), language));
+        let page_data = futures_util::future::try_join_all(page_futures).await?;
+        for data in page_data {
             let page = Page {
                 row_size,
                 offset: data.data_offset.try_into()?,

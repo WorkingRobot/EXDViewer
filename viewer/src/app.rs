@@ -186,16 +186,20 @@ impl App {
 
                     Promise::spawn_local(async move {
                         let sheet = excel.get_sheet(&sheet_name, language).await?;
-                        let schema = schema.get_schema_text(&sheet_name).await;
-                        let editor = match schema {
-                            Ok(schema) => EditableSchema::new(sheet_name, schema),
-                            Err(error) => {
-                                // Soft-fail on schema retrieval/parsing errors
-                                log::error!("Failed to get schema: {:?}", error);
-                                EditableSchema::from_blank(sheet_name, sheet.columns().len())?
-                            }
-                        };
-                        Ok((SheetTable::new(sheet, editor.get_schema().cloned()), editor))
+                            let (sheet, schema) = futures_util::try_join!(
+                                excel.get_sheet(&sheet_name, language),
+                                async { Ok(schema.get_schema_text(&sheet_name).await) },
+                            )?;
+                            let editor = match schema {
+                                Ok(schema) => EditableSchema::new(sheet_name, schema),
+                                Err(error) => {
+                                    // Soft-fail on schema retrieval/parsing errors
+                                    log::error!("Failed to get schema: {:?}", error);
+                                    EditableSchema::from_blank(sheet_name, sheet.columns().len())?
+                                }
+                            };
+                            ctx.request_repaint();
+                            Ok((SheetTable::new(sheet, editor.get_schema().cloned()), editor))
                     })
                 },
             );
