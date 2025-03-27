@@ -195,7 +195,13 @@ impl BaseHeader {
         let languages = header
             .languages()
             .iter()
-            .map(|l| Language::try_from(*l).unwrap())
+            .flat_map(|l| match Language::try_from(*l) {
+                Ok(lang) => Some(lang),
+                Err(e) => {
+                    log::error!("Unknown language: {}", e.number);
+                    None
+                }
+            })
             .collect();
         Self {
             imp: Arc::new(BaseHeaderImpl {
