@@ -15,6 +15,7 @@ use crate::{
     schema::provider::SchemaProvider,
     setup::{self, SetupWindow},
     sheet_table::SheetTable,
+    syntax_highlighting::CodeTheme,
     value_cache::KeyedCache,
 };
 
@@ -297,6 +298,22 @@ impl eframe::App for App {
                             }
                         }
                     }
+                });
+
+                ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
+                    egui::widgets::global_theme_preference_buttons(ui);
+                    ui.add_space(16.0);
+                    ui.menu_button("Code Theme", |ui| {
+                        let mut theme = CodeTheme::from_memory(ui.ctx(), ui.style());
+
+                        for (id, name) in CodeTheme::themes() {
+                            if ui.selectable_label(theme.theme == id, name).clicked() {
+                                theme.theme = id.to_owned();
+                                ui.close_menu();
+                            }
+                        }
+                        theme.store_in_memory(ui.ctx());
+                    });
                 });
             });
         });

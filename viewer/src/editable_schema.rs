@@ -1,4 +1,6 @@
 use crate::schema::{Field, Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider};
+    schema::{Field, Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
+    syntax_highlighting,
 use egui::{
     CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,
     Response, RichText, TextBuffer, TopBottomPanel, Widget, collapsing_header::CollapsingState,
@@ -293,13 +295,11 @@ impl EditableSchema {
                     )
                     .show_inside(ui, |ui| {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                            let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(
-                                ui.ctx(),
-                                ui.style(),
-                            );
+                            let theme =
+                                syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
 
                             let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
-                                let mut layout_job = egui_extras::syntax_highlighting::highlight(
+                                let mut layout_job = syntax_highlighting::highlight(
                                     ui.ctx(),
                                     ui.style(),
                                     &theme,

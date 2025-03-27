@@ -15,6 +15,7 @@ mod future;
 mod schema;
 mod setup;
 mod sheet_table;
+mod syntax_highlighting;
 mod value_cache;
 mod web_stream;
 
