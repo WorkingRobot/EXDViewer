@@ -4,14 +4,13 @@ use egui::{
 };
 use ironworks::excel::Language;
 use itertools::Itertools;
-use poll_promise::Promise;
 
 use crate::{
     backend::Backend,
     data::{AppConfig, AppState},
     editable_schema::EditableSchema,
     excel::provider::{ExcelHeader, ExcelProvider},
-    future::BackgroundInitializer,
+    future::{BackgroundInitializer, TrackedPromise, tick_promises},
     schema::provider::SchemaProvider,
     setup::{self, SetupWindow},
     sheet_table::SheetTable,
@@ -26,6 +25,7 @@ pub struct App {
     backend: Option<BackgroundInitializer<Backend>>,
     sheet_data: KeyedCache<
         (Language, String),
+        TrackedPromise<anyhow::Result<(SheetTable, EditableSchema)>>,
     >,
 }
 
@@ -54,7 +54,7 @@ impl App {
             ..Default::default()
         };
         if let Some(config) = &ret.state.config {
-            ret.set_config(config.clone());
+            ret.set_config(None, config.clone());
         }
         ret
     }
@@ -91,8 +91,11 @@ impl App {
         self.backend = None;
     }
 
-    fn set_config(&mut self, config: AppConfig) {
-        self.backend = Some(BackgroundInitializer::new(Backend::new(config.clone())));
+    fn set_config(&mut self, ctx: Option<&egui::Context>, config: AppConfig) {
+        self.backend = Some(BackgroundInitializer::new(
+            ctx,
+            Backend::new(config.clone()),
+        ));
         self.state.config = Some(config);
     }
 
@@ -182,33 +185,28 @@ impl App {
 
             let sheet_data = self.sheet_data.get_or_set_ref(
                 &(self.state.language, sheet_name.clone()),
-                || -> Promise<anyhow::Result<(SheetTable, EditableSchema)>> {
+                || -> TrackedPromise<anyhow::Result<(SheetTable, EditableSchema)>> {
                     let language = self.state.language;
                     let sheet_name = sheet_name.clone();
                     let excel = backend.excel().clone();
                     let schema = backend.schema().clone();
 
                     let ctx = ui.ctx().clone();
-                    Promise::spawn_local(async move {
-                        let ret = async move {
-                            let (sheet, schema) = futures_util::try_join!(
-                                excel.get_sheet(&sheet_name, language),
-                                async { Ok(schema.get_schema_text(&sheet_name).await) },
-                            )?;
-                            let editor = match schema {
-                                Ok(schema) => EditableSchema::new(sheet_name, schema),
-                                Err(error) => {
-                                    // Soft-fail on schema retrieval/parsing errors
-                                    log::error!("Failed to get schema: {:?}", error);
-                                    EditableSchema::from_blank(sheet_name, sheet.columns().len())?
-                                }
-                            };
-                            Ok((SheetTable::new(sheet, editor.get_schema().cloned()), editor))
-                        }
-                        .await;
+                    TrackedPromise::spawn_local(ctx.clone(), async move {
+                        let (sheet, schema) = futures_util::try_join!(
+                            excel.get_sheet(&sheet_name, language),
+                            async { Ok(schema.get_schema_text(&sheet_name).await) },
+                        )?;
+                        let editor = match schema {
+                            Ok(schema) => EditableSchema::new(sheet_name, schema),
+                            Err(error) => {
+                                // Soft-fail on schema retrieval/parsing errors
+                                log::error!("Failed to get schema: {:?}", error);
+                                EditableSchema::from_blank(sheet_name, sheet.columns().len())?
+                            }
+                        };
 
-                        ctx.request_repaint();
-                        ret
+                        Ok((SheetTable::new(sheet, editor.get_schema().cloned()), editor))
                     })
                 },
             );
@@ -269,6 +267,8 @@ impl eframe::App for App {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        tick_promises(ctx);
+
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("App", |ui| {
@@ -328,7 +328,7 @@ impl eframe::App for App {
             }
         };
         if let Some(config) = config {
-            self.set_config(config);
+            self.set_config(Some(ctx), config);
         }
     }
 }

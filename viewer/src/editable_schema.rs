@@ -1,6 +1,8 @@
-use crate::schema::{Field, Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider};
+use crate::{
+    future::TrackedPromise,
     schema::{Field, Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
     syntax_highlighting,
+};
 use egui::{
     CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,
     Response, RichText, TextBuffer, TopBottomPanel, Widget, collapsing_header::CollapsingState,
@@ -8,7 +10,6 @@ use egui::{
 };
 use itertools::Itertools;
 use jsonschema::output::{ErrorDescription, OutputUnit};
-use poll_promise::Promise;
 use std::collections::VecDeque;
 
 pub struct EditableSchema {
@@ -18,7 +19,7 @@ pub struct EditableSchema {
     is_modified: bool,
     schema: anyhow::Result<Result<Schema, VecDeque<OutputUnit<ErrorDescription>>>>,
     shown: bool,
-    save_promise: Option<Promise<()>>,
+    save_promise: Option<TrackedPromise<()>>,
 }
 
 impl EditableSchema {
@@ -141,7 +142,7 @@ impl EditableSchema {
                     }
                 }
                 if consume_shortcut(ui, &shortcut_save_as) {
-                    self.command_save_as(provider);
+                    self.command_save_as(ui.ctx(), provider);
                 }
 
                 TopBottomPanel::top("editor-top-bar")
@@ -186,7 +187,7 @@ impl EditableSchema {
                                     },
                                 );
                                 if shortcut_button(ui, "Save As", &shortcut_save_as).clicked() {
-                                    self.command_save_as(provider);
+                                    self.command_save_as(ui.ctx(), provider);
                                     ui.close_menu();
                                 }
                             });
@@ -388,7 +389,7 @@ impl EditableSchema {
         TextBuffer::clear(&mut self.text);
     }
 
-    fn command_save_as(&mut self, provider: &BoxedSchemaProvider) {
+    fn command_save_as(&mut self, ctx: &egui::Context, provider: &BoxedSchemaProvider) {
         let start_dir = if provider.can_save_schemas() {
             Some(provider.save_schema_start_dir())
         } else {
@@ -398,7 +399,7 @@ impl EditableSchema {
         let sheet_name = self.sheet_name.clone();
         let sheet_data = self.text.clone();
 
-        self.save_promise = Some(Promise::spawn_local(async move {
+        self.save_promise = Some(TrackedPromise::spawn_local(ctx.clone(), async move {
             let mut dialog = rfd::AsyncFileDialog::new()
                 .set_title("Save Schema As")
                 .set_file_name(format!("{}.yml", sheet_name));
