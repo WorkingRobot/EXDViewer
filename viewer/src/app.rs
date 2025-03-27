@@ -2,6 +2,7 @@ use egui::{
     Button, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit, Vec2,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
 };
+use ironworks::excel::Language;
 use itertools::Itertools;
 use poll_promise::Promise;
 
@@ -22,7 +23,9 @@ pub struct App {
     state: AppState,
     setup_window: setup::SetupWindow,
     backend: Option<BackgroundInitializer<Backend>>,
-    sheet_data: KeyedCache<String, Promise<anyhow::Result<(SheetTable, EditableSchema)>>>,
+    sheet_data: KeyedCache<
+        (Language, String),
+    >,
 }
 
 impl App {
@@ -177,7 +180,7 @@ impl App {
             };
 
             let sheet_data = self.sheet_data.get_or_set_ref(
-                sheet_name,
+                &(self.state.language, sheet_name.clone()),
                 || -> Promise<anyhow::Result<(SheetTable, EditableSchema)>> {
                     let language = self.state.language;
                     let sheet_name = sheet_name.clone();
@@ -266,10 +269,7 @@ impl eframe::App for App {
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
-
             egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
                 ui.menu_button("App", |ui| {
                     if ui.button("Reset").clicked() {
                         if let Some(config) = self.state.config.clone() {
@@ -285,9 +285,19 @@ impl eframe::App for App {
                         }
                     }
                 });
-                ui.add_space(16.0);
 
-                egui::widgets::global_theme_preference_buttons(ui);
+                ui.menu_button("Language", |ui| {
+                    for lang in Language::iter() {
+                        if lang != Language::None {
+                            if ui
+                                .selectable_value(&mut self.state.language, lang, lang.to_string())
+                                .changed()
+                            {
+                                ui.close_menu();
+                            }
+                        }
+                    }
+                });
             });
         });
 
