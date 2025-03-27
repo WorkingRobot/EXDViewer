@@ -1,11 +1,13 @@
 {
-  "name": "EXDViewer (Web)",
-  "short_name": "exdviewer-pwa",
+  "name": "EXDViewer",
+  "short_name": "EXDViewer",
+  "description": "The definitive cross-platform FFXIV game data viewer",
   "icons": [
     {
       "src": "./assets/icon-256.png",
       "sizes": "256x256",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "./assets/maskable_icon_x512.png",
@@ -16,13 +18,14 @@
     {
       "src": "./assets/icon-1024.png",
       "sizes": "1024x1024",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     }
   ],
-  "lang": "en-US",
-  "id": "/index.html",
-  "start_url": "./index.html",
+  "lang": "en",
+  "id": "/",
+  "start_url": "/",
   "display": "standalone",
-  "background_color": "white",
-  "theme_color": "white"
+  "background_color": "#404040",
+  "theme_color": "#909090"
 }
