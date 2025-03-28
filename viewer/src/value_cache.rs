@@ -112,12 +112,11 @@ impl<K, T> KeyedCache<K, T> {
         K: Eq + Clone,
         F: Future<Output = Result<T, E>>,
     {
-        Ok(self
-            .try_get_or_set_ref_indirect_async(
-                |k, _| k == key,
-                async move || Ok((key.clone(), value_factory().await?)),
-            )
-            .await?)
+        self.try_get_or_set_ref_indirect_async(
+            |k, _| k == key,
+            async move || Ok((key.clone(), value_factory().await?)),
+        )
+        .await
     }
 
     pub fn try_get_or_set_ref_indirect<E>(

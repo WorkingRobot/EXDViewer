@@ -40,7 +40,7 @@ impl WebStream {
             Ok(resp) if resp.ok || !only_ok => resp.bytes,
             _ => Vec::new(),
         };
-        Self { data: data, pos: 0 }
+        Self { data, pos: 0 }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

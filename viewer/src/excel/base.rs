@@ -1,7 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use binrw::{BinRead, BinResult, meta::ReadEndian};
-use futures_util::{FutureExt, future::LocalBoxFuture};
+use futures_util::{
+    FutureExt,
+    future::{LocalBoxFuture, Shared},
+};
 use intmap::IntMap;
 use ironworks::{
     excel::{Language, path},
@@ -11,7 +14,7 @@ use ironworks::{
         exh::{ColumnDefinition, PageDefinition, SheetKind},
     },
 };
-use std::{cell::RefCell, io::Cursor, num::NonZeroUsize, ops::Range, sync::Arc};
+use std::{cell::RefCell, io::Cursor, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
 
 use crate::value_cache::KeyedCache;
 
@@ -85,26 +88,29 @@ impl ExcelFileProvider for Box<dyn ExcelFileProvider> {
     }
 }
 
-pub struct CachedProvider<T: ExcelFileProvider>(Arc<CachedProviderImpl<T>>);
+pub struct CachedProvider<T: ExcelFileProvider + 'static>(Arc<CachedProviderImpl<T>>);
 
-impl<T: ExcelFileProvider> Clone for CachedProvider<T> {
+impl<T: ExcelFileProvider + 'static> Clone for CachedProvider<T> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
-struct CachedProviderImpl<T: ExcelFileProvider> {
+struct CachedProviderImpl<T: ExcelFileProvider + 'static> {
     provider: T,
     names: Vec<String>,
-    cache: RefCell<lru::LruCache<String, Arc<CacheEntry>>>,
+    cache: RefCell<
+        lru::LruCache<String, Shared<LocalBoxFuture<'static, Result<Rc<CacheEntry>, String>>>>,
+    >,
 }
 
 struct CacheEntry {
     pub header: BaseHeader,
-    pub cache: RefCell<KeyedCache<Language, BaseSheet>>,
+    pub cache:
+        RefCell<KeyedCache<Language, Shared<LocalBoxFuture<'static, Result<BaseSheet, String>>>>>,
 }
 
-impl<T: ExcelFileProvider> CachedProvider<T> {
+impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
     pub async fn new(provider: T, size: NonZeroUsize) -> Result<Self, ironworks::Error> {
         Ok(Self(Arc::new(CachedProviderImpl {
             names: provider
@@ -118,26 +124,39 @@ impl<T: ExcelFileProvider> CachedProvider<T> {
         })))
     }
 
-    async fn use_entry<'a, R>(
-        &'a self,
+    async fn use_entry<R>(
+        &self,
         name: &str,
-        op: impl FnOnce(Arc<CacheEntry>) -> LocalBoxFuture<'a, R>,
-    ) -> Result<R, ironworks::Error> {
-        let mut cache = self.0.cache.borrow_mut();
+        op: impl FnOnce(Rc<CacheEntry>) -> R,
+    ) -> anyhow::Result<R> {
+        let future: Shared<LocalBoxFuture<'static, Result<Rc<CacheEntry>, String>>>;
+        {
+            let mut cache = self.0.cache.borrow_mut();
 
-        let ret = match cache.get(name) {
-            Some(ret) => ret,
-            None => {
-                let header = self.0.provider.header(name).await?;
-                cache.get_or_insert_ref(name, || {
-                    Arc::new(CacheEntry {
-                        header: BaseHeader::new(name.to_string(), header),
+            future = if let Some(future) = cache.get(name) {
+                future.clone()
+            } else {
+                let this = self.clone();
+                let future_name = name.to_owned();
+                let future = async move {
+                    let header = this
+                        .0
+                        .provider
+                        .header(&future_name)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Ok(Rc::new(CacheEntry {
+                        header: BaseHeader::new(future_name, header),
                         cache: RefCell::new(KeyedCache::new()),
-                    })
-                })
-            }
-        };
-        Ok(op(ret.clone()).await)
+                    }))
+                }
+                .boxed_local()
+                .shared();
+                cache.put(name.to_string(), future.clone());
+                future
+            };
+        }
+        future.await.map_err(|e| anyhow::anyhow!(e)).map(op)
     }
 }
 
@@ -151,30 +170,34 @@ impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
     }
 
     async fn get_header(&self, name: &str) -> Result<BaseHeader> {
-        Ok(self
-            .use_entry(name, |a| async move { a.header.clone() }.boxed_local())
-            .await?)
+        self.use_entry(name, |a| a.header.clone()).await
     }
 
     async fn get_sheet(&self, name: &str, language: Language) -> Result<BaseSheet> {
         self.use_entry(name, |a| {
-            async move {
-                a.cache
-                    .borrow_mut()
-                    .try_get_or_set_ref_async(&language, || {
-                        let language = if a.header.languages().contains(&language) {
-                            language
-                        } else {
-                            Language::None
-                        };
-                        BaseSheet::new(a.header.clone(), language, &self.0.provider)
-                    })
-                    .await
-                    .cloned()
-            }
-            .boxed_local()
+            a.cache
+                .borrow_mut()
+                .get_or_set_ref(&language, || {
+                    let language = if a.header.languages().contains(&language) {
+                        language
+                    } else {
+                        Language::None
+                    };
+                    let this = self.clone();
+                    let header = a.header.clone();
+                    async move {
+                        BaseSheet::new(header, language, &this.0.provider)
+                            .await
+                            .map_err(|e| e.to_string())
+                    }
+                    .boxed_local()
+                    .shared()
+                })
+                .clone()
         })
         .await?
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
     }
 }
 
