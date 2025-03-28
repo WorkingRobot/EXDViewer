@@ -10,11 +10,11 @@ use crate::{
     data::{AppConfig, AppState},
     editable_schema::EditableSchema,
     excel::provider::{ExcelHeader, ExcelProvider},
-    future::{BackgroundInitializer, TrackedPromise, tick_promises},
     schema::provider::SchemaProvider,
     setup::{self, SetupWindow},
     sheet_table::SheetTable,
     syntax_highlighting::CodeTheme,
+    utils::{BackgroundInitializer, TrackedPromise, tick_promises},
     value_cache::KeyedCache,
 };
 

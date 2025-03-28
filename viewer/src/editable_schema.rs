@@ -1,7 +1,7 @@
 use crate::{
-    future::TrackedPromise,
     schema::{Field, Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
     syntax_highlighting,
+    utils::TrackedPromise,
 };
 use egui::{
     CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,

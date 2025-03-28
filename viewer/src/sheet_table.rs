@@ -10,8 +10,8 @@ use crate::{
         base::BaseSheet,
         provider::{ExcelHeader, ExcelRow, ExcelSheet},
     },
-    future::TrackedPromise,
     schema::{Field, FieldType, Schema},
+    utils::TrackedPromise,
 };
 
 pub struct SheetTable {

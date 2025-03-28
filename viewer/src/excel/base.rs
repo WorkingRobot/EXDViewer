@@ -1,10 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use binrw::{BinRead, BinResult, meta::ReadEndian};
-use futures_util::{
-    FutureExt,
-    future::{LocalBoxFuture, Shared},
-};
 use intmap::IntMap;
 use ironworks::{
     excel::{Language, path},
@@ -16,7 +12,10 @@ use ironworks::{
 };
 use std::{cell::RefCell, io::Cursor, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
 
-use crate::value_cache::KeyedCache;
+use crate::{
+    utils::{CloneableResult, SharedFuture},
+    value_cache::KeyedCache,
+};
 
 use super::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet};
 
@@ -99,15 +98,12 @@ impl<T: ExcelFileProvider + 'static> Clone for CachedProvider<T> {
 struct CachedProviderImpl<T: ExcelFileProvider + 'static> {
     provider: T,
     names: Vec<String>,
-    cache: RefCell<
-        lru::LruCache<String, Shared<LocalBoxFuture<'static, Result<Rc<CacheEntry>, String>>>>,
-    >,
+    cache: RefCell<lru::LruCache<String, SharedFuture<CloneableResult<Rc<CacheEntry>>>>>,
 }
 
 struct CacheEntry {
     pub header: BaseHeader,
-    pub cache:
-        RefCell<KeyedCache<Language, Shared<LocalBoxFuture<'static, Result<BaseSheet, String>>>>>,
+    pub cache: RefCell<KeyedCache<Language, SharedFuture<CloneableResult<BaseSheet>>>>,
 }
 
 impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
@@ -129,7 +125,7 @@ impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
         name: &str,
         op: impl FnOnce(Rc<CacheEntry>) -> R,
     ) -> anyhow::Result<R> {
-        let future: Shared<LocalBoxFuture<'static, Result<Rc<CacheEntry>, String>>>;
+        let future: SharedFuture<CloneableResult<Rc<CacheEntry>>>;
         {
             let mut cache = self.0.cache.borrow_mut();
 
@@ -138,25 +134,18 @@ impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
             } else {
                 let this = self.clone();
                 let future_name = name.to_owned();
-                let future = async move {
-                    let header = this
-                        .0
-                        .provider
-                        .header(&future_name)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                let future = SharedFuture::new(async move {
+                    let header = this.0.provider.header(&future_name).await?;
                     Ok(Rc::new(CacheEntry {
                         header: BaseHeader::new(future_name, header),
                         cache: RefCell::new(KeyedCache::new()),
                     }))
-                }
-                .boxed_local()
-                .shared();
+                });
                 cache.put(name.to_string(), future.clone());
                 future
             };
         }
-        future.await.map_err(|e| anyhow::anyhow!(e)).map(op)
+        future.into_shared().await.map_err(|e| e.into()).map(op)
     }
 }
 
@@ -185,19 +174,16 @@ impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
                     };
                     let this = self.clone();
                     let header = a.header.clone();
-                    async move {
-                        BaseSheet::new(header, language, &this.0.provider)
-                            .await
-                            .map_err(|e| e.to_string())
-                    }
-                    .boxed_local()
-                    .shared()
+                    SharedFuture::new(async move {
+                        Ok(BaseSheet::new(header, language, &this.0.provider).await?)
+                    })
                 })
                 .clone()
         })
         .await?
+        .into_shared()
         .await
-        .map_err(|e| anyhow::anyhow!(e))
+        .map_err(|e| e.into())
     }
 }
 

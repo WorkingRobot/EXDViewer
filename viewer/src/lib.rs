@@ -11,11 +11,11 @@ mod backend;
 mod data;
 mod editable_schema;
 mod excel;
-mod future;
 mod schema;
 mod setup;
 mod sheet_table;
 mod syntax_highlighting;
+mod utils;
 mod value_cache;
 mod web_stream;
 

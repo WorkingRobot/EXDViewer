@@ -1,10 +1,8 @@
 use std::{cell::RefCell, num::NonZeroUsize, sync::Arc};
 
 use async_trait::async_trait;
-use futures_util::{
-    FutureExt,
-    future::{LocalBoxFuture, Shared},
-};
+
+use crate::utils::{CloneableResult, SharedFuture};
 
 use super::provider::SchemaProvider;
 
@@ -18,7 +16,7 @@ impl<T: SchemaProvider + 'static> Clone for CachedProvider<T> {
 
 pub struct CachedProviderImpl<T: SchemaProvider + 'static> {
     provider: T,
-    cache: RefCell<lru::LruCache<String, Shared<LocalBoxFuture<'static, Result<String, String>>>>>,
+    cache: RefCell<lru::LruCache<String, SharedFuture<CloneableResult<String>>>>,
 }
 
 impl<T: SchemaProvider + 'static> CachedProvider<T> {
@@ -33,7 +31,7 @@ impl<T: SchemaProvider + 'static> CachedProvider<T> {
 #[async_trait(?Send)]
 impl<T: SchemaProvider + 'static> SchemaProvider for CachedProvider<T> {
     async fn get_schema_text(&self, name: &str) -> anyhow::Result<String> {
-        let future: Shared<LocalBoxFuture<'static, Result<String, String>>>;
+        let future: SharedFuture<CloneableResult<String>>;
         {
             let mut cache = self.0.cache.borrow_mut();
             future = if let Some(future) = cache.get(name) {
@@ -41,20 +39,14 @@ impl<T: SchemaProvider + 'static> SchemaProvider for CachedProvider<T> {
             } else {
                 let this = self.clone();
                 let future_name = name.to_owned();
-                let future = async move {
-                    let result = this.0.provider.get_schema_text(&future_name).await;
-                    match result {
-                        Ok(text) => Ok(text),
-                        Err(e) => Err(e.to_string()),
-                    }
-                }
-                .boxed_local()
-                .shared();
+                let future = SharedFuture::new(async move {
+                    Ok(this.0.provider.get_schema_text(&future_name).await?)
+                });
                 cache.put(name.to_string(), future.clone());
                 future
             };
         }
-        future.await.map_err(|e| anyhow::anyhow!(e))
+        future.into_shared().await.map_err(|e| e.into())
     }
 
     fn can_save_schemas(&self) -> bool {

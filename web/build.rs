@@ -104,10 +104,10 @@ fn build_frontend() {
     command
         .env("CARGO_TARGET_DIR", "../target/frontend")
         .arg("build")
-        .args(&["--config", "../viewer"])
-        .args(&[OsStr::new("-d"), dist_dir.as_os_str()]);
+        .args(["--config", "../viewer"])
+        .args([OsStr::new("-d"), dist_dir.as_os_str()]);
     if std::env::var("PROFILE").unwrap() == "release" {
-        command.arg("--release").args(&["-M", "true"]);
+        command.arg("--release").args(["-M", "true"]);
     }
 
     command.stdout(Stdio::piped()).stderr(Stdio::piped());

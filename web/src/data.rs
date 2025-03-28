@@ -85,7 +85,7 @@ impl GameData {
         let path = self.path.join(format!("{version}/sqpack"));
 
         // check if path exists
-        if let Err(_) = std::fs::read_dir(&path) {
+        if std::fs::read_dir(&path).is_err() {
             return Err(ironworks::Error::NotFound(ironworks::ErrorValue::Other(
                 format!("version {version:?}"),
             )));
