@@ -48,8 +48,8 @@ pub enum FieldType {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Condition {
-    pub switch: Option<String>,
-    pub cases: Option<HashMap<i32, Vec<String>>>,
+    pub switch: String,
+    pub cases: HashMap<i32, Vec<String>>,
 }
 
 static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
@@ -80,55 +80,6 @@ impl Schema {
                 Ok(Err(errors))
             }
         }
-    }
-
-    fn get_paths_inner(
-        ret: &mut Vec<String>,
-        scope: String,
-        fields: &[Field],
-        pending_names: bool,
-        is_array: bool,
-    ) {
-        for field in fields {
-            let mut scope = scope.clone();
-            if is_array {
-                if let Some(name) = field.name(pending_names) {
-                    scope.push('.');
-                    scope.push_str(name);
-                }
-            } else {
-                scope.push_str(field.name(pending_names).unwrap_or("Unk"));
-            }
-            if field.r#type == FieldType::Array {
-                let subfields = field.fields.as_deref();
-                let subfields = match subfields {
-                    Some(subfields) => subfields,
-                    None => &[Field::default()],
-                };
-                for i in 0..(field.count.unwrap_or(1)) {
-                    Self::get_paths_inner(
-                        ret,
-                        scope.clone() + &format!("[{}]", i),
-                        subfields,
-                        pending_names,
-                        true,
-                    );
-                }
-            } else {
-                ret.push(scope);
-            }
-        }
-    }
-
-    pub fn get_paths(&self, pending_fields: bool, pending_names: bool) -> Vec<String> {
-        let fields = if pending_fields {
-            self.pending_fields.as_ref().unwrap_or(&self.fields)
-        } else {
-            &self.fields
-        };
-        let mut ret = vec![];
-        Self::get_paths_inner(&mut ret, "".to_string(), fields, pending_names, false);
-        ret
     }
 }
 

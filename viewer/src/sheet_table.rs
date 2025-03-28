@@ -1,44 +1,39 @@
+use anyhow::bail;
 use egui::{Align, Direction, Id, Margin, Sense, UiBuilder, Widget};
 use egui_table::TableDelegate;
 use ironworks::file::exh::{ColumnDefinition, ColumnKind};
 use itertools::Itertools;
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashMap, ops::Deref};
 
 use crate::{
     excel::{
         base::BaseSheet,
         provider::{ExcelHeader, ExcelRow, ExcelSheet},
     },
-    schema::Schema,
+    future::TrackedPromise,
+    schema::{Field, FieldType, Schema},
 };
 
 pub struct SheetTable {
     sheet: BaseSheet,
-    columns: Vec<(usize, ColumnDefinition)>,
+    columns: Vec<SheetColumnDefinition>,
     subrow_lookup: Option<Vec<u32>>,
     row_sizes: RefCell<Vec<f32>>,
-    schema: Option<(Schema, Vec<String>)>,
+    schema_columns: Vec<SchemaColumn>,
+    referenced_sheets: RefCell<HashMap<String, TrackedPromise<BaseSheet>>>,
 }
 
 impl SheetTable {
     pub fn new(sheet: BaseSheet, schema: Option<Schema>) -> Self {
-        let schema = match schema {
-            Some(schema) => {
-                let paths = schema.get_paths(true, true);
-                Some((schema, paths))
-            }
-            None => None,
-        };
+        let schema_columns = schema
+            .as_ref()
+            .and_then(|schema| SchemaColumn::from_schema(schema, true, true).ok())
+            .unwrap_or_else(|| SchemaColumn::from_blank(sheet.columns().len() as u32));
 
-        let columns = sheet
-            .columns()
-            .iter()
-            .enumerate()
-            .sorted_by_key(|(_, c)| (c.offset(), c.kind() as u16))
-            .map(|(i, c)| (i, c.clone()))
-            .collect_vec();
+        let columns = SheetColumnDefinition::from_sheet(&sheet);
         let row_sizes = RefCell::new(Vec::with_capacity(sheet.row_count() as usize));
-        if sheet.has_subrows() {
+
+        let subrow_lookup = if sheet.has_subrows() {
             let mut subrow_lookup = Vec::with_capacity(sheet.row_count() as usize);
             let mut offset = 0u32;
             for i in 0..sheet.row_count() {
@@ -49,22 +44,18 @@ impl SheetTable {
                     0
                 }) as u32;
             }
-
-            Self {
-                sheet,
-                columns,
-                subrow_lookup: Some(subrow_lookup),
-                row_sizes,
-                schema,
-            }
+            Some(subrow_lookup)
         } else {
-            Self {
-                sheet,
-                columns,
-                subrow_lookup: None,
-                row_sizes,
-                schema,
-            }
+            None
+        };
+
+        Self {
+            sheet,
+            columns,
+            subrow_lookup,
+            row_sizes,
+            schema_columns,
+            referenced_sheets: RefCell::new(HashMap::new()),
         }
     }
 
@@ -72,13 +63,24 @@ impl SheetTable {
         self.sheet.name()
     }
 
-    pub fn set_schema(&mut self, schema: Schema) {
-        let paths = schema.get_paths(true, true);
-        self.schema = Some((schema, paths));
-    }
-
-    pub fn clear_schema(&mut self) {
-        self.schema = None;
+    pub fn set_schema(&mut self, schema: Option<Schema>) -> anyhow::Result<()> {
+        self.schema_columns = schema
+            .map(|s| SchemaColumn::from_schema(&s, true, true))
+            .map(|s| {
+                s.map(|r| {
+                    if r.len() == self.sheet.columns().len() {
+                        Ok(r)
+                    } else {
+                        bail!(
+                            "Schema column count does not match sheet column count: {} != {}",
+                            r.len(),
+                            self.sheet.columns().len()
+                        )
+                    }
+                })?
+            })
+            .unwrap_or_else(|| Ok(SchemaColumn::from_blank(self.sheet.columns().len() as u32)))?;
+        Ok(())
     }
 
     pub fn draw(&mut self, ui: &mut egui::Ui) {
@@ -121,44 +123,52 @@ impl SheetTable {
     }
 
     fn size_column(
+        &self,
         ui: &mut egui::Ui,
         row: ExcelRow<'_>,
-        column: &ColumnDefinition,
+        sheet_column: &SheetColumnDefinition,
+        schema_column: &SchemaColumn,
     ) -> anyhow::Result<f32> {
         let mut size_ui = ui.new_child(UiBuilder::new().sizing_pass());
         let resp = egui::Frame::NONE
             .inner_margin(Margin::symmetric(4, 2))
-            .show(&mut size_ui, |ui| Self::draw_column(ui, row, column));
+            .show(&mut size_ui, |ui| {
+                self.draw_column(ui, row, sheet_column, schema_column)
+            });
         resp.inner?;
         Ok(size_ui.min_rect().size().y)
     }
 
     fn size_column_manual(
+        &self,
         ui: &mut egui::Ui,
         row: ExcelRow<'_>,
-        column: &ColumnDefinition,
-    ) -> anyhow::Result<f32> {
-        Ok(match column.kind() {
+        sheet_column: &SheetColumnDefinition,
+        schema_column: &SchemaColumn,
+    ) -> anyhow::Result<Option<f32>> {
+        let col_height = match sheet_column.kind() {
             ColumnKind::String => {
                 let string = row
-                    .read_string(column.offset() as u32)?
+                    .read_string(sheet_column.offset() as u32)?
                     .format()
                     .unwrap_or_else(|_| "Unknown".to_owned());
                 ui.text_style_height(&egui::TextStyle::Body) * string.split('\n').count() as f32
             }
             _ => ui.text_style_height(&egui::TextStyle::Body),
-        } + 4.0)
+        };
+        Ok(Some(col_height + 4.0)) // symmetric inner y margin of 2.0
     }
 
     fn size_row_single_uncached(&self, ui: &mut egui::Ui, row_nr: u64) -> anyhow::Result<f32> {
         let (row_id, subrow_id) = self.get_row_id(row_nr)?;
         let row = self.get_row_data(row_id, subrow_id)?;
         let mut size = 0.0f32;
-        for (_, column) in &self.columns {
-            size = size.max(
-                Self::size_column_manual(ui, row, column)
-                    .or_else(|_| Self::size_column(ui, row, column))?,
-            );
+        for (sheet_column, schema_column) in self.columns.iter().zip_eq(&self.schema_columns) {
+            let mut col_size = self.size_column_manual(ui, row, sheet_column, schema_column)?;
+            if col_size.is_none() {
+                col_size = Some(self.size_column(ui, row, sheet_column, schema_column)?);
+            }
+            size = size.max(col_size.unwrap());
         }
         Ok(size)
     }
@@ -212,53 +222,55 @@ impl SheetTable {
     }
 
     fn draw_column(
+        &self,
         ui: &mut egui::Ui,
         row: ExcelRow<'_>,
-        column: &ColumnDefinition,
+        sheet_column: &SheetColumnDefinition,
+        schema_column: &SchemaColumn,
     ) -> anyhow::Result<()> {
-        match column.kind() {
+        match sheet_column.kind() {
             ColumnKind::String => {
-                let string = row.read_string(column.offset() as u32)?;
+                let string = row.read_string(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, string.format().unwrap_or_else(|_| "Unknown".to_owned()));
             }
             ColumnKind::Bool => {
-                let value = row.read_bool(column.offset() as u32);
+                let value = row.read_bool(sheet_column.offset() as u32);
                 Self::copyable_label(ui, value);
             }
             ColumnKind::Int8 => {
-                let value = row.read::<i8>(column.offset() as u32)?;
+                let value = row.read::<i8>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::UInt8 => {
-                let value = row.read::<u8>(column.offset() as u32)?;
+                let value = row.read::<u8>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::Int16 => {
-                let value = row.read::<i16>(column.offset() as u32)?;
+                let value = row.read::<i16>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::UInt16 => {
-                let value = row.read::<u16>(column.offset() as u32)?;
+                let value = row.read::<u16>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::Int32 => {
-                let value = row.read::<i32>(column.offset() as u32)?;
+                let value = row.read::<i32>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::UInt32 => {
-                let value = row.read::<u32>(column.offset() as u32)?;
+                let value = row.read::<u32>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::Float32 => {
-                let value = row.read::<f32>(column.offset() as u32)?;
+                let value = row.read::<f32>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::Int64 => {
-                let value = row.read::<i64>(column.offset() as u32)?;
+                let value = row.read::<i64>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::UInt64 => {
-                let value = row.read::<u64>(column.offset() as u32)?;
+                let value = row.read::<u64>(sheet_column.offset() as u32)?;
                 Self::copyable_label(ui, value);
             }
             ColumnKind::PackedBool0
@@ -270,8 +282,8 @@ impl SheetTable {
             | ColumnKind::PackedBool6
             | ColumnKind::PackedBool7 => {
                 let value = row.read_packed_bool(
-                    column.offset() as u32,
-                    (u16::from(column.kind()) - u16::from(ColumnKind::PackedBool0)) as u8,
+                    sheet_column.offset() as u32,
+                    (u16::from(sheet_column.kind()) - u16::from(ColumnKind::PackedBool0)) as u8,
                 );
                 Self::copyable_label(ui, value);
             }
@@ -289,28 +301,21 @@ impl TableDelegate for SheetTable {
         } else {
             Some(col_range.start - 1)
         };
-        let column = column_id.and_then(|c| Some((c, self.columns.get(c)?)));
+        let column =
+            column_id.and_then(|c| Some((c, (self.columns.get(c)?, self.schema_columns.get(c)?))));
 
         let margin = 4;
 
         egui::Frame::NONE
             .inner_margin(Margin::symmetric(margin, 2))
             .show(ui, |ui| {
-                if let Some((column_id, (column_sheet_id, column))) = column {
-                    let column_path = self
-                        .schema
-                        .as_ref()
-                        .and_then(|(_, paths)| paths.get(column_id));
-                    let column_name = match column_path {
-                        Some(path) => path,
-                        None => &format!("Unknown{column_id}"),
-                    };
-                    ui.heading(column_name).on_hover_text(format!(
+                if let Some((column_id, (sheet_column, schema_column))) = column {
+                    ui.heading(&schema_column.name).on_hover_text(format!(
                         "Id: {}\nIndex: {}\nOffset: {}\nKind: {:?}",
-                        column_sheet_id,
+                        sheet_column.id,
                         column_id,
-                        column.offset(),
-                        column.kind()
+                        sheet_column.offset(),
+                        sheet_column.kind()
                     ));
                 } else {
                     ui.heading("Row");
@@ -343,14 +348,16 @@ impl TableDelegate for SheetTable {
             .inner_margin(Margin::symmetric(4, 2))
             .show(ui, |ui| {
                 if let Some(column_id) = column_id {
-                    let (_, column) = &self.columns.get(column_id).unwrap();
-                    match Self::draw_column(ui, row_data, column) {
+                    let sheet_column = self.columns.get(column_id).unwrap();
+                    let schema_column = self.schema_columns.get(column_id).unwrap();
+                    match self.draw_column(ui, row_data, sheet_column, schema_column) {
                         Ok(()) => {}
                         Err(error) => {
                             log::error!(
-                                "Failed to read column (kind {:?}, offset {}): {:?}",
-                                column.kind(),
-                                column.offset(),
+                                "Failed to read column (kind {:?}, offset {}, name {}): {:?}",
+                                sheet_column.kind(),
+                                sheet_column.offset(),
+                                schema_column.name,
                                 error
                             );
                         }
@@ -376,4 +383,192 @@ impl TableDelegate for SheetTable {
             }
         }
     }
+}
+
+struct SheetColumnDefinition {
+    pub column: ColumnDefinition,
+    pub id: u32,
+}
+
+impl SheetColumnDefinition {
+    pub fn from_sheet(sheet: &BaseSheet) -> Vec<Self> {
+        sheet
+            .columns()
+            .iter()
+            .enumerate()
+            .sorted_by_key(|(_, c)| (c.offset(), c.kind() as u16))
+            .map(|(i, c)| Self {
+                id: i as u32,
+                column: c.clone(),
+            })
+            .collect_vec()
+    }
+}
+
+impl Deref for SheetColumnDefinition {
+    type Target = ColumnDefinition;
+
+    fn deref(&self) -> &Self::Target {
+        &self.column
+    }
+}
+
+struct SchemaColumn {
+    name: String,
+    meta: SchemaColumnMeta,
+}
+
+impl SchemaColumn {
+    fn get_columns_inner(
+        ret: &mut Vec<Self>,
+        scope: String,
+        fields: &[Field],
+        pending_names: bool,
+        is_array: bool,
+    ) -> anyhow::Result<()> {
+        let column_offset = ret.len() as u32;
+
+        let mut column_placeholder = u32::MAX;
+        let mut column_lookups = vec![];
+
+        for field in fields {
+            let mut scope = scope.clone();
+            if is_array {
+                if let Some(name) = field.name(pending_names) {
+                    scope.push('.');
+                    scope.push_str(name);
+                }
+            } else {
+                scope.push_str(field.name(pending_names).unwrap_or("Unk"));
+            }
+
+            if field.r#type == FieldType::Array {
+                let subfields = field.fields.as_deref();
+                let subfields = match subfields {
+                    Some(subfields) => subfields,
+                    None => &[Field::default()],
+                };
+                for i in 0..(field.count.unwrap_or(1)) {
+                    Self::get_columns_inner(
+                        ret,
+                        scope.clone() + &format!("[{}]", i),
+                        subfields,
+                        pending_names,
+                        true,
+                    )?;
+                }
+            } else {
+                let name = scope;
+
+                let meta = match field.r#type {
+                    FieldType::Scalar => SchemaColumnMeta::Scalar,
+                    FieldType::Icon => SchemaColumnMeta::Icon,
+                    FieldType::ModelId => SchemaColumnMeta::ModelId,
+                    FieldType::Color => SchemaColumnMeta::Color,
+                    FieldType::Link => {
+                        if let Some(targets) = &field.targets {
+                            SchemaColumnMeta::Link(targets.clone())
+                        } else if let Some(condition) = &field.condition {
+                            column_placeholder -= 1;
+                            column_lookups.push(&condition.switch);
+                            SchemaColumnMeta::ConditionalLink {
+                                column_idx: column_placeholder,
+                                links: condition.cases.clone(),
+                            }
+                        } else {
+                            bail!("Link field missing targets or condition: {:?}", field);
+                        }
+                    }
+                    FieldType::Array => unreachable!(),
+                };
+
+                ret.push(Self { name, meta });
+            }
+        }
+
+        for i in 0..ret.len() - column_offset as usize {
+            let column = &ret[column_offset as usize + i];
+            if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = column.meta {
+                let column_lookup_idx = u32::MAX - column_idx - 1;
+                let column_lookup_name = match column_lookups.get(column_lookup_idx as usize) {
+                    Some(&name) => name,
+                    None => {
+                        bail!(
+                            "Failed to find column lookup name for {}'s conditional link: {}",
+                            column.name,
+                            column_lookup_idx
+                        );
+                    }
+                };
+
+                let resolved_column_idx = column_offset
+                    + match ret[column_offset as usize..]
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, c)| {
+                            if c.name[scope.len()..] == *column_lookup_name {
+                                Some(i as u32)
+                            } else {
+                                None
+                            }
+                        }) {
+                        Some(idx) => idx,
+                        None => {
+                            bail!(
+                                "Failed to find column index for {}'s conditional link: {}",
+                                column.name,
+                                column_lookup_name
+                            );
+                        }
+                    };
+
+                if let SchemaColumnMeta::ConditionalLink { column_idx, .. } =
+                    &mut ret[column_offset as usize + i].meta
+                {
+                    *column_idx = resolved_column_idx;
+                } else {
+                    unreachable!();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn from_schema(
+        schema: &Schema,
+        pending_fields: bool,
+        pending_names: bool,
+    ) -> anyhow::Result<Vec<Self>> {
+        let fields = pending_fields
+            .then_some(())
+            .and(schema.pending_fields.as_ref())
+            .unwrap_or(&schema.fields);
+
+        let mut ret = vec![];
+        Self::get_columns_inner(&mut ret, "".to_string(), fields, pending_names, false)?;
+        Ok(ret)
+    }
+
+    fn from_blank(column_count: u32) -> Vec<Self> {
+        (0..column_count)
+            .map(|i| Self {
+                name: format!("Column{}", i),
+                meta: SchemaColumnMeta::Scalar,
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone)]
+enum SchemaColumnMeta {
+    Scalar,
+    Icon,
+    ModelId,
+    Color,
+    Link(Vec<String>),
+    ConditionalLink {
+        column_idx: u32,
+        links: HashMap<i32, Vec<String>>,
+    },
 }

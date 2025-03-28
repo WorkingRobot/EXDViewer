@@ -250,7 +250,9 @@ impl App {
             );
             if resp.changed() {
                 if let Some(schema) = editor.get_schema() {
-                    table.set_schema(schema.clone());
+                    if let Err(e) = table.set_schema(Some(schema.clone())) {
+                        log::error!("Failed to set schema: {:?}", e);
+                    }
                 }
             }
 
