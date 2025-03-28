@@ -2,6 +2,7 @@ use egui::{
     Button, FontData, FontFamily, Id, Label, Layout, RichText, ScrollArea, TextEdit, Vec2,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
 };
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ironworks::excel::Language;
 use itertools::Itertools;
 
@@ -27,6 +28,7 @@ pub struct App {
         (Language, String),
         TrackedPromise<anyhow::Result<(SheetTable, EditableSchema)>>,
     >,
+    sheet_matcher: SkimMatcherV2,
 }
 
 impl App {
@@ -145,14 +147,16 @@ impl App {
                     }
                     self.state.are_misc_sheets_shown || sheet.find('/').is_none()
                 })
-                .filter(|sheet| {
+                .filter_map(|s| {
                     if self.state.current_filter.is_empty() {
-                        return true;
+                        return Some((0, s));
                     }
-                    sheet
-                        .to_ascii_lowercase()
-                        .contains(&self.state.current_filter.to_ascii_lowercase())
+                    self.sheet_matcher
+                        .fuzzy_match(s.as_str(), &self.state.current_filter)
+                        .map(|score| (score, s))
                 })
+                .sorted_unstable_by_key(|(score, _)| -score)
+                .map(|(_, s)| s)
                 .collect_vec();
 
             egui::CentralPanel::default().show_inside(ui, |ui| {
