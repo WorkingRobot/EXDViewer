@@ -1,5 +1,5 @@
 use egui::{
-    Button, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit, Vec2,
+    Button, FontData, FontFamily, Id, Label, Layout, RichText, ScrollArea, TextEdit, Vec2,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
 };
 use ironworks::excel::Language;
@@ -32,9 +32,6 @@ pub struct App {
 impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
-
         Self::setup_fonts(&cc.egui_ctx);
 
         // Load previous app state (if any).
@@ -97,6 +94,17 @@ impl App {
             Backend::new(config.clone()),
         ));
         self.state.config = Some(config);
+    }
+
+    fn is_logger_shown(ctx: &egui::Context) -> bool {
+        ctx.data_mut(|d| {
+            d.get_persisted::<bool>(Id::new("logger-shown"))
+                .unwrap_or_default()
+        })
+    }
+
+    fn set_logger_shown(ctx: &egui::Context, shown: bool) {
+        ctx.data_mut(|d| d.insert_persisted(Id::new("logger-shown"), shown));
     }
 
     fn draw_with_backend(&mut self, ctx: &egui::Context, backend: &Backend) {
@@ -225,14 +233,14 @@ impl App {
             };
 
             ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                let mut visible = editor.visible();
+                let mut visible = editor.visible(ui);
                 let resp = ui.horizontal(|ui| {
                     ui.set_min_height(ui.text_style_height(&egui::TextStyle::Heading));
                     ui.toggle_value(&mut visible, "Edit Schema")
                         .on_hover_text("Edit the schema for this sheet")
                 });
                 if resp.inner.changed() {
-                    editor.set_visible(visible);
+                    editor.set_visible(ui, visible);
                 }
 
                 ui.add_sized(
@@ -302,9 +310,19 @@ impl eframe::App for App {
                     }
                 });
 
+                {
+                    let mut logger_shown = Self::is_logger_shown(ctx);
+                    if ui
+                        .toggle_value(&mut logger_shown, "Show Log Window")
+                        .changed()
+                    {
+                        Self::set_logger_shown(ctx, logger_shown);
+                    }
+                }
+
                 ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
                     egui::widgets::global_theme_preference_buttons(ui);
-                    ui.add_space(16.0);
+
                     ui.menu_button("Code Theme", |ui| {
                         let mut theme = CodeTheme::from_memory(ui.ctx(), ui.style());
 
@@ -319,6 +337,19 @@ impl eframe::App for App {
                 });
             });
         });
+
+        {
+            let logger_shown = Self::is_logger_shown(ctx);
+            let mut logger_shown_toggle = logger_shown;
+            egui::Window::new("Log")
+                .open(&mut logger_shown_toggle)
+                .show(ctx, |ui| {
+                    egui_logger::logger_ui().show(ui);
+                });
+            if logger_shown_toggle != logger_shown {
+                Self::set_logger_shown(ctx, logger_shown_toggle);
+            }
+        }
 
         let config = match self.backend.as_ref().map(|b| b.result()) {
             None => self.setup_window.draw(ctx, None),

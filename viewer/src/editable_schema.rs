@@ -18,7 +18,6 @@ pub struct EditableSchema {
     text: String,
     is_modified: bool,
     schema: anyhow::Result<Result<Schema, VecDeque<OutputUnit<ErrorDescription>>>>,
-    shown: bool,
     save_promise: Option<TrackedPromise<()>>,
 }
 
@@ -31,7 +30,6 @@ impl EditableSchema {
             text: schema_text,
             is_modified: false,
             schema,
-            shown: false,
             save_promise: None,
         }
     }
@@ -63,12 +61,16 @@ impl EditableSchema {
         self.schema.as_ref().ok().and_then(|r| r.as_ref().ok())
     }
 
-    pub fn set_visible(&mut self, visible: bool) {
-        self.shown = visible;
+    pub fn set_visible(&mut self, ui: &mut egui::Ui, visible: bool) {
+        let id = Id::new("schema-editor-visible");
+        ui.data_mut(|d| {
+            d.insert_persisted(id, visible);
+        });
     }
 
-    pub fn visible(&self) -> bool {
-        self.shown
+    pub fn visible(&mut self, ui: &mut egui::Ui) -> bool {
+        let id = Id::new("schema-editor-visible");
+        ui.data_mut(|d| d.get_persisted(id).unwrap_or_default())
     }
 
     fn set_errors_visible(&mut self, ui: &mut egui::Ui, visible: bool) {
@@ -105,12 +107,12 @@ impl EditableSchema {
     ) -> Response {
         let mut response = ui.response();
 
-        if !self.shown {
-            return response;
-        }
+        let is_shown = self.visible(ui);
+        let mut is_shown_toggle = is_shown;
 
         let window_margin = ui.style().spacing.window_margin;
         egui::Window::new("Schema Editor")
+            .open(&mut is_shown_toggle)
             .frame(Frame::window(ui.style()).inner_margin(Margin {
                 top: window_margin.top,
                 ..Default::default()
@@ -377,6 +379,10 @@ impl EditableSchema {
                         })
                     })
             });
+
+        if is_shown != is_shown_toggle {
+            self.set_visible(ui, is_shown_toggle);
+        }
 
         response
     }

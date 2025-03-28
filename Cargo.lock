@@ -1256,7 +1256,9 @@ checksum = "1a7964611d71df112cb1730f2ee67324fcf4d0fc6606acbbe9bfe06df124637c"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1729,6 +1731,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_logger"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f48430cc1e9ee9f3210d22fd8846de9a3b604d0f241c6222e0eaae543f3a8c23"
+dependencies = [
+ "chrono",
+ "egui",
+ "hashbrown 0.15.2",
+ "log",
+ "regex",
+]
+
+[[package]]
 name = "egui_table"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1966,6 +1981,7 @@ dependencies = [
  "binrw",
  "eframe",
  "egui",
+ "egui_logger",
  "egui_table",
  "ehttp",
  "env_logger",
