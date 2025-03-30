@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use binrw::{BinRead, BinResult, meta::ReadEndian};
+use either::Either;
+use image::RgbaImage;
 use intmap::IntMap;
 use ironworks::{
     excel::{Language, path},
@@ -11,6 +13,7 @@ use ironworks::{
     },
 };
 use std::{cell::RefCell, io::Cursor, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
+use url::Url;
 
 use crate::{
     utils::{CloneableResult, SharedFuture},
@@ -22,10 +25,14 @@ use super::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet};
 #[async_trait(?Send)]
 pub trait FileProvider {
     async fn file<T: File>(&self, path: &str) -> Result<T, ironworks::Error>;
+
+    fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error>;
 }
 
 #[async_trait(?Send)]
 pub trait ExcelFileProvider {
+    fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error>;
+
     async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error>;
 
     async fn header(
@@ -43,6 +50,10 @@ pub trait ExcelFileProvider {
 
 #[async_trait(?Send)]
 impl<T: FileProvider> ExcelFileProvider for T {
+    fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+        self.get_icon(icon_id)
+    }
+
     async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error> {
         self.file(path::exl()).await
     }
@@ -66,6 +77,10 @@ impl<T: FileProvider> ExcelFileProvider for T {
 
 #[async_trait(?Send)]
 impl ExcelFileProvider for Box<dyn ExcelFileProvider> {
+    fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+        self.as_ref().get_icon(icon_id)
+    }
+
     async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error> {
         self.as_ref().list().await
     }
@@ -156,6 +171,10 @@ impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
 
     fn get_names(&self) -> &Vec<String> {
         &self.0.names
+    }
+
+    fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>> {
+        self.0.provider.get_icon(icon_id)
     }
 
     async fn get_header(&self, name: &str) -> Result<BaseHeader> {

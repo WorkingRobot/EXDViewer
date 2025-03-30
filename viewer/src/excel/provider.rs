@@ -2,18 +2,22 @@ use std::io::Cursor;
 
 use anyhow::Result;
 use binrw::{BinRead, BinResult, binread, helpers::until_exclusive, meta::ReadEndian};
+use either::Either;
+use image::RgbaImage;
 use ironworks::{
     excel::Language,
     file::exh::{ColumnDefinition, PageDefinition},
     sestring::SeString,
 };
 use num_traits::FromBytes;
+use url::Url;
 
 pub trait ExcelProvider {
     type Header: ExcelHeader;
     type Sheet: ExcelSheet;
 
     fn get_names(&self) -> &Vec<String>;
+    fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>>;
     async fn get_sheet(&self, name: &str, language: Language) -> Result<Self::Sheet>;
     async fn get_header(&self, name: &str) -> Result<Self::Header>;
 }

@@ -3,6 +3,7 @@ use super::base::{CachedProvider, ExcelFileProvider};
 pub type BoxedExcelProvider = CachedProvider<Box<dyn ExcelFileProvider>>;
 
 impl BoxedExcelProvider {
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn new_sqpack(
         value: super::sqpack::SqpackFileProvider,
     ) -> Result<Self, ironworks::Error> {
