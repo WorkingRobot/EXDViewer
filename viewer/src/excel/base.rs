@@ -12,7 +12,10 @@ use ironworks::{
         exh::{ColumnDefinition, PageDefinition, SheetKind},
     },
 };
-use std::{cell::RefCell, io::Cursor, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell, collections::HashMap, io::Cursor, num::NonZeroUsize, ops::Range, rc::Rc,
+    sync::Arc,
+};
 use url::Url;
 
 use crate::{
@@ -112,7 +115,7 @@ impl<T: ExcelFileProvider + 'static> Clone for CachedProvider<T> {
 
 struct CachedProviderImpl<T: ExcelFileProvider + 'static> {
     provider: T,
-    names: Vec<String>,
+    entries: HashMap<String, i32>,
     cache: RefCell<lru::LruCache<String, SharedFuture<CloneableResult<Rc<CacheEntry>>>>>,
 }
 
@@ -124,12 +127,7 @@ struct CacheEntry {
 impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
     pub async fn new(provider: T, size: NonZeroUsize) -> Result<Self, ironworks::Error> {
         Ok(Self(Arc::new(CachedProviderImpl {
-            names: provider
-                .list()
-                .await?
-                .iter()
-                .map(|s| s.into_owned())
-                .collect(),
+            entries: provider.list().await?.0,
             provider,
             cache: RefCell::new(lru::LruCache::new(size)),
         })))
@@ -169,8 +167,8 @@ impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
 
     type Sheet = BaseSheet;
 
-    fn get_names(&self) -> &Vec<String> {
-        &self.0.names
+    fn get_entries(&self) -> &HashMap<String, i32> {
+        &self.0.entries
     }
 
     fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>> {

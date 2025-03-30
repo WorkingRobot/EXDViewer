@@ -150,25 +150,25 @@ impl App {
 
             let sheets = backend
                 .excel()
-                .get_names()
+                .get_entries()
                 .iter()
-                .sorted()
-                .filter(|sheet| {
+                .sorted_by_key(|(sheet, _)| *sheet)
+                .filter(|(_, id)| {
                     if self.state.are_misc_sheets_shown {
                         return true;
                     }
-                    self.state.are_misc_sheets_shown || sheet.find('/').is_none()
+                    self.state.are_misc_sheets_shown || **id >= 0
                 })
-                .filter_map(|s| {
+                .filter_map(|(sheet, id)| {
                     if self.state.current_filter.is_empty() {
-                        return Some((0, s));
+                        return Some((0, sheet, id));
                     }
                     self.sheet_matcher
-                        .fuzzy_match(s.as_str(), &self.state.current_filter)
-                        .map(|score| (score, s))
+                        .fuzzy_match(&sheet.as_str(), &self.state.current_filter)
+                        .map(|score| (score, sheet, id))
                 })
-                .sorted_unstable_by_key(|(score, _)| -score)
-                .map(|(_, s)| s)
+                .sorted_unstable_by_key(|(score, _, _)| -score)
+                .map(|(_, a, b)| (a, b))
                 .collect_vec();
 
             egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -179,18 +179,18 @@ impl App {
                     sheets.len(),
                     |ui, range| {
                         ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                            for &sheet in sheets
+                            for &(sheet, &id) in sheets
                                 .iter()
                                 .skip(range.start)
                                 .take(range.end - range.start)
                             {
                                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                                // let galley_ui = &mut ui.new_child(UiBuilder::new().sizing_pass());
-                                // let (_, galley, _) = Label::new(sheet).extend().layout_in_ui(galley_ui);
-                                let resp = ui.add(egui::SelectableLabel::new(
+                                let resp = egui::SelectableLabel::new(
                                     self.state.current_sheet.as_ref() == Some(sheet),
                                     sheet.as_str(),
-                                ));
+                                )
+                                .ui(ui)
+                                .on_hover_text(format!("{sheet}\nId: {id}"));
                                 if resp.clicked() {
                                     self.state.current_sheet = Some(sheet.clone());
                                 }
