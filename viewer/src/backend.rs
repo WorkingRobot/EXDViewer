@@ -1,24 +1,30 @@
 use anyhow::Result;
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use crate::{
     data::{AppConfig, InstallLocation, SchemaLocation},
-    excel::{boxed::BoxedExcelProvider, sqpack::SqpackFileProvider, web::WebFileProvider},
+    excel::{boxed::BoxedExcelProvider, web::WebFileProvider},
     schema::{boxed::BoxedSchemaProvider, local::LocalProvider, web::WebProvider},
 };
 
-pub struct Backend {
+#[derive(Clone)]
+pub struct Backend(Arc<BackendImpl>);
+
+struct BackendImpl {
     excel_provider: BoxedExcelProvider,
     schema_provider: BoxedSchemaProvider,
 }
 
 impl Backend {
     pub async fn new(config: AppConfig) -> Result<Self> {
-        Ok(Self {
+        Ok(Self(Arc::new(BackendImpl {
             excel_provider: match config.location {
                 #[cfg(not(target_arch = "wasm32"))]
                 InstallLocation::Sqpack(path) => {
-                    BoxedExcelProvider::new_sqpack(SqpackFileProvider::new(&path)).await?
+                    BoxedExcelProvider::new_sqpack(crate::excel::sqpack::SqpackFileProvider::new(
+                        &path,
+                    ))
+                    .await?
                 }
                 InstallLocation::Web(base_url) => {
                     BoxedExcelProvider::new_web(WebFileProvider::from_str(&base_url)?).await?
@@ -33,14 +39,14 @@ impl Backend {
                     BoxedSchemaProvider::new_web(WebProvider::new(base_url))
                 }
             },
-        })
+        })))
     }
 
     pub fn excel(&self) -> &BoxedExcelProvider {
-        &self.excel_provider
+        &self.0.excel_provider
     }
 
     pub fn schema(&self) -> &BoxedSchemaProvider {
-        &self.schema_provider
+        &self.0.schema_provider
     }
 }
