@@ -15,10 +15,11 @@ use combined_log::CombinedLogger;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     CombinedLogger(
-        env_logger::builder().build(),
+        env_logger::Builder::from_env(env_logger::Env::new().default_filter_or("info")).build(),
         egui_logger::builder().build(),
     )
     .init();
+    log::set_max_level(log::LevelFilter::Info);
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
