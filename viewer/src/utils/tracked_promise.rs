@@ -54,6 +54,12 @@ impl<T: Send + 'static> TrackedPromise<T> {
     }
 }
 
+impl<T: Send + 'static> From<TrackedPromise<T>> for Promise<T> {
+    fn from(promise: TrackedPromise<T>) -> Self {
+        promise.promise
+    }
+}
+
 impl<T: Send + 'static> Deref for TrackedPromise<T> {
     type Target = Promise<T>;
 

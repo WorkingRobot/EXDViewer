@@ -53,6 +53,10 @@ impl<K, T> KeyedCache<K, T> {
         Self(Some((key, value)))
     }
 
+    pub fn clear(&mut self) {
+        self.0 = None;
+    }
+
     pub fn get(&self) -> Option<(&K, &T)> {
         self.0.as_ref().map(|(k, v)| (k, v))
     }
