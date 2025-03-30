@@ -2,6 +2,8 @@ use egui::{
     Button, FontData, FontFamily, Id, Label, Layout, RichText, ScrollArea, TextEdit, Vec2,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
 };
+use egui_extras::install_image_loaders;
+use either::Either::{self, Left, Right};
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ironworks::excel::Language;
 use itertools::Itertools;
@@ -10,23 +12,30 @@ use crate::{
     backend::Backend,
     data::{AppConfig, AppState},
     editable_schema::EditableSchema,
-    excel::provider::{ExcelHeader, ExcelProvider},
+    excel::{
+        base::BaseSheet,
+        provider::{ExcelHeader, ExcelProvider},
+    },
     schema::provider::SchemaProvider,
     setup::{self, SetupWindow},
     sheet_table::SheetTable,
     syntax_highlighting::CodeTheme,
-    utils::{BackgroundInitializer, TrackedPromise, tick_promises},
+    utils::{BackgroundInitializer, IconManager, TrackedPromise, tick_promises},
     value_cache::KeyedCache,
 };
 
 #[derive(Default)]
 pub struct App {
     state: AppState,
+    icon_manager: IconManager,
     setup_window: setup::SetupWindow,
     backend: Option<BackgroundInitializer<Backend>>,
     sheet_data: KeyedCache<
         (Language, String),
-        TrackedPromise<anyhow::Result<(SheetTable, EditableSchema)>>,
+        Either<
+            TrackedPromise<anyhow::Result<(BaseSheet, anyhow::Result<String>)>>,
+            anyhow::Result<(SheetTable, EditableSchema)>,
+        >,
     >,
     sheet_matcher: SkimMatcherV2,
 }
@@ -34,6 +43,7 @@ pub struct App {
 impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        install_image_loaders(&cc.egui_ctx);
         Self::setup_fonts(&cc.egui_ctx);
 
         // Load previous app state (if any).
@@ -86,11 +96,13 @@ impl App {
     }
 
     fn clear_config(&mut self) {
-        self.state.config = None;
+        self.sheet_data.clear();
         self.backend = None;
+        self.state.config = None;
     }
 
     fn set_config(&mut self, ctx: Option<&egui::Context>, config: AppConfig) {
+        self.sheet_data.clear();
         self.backend = Some(BackgroundInitializer::new(
             ctx,
             Backend::new(config.clone()),
@@ -195,42 +207,63 @@ impl App {
                 None => return,
             };
 
-            let sheet_data = self.sheet_data.get_or_set_ref(
-                &(self.state.language, sheet_name.clone()),
-                || -> TrackedPromise<anyhow::Result<(SheetTable, EditableSchema)>> {
-                    let language = self.state.language;
-                    let sheet_name = sheet_name.clone();
-                    let excel = backend.excel().clone();
-                    let schema = backend.schema().clone();
+            let sheet_data =
+                self.sheet_data
+                    .get_or_set_ref(&(self.state.language, sheet_name.clone()), || {
+                        let language = self.state.language;
+                        let sheet_name = sheet_name.clone();
+                        let excel = backend.excel().clone();
+                        let schema = backend.schema().clone();
 
-                    let ctx = ui.ctx().clone();
-                    TrackedPromise::spawn_local(ctx.clone(), async move {
-                        let (sheet, schema) = futures_util::try_join!(
-                            excel.get_sheet(&sheet_name, language),
-                            async { Ok(schema.get_schema_text(&sheet_name).await) },
-                        )?;
-                        let editor = match schema {
-                            Ok(schema) => EditableSchema::new(sheet_name, schema),
-                            Err(error) => {
-                                // Soft-fail on schema retrieval/parsing errors
-                                log::error!("Failed to get schema: {:?}", error);
-                                EditableSchema::from_blank(sheet_name, sheet.columns().len())?
-                            }
-                        };
+                        let ctx = ui.ctx().clone();
+                        Left(TrackedPromise::spawn_local(ctx.clone(), async move {
+                            let ret = Ok(futures_util::try_join!(
+                                excel.get_sheet(&sheet_name, language),
+                                async { Ok(schema.get_schema_text(&sheet_name).await) },
+                            )?);
+                            ret
+                        }))
+                    });
 
-                        Ok((SheetTable::new(sheet, editor.get_schema().cloned()), editor))
-                    })
-                },
-            );
+            let should_swap = if let Left(promise) = sheet_data {
+                promise.ready().is_some()
+            } else {
+                false
+            };
 
-            let (table, editor) = match sheet_data.ready_mut() {
-                Some(Ok(data)) => data,
-                Some(Err(err)) => {
+            if should_swap {
+                let mut replaced_data = Right(Err(anyhow::anyhow!("Failed to swap back!")));
+                std::mem::swap(sheet_data, &mut replaced_data);
+                let promise = match replaced_data {
+                    Left(promise) => promise,
+                    Right(_) => unreachable!(),
+                };
+                let result = poll_promise::Promise::from(promise).block_and_take();
+                let new_result = result.and_then(|(sheet, schema)| {
+                    let sheet_name = sheet.name().to_owned();
+                    let editor = match schema {
+                        Ok(schema) => EditableSchema::new(sheet_name, schema),
+                        Err(error) => {
+                            // Soft-fail on schema retrieval/parsing errors
+                            log::error!("Failed to get schema: {:?}", error);
+                            EditableSchema::from_blank(sheet_name, sheet.columns().len())?
+                        }
+                    };
+                    let table = SheetTable::new(sheet.clone(), editor.get_schema().cloned());
+                    Ok((table, editor))
+                });
+                replaced_data = Right(new_result);
+                std::mem::swap(sheet_data, &mut replaced_data);
+            }
+
+            let (table, editor) = match sheet_data {
+                Right(Ok(data)) => data,
+                Right(Err(err)) => {
                     ui.label("Failed to load sheet");
                     ui.label(err.to_string());
                     return;
                 }
-                None => {
+                Left(_) => {
                     ui.label("Loading...");
                     return;
                 }
@@ -268,7 +301,7 @@ impl App {
                 }
             }
 
-            table.draw(ui);
+            table.draw(backend, self.state.language, &self.icon_manager, ui);
         });
     }
 }

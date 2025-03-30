@@ -1,17 +1,31 @@
 use anyhow::bail;
-use egui::{Align, Direction, Id, Margin, Sense, UiBuilder, Widget};
+use egui::{
+    Align, Color32, Direction, Id, Layout, Margin, Sense, UiBuilder, Widget,
+    color_picker::show_color_at, ecolor::HexColor,
+};
 use egui_table::TableDelegate;
-use ironworks::file::exh::{ColumnDefinition, ColumnKind};
+use either::Either::{Left, Right};
+use ironworks::{
+    excel::Language,
+    file::exh::{ColumnDefinition, ColumnKind},
+};
 use itertools::Itertools;
-use std::{cell::RefCell, collections::HashMap, ops::Deref};
+use std::{
+    cell::{OnceCell, RefCell},
+    collections::HashMap,
+    ops::Deref,
+    u8,
+};
 
 use crate::{
+    backend::Backend,
     excel::{
         base::BaseSheet,
-        provider::{ExcelHeader, ExcelRow, ExcelSheet},
+        get_icon_path,
+        provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     },
     schema::{Field, FieldType, Schema},
-    utils::TrackedPromise,
+    utils::{CloneableResult, IconManager, TrackedPromise},
 };
 
 pub struct SheetTable {
@@ -20,7 +34,14 @@ pub struct SheetTable {
     subrow_lookup: Option<Vec<u32>>,
     row_sizes: RefCell<Vec<f32>>,
     schema_columns: Vec<SchemaColumn>,
-    referenced_sheets: RefCell<HashMap<String, TrackedPromise<BaseSheet>>>,
+    referenced_sheets: RefCell<HashMap<String, TrackedPromise<CloneableResult<BaseSheet>>>>,
+    draw_state: OnceCell<DrawState>,
+}
+
+struct DrawState {
+    backend: Backend,
+    language: Language,
+    icon_manager: IconManager,
 }
 
 impl SheetTable {
@@ -56,6 +77,7 @@ impl SheetTable {
             row_sizes,
             schema_columns,
             referenced_sheets: RefCell::new(HashMap::new()),
+            draw_state: OnceCell::new(),
         }
     }
 
@@ -83,7 +105,18 @@ impl SheetTable {
         Ok(())
     }
 
-    pub fn draw(&mut self, ui: &mut egui::Ui) {
+    pub fn draw(
+        &mut self,
+        backend: &Backend,
+        language: Language,
+        icon_manager: &IconManager,
+        ui: &mut egui::Ui,
+    ) {
+        self.draw_state.get_or_init(|| DrawState {
+            backend: backend.clone(),
+            language,
+            icon_manager: icon_manager.clone(),
+        });
         ui.push_id(Id::new(self.sheet.name()), |ui| {
             egui_table::Table::new()
                 .num_rows(self.sheet.subrow_count().into())
@@ -122,6 +155,34 @@ impl SheetTable {
         }
     }
 
+    // vvv All functions below require DrawState vvv
+
+    fn try_retrieve_linked_sheet(
+        &self,
+        ctx: &egui::Context,
+        name: String,
+    ) -> Option<anyhow::Result<BaseSheet>> {
+        let state = self.draw_state.get().unwrap();
+
+        let mut sheets = self.referenced_sheets.borrow_mut();
+        let promise = sheets.entry(name).or_insert_with_key(|name| {
+            let backend = state.backend.clone();
+            let name = name.clone();
+            let language = state.language;
+            TrackedPromise::spawn_local(ctx.clone(), async move {
+                backend
+                    .excel()
+                    .get_sheet(&name, language)
+                    .await
+                    .map_err(|e| e.into())
+            })
+        });
+        promise.ready().cloned().map(|result| match result {
+            Ok(sheet) => Ok(sheet),
+            Err(err) => Err(err.into()),
+        })
+    }
+
     fn size_column(
         &self,
         ui: &mut egui::Ui,
@@ -146,17 +207,27 @@ impl SheetTable {
         sheet_column: &SheetColumnDefinition,
         schema_column: &SchemaColumn,
     ) -> anyhow::Result<Option<f32>> {
-        let col_height = match sheet_column.kind() {
-            ColumnKind::String => {
-                let string = row
-                    .read_string(sheet_column.offset() as u32)?
-                    .format()
-                    .unwrap_or_else(|_| "Unknown".to_owned());
-                ui.text_style_height(&egui::TextStyle::Body) * string.split('\n').count() as f32
+        match &schema_column.meta {
+            SchemaColumnMeta::Scalar
+            | SchemaColumnMeta::ModelId
+            | SchemaColumnMeta::Color
+            | SchemaColumnMeta::Link(_)
+            | SchemaColumnMeta::ConditionalLink { .. } => {
+                let col_height = match sheet_column.kind() {
+                    ColumnKind::String => {
+                        let string = row
+                            .read_string(sheet_column.offset() as u32)?
+                            .format()
+                            .unwrap_or_else(|_| "Unknown".to_owned());
+                        ui.text_style_height(&egui::TextStyle::Body)
+                            * string.split('\n').count() as f32
+                    }
+                    _ => ui.text_style_height(&egui::TextStyle::Body),
+                };
+                Ok(Some(col_height + 4.0)) // symmetric inner y margin of 2.0
             }
-            _ => ui.text_style_height(&egui::TextStyle::Body),
-        };
-        Ok(Some(col_height + 4.0)) // symmetric inner y margin of 2.0
+            SchemaColumnMeta::Icon => Ok(Some(32.0 + 4.0)),
+        }
     }
 
     fn size_row_single_uncached(&self, ui: &mut egui::Ui, row_nr: u64) -> anyhow::Result<f32> {
@@ -199,14 +270,7 @@ impl SheetTable {
 
     fn copyable_label(ui: &mut egui::Ui, text: impl ToString) {
         ui.with_layout(
-            egui::Layout {
-                main_dir: Direction::LeftToRight,
-                main_wrap: false,
-                main_align: Align::Min,
-                main_justify: true,
-                cross_align: Align::Center,
-                cross_justify: true,
-            },
+            Layout::centered_and_justified(Direction::LeftToRight).with_main_align(Align::Min),
             |ui| {
                 let resp = egui::Label::new(text.to_string())
                     .sense(Sense::click())
@@ -221,6 +285,55 @@ impl SheetTable {
         );
     }
 
+    fn draw_icon(&self, ui: &mut egui::Ui, icon_id: u32) {
+        let state = self.draw_state.get().unwrap();
+
+        let image_source = state.icon_manager.get_icon(icon_id).or_else(|| {
+            log::info!("Icon not found in cache: {icon_id}");
+            match state.backend.excel().get_icon(icon_id) {
+                Ok(Left(url)) => Some(state.icon_manager.insert_icon_url(icon_id, url)),
+                Ok(Right(image)) => Some(state.icon_manager.insert_icon_texture(
+                    icon_id,
+                    ui.ctx(),
+                    image,
+                )),
+                Err(err) => {
+                    log::error!("Failed to get icon: {:?}", err);
+                    None
+                }
+            }
+        });
+        let resp = if let Some(source) = image_source {
+            ui.with_layout(
+                Layout::centered_and_justified(Direction::LeftToRight),
+                |ui| {
+                    egui::Image::new(source)
+                        .sense(Sense::click())
+                        .max_height(32.0)
+                        .ui(ui)
+                },
+            )
+            .inner
+        } else {
+            ui.label("Icon not found")
+        };
+        resp.on_hover_text(format!(
+            "Id: {icon_id}\nPath: {}",
+            get_icon_path(icon_id, true)
+        ))
+        .context_menu(|ui| {
+            if ui.button("Copy").clicked() {
+                ui.ctx().copy_text(icon_id.to_string());
+                ui.close_menu();
+            }
+            // ui.add_enabled_ui(image_source.is_some(), |ui| {
+            //     if ui.button("Save").clicked() {
+            //         image_source.unwrap().load(ctx, texture_options, size_hint)
+            //     }
+            // });
+        });
+    }
+
     fn draw_column(
         &self,
         ui: &mut egui::Ui,
@@ -228,66 +341,208 @@ impl SheetTable {
         sheet_column: &SheetColumnDefinition,
         schema_column: &SchemaColumn,
     ) -> anyhow::Result<()> {
-        match sheet_column.kind() {
-            ColumnKind::String => {
-                let string = row.read_string(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, string.format().unwrap_or_else(|_| "Unknown".to_owned()));
-            }
-            ColumnKind::Bool => {
-                let value = row.read_bool(sheet_column.offset() as u32);
+        match &schema_column.meta {
+            SchemaColumnMeta::Scalar => {
+                let value = match sheet_column.kind() {
+                    ColumnKind::String => row
+                        .read_string(sheet_column.offset() as u32)?
+                        .format()
+                        .unwrap_or_else(|_| "Unknown".to_owned()),
+                    ColumnKind::Bool => row.read_bool(sheet_column.offset() as u32).to_string(),
+                    ColumnKind::Int8 => row.read::<i8>(sheet_column.offset() as u32)?.to_string(),
+                    ColumnKind::UInt8 => row.read::<u8>(sheet_column.offset() as u32)?.to_string(),
+                    ColumnKind::Int16 => row.read::<i16>(sheet_column.offset() as u32)?.to_string(),
+                    ColumnKind::UInt16 => {
+                        row.read::<u16>(sheet_column.offset() as u32)?.to_string()
+                    }
+                    ColumnKind::Int32 => row.read::<i32>(sheet_column.offset() as u32)?.to_string(),
+                    ColumnKind::UInt32 => {
+                        row.read::<u32>(sheet_column.offset() as u32)?.to_string()
+                    }
+                    ColumnKind::Float32 => {
+                        row.read::<f32>(sheet_column.offset() as u32)?.to_string()
+                    }
+                    ColumnKind::Int64 => row.read::<i64>(sheet_column.offset() as u32)?.to_string(),
+                    ColumnKind::UInt64 => {
+                        row.read::<u64>(sheet_column.offset() as u32)?.to_string()
+                    }
+                    ColumnKind::PackedBool0
+                    | ColumnKind::PackedBool1
+                    | ColumnKind::PackedBool2
+                    | ColumnKind::PackedBool3
+                    | ColumnKind::PackedBool4
+                    | ColumnKind::PackedBool5
+                    | ColumnKind::PackedBool6
+                    | ColumnKind::PackedBool7 => row
+                        .read_packed_bool(
+                            sheet_column.offset() as u32,
+                            (u16::from(sheet_column.kind()) - u16::from(ColumnKind::PackedBool0))
+                                as u8,
+                        )
+                        .to_string(),
+                };
                 Self::copyable_label(ui, value);
             }
-            ColumnKind::Int8 => {
-                let value = row.read::<i8>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
+            SchemaColumnMeta::Icon => {
+                let icon_id: u32 = match sheet_column.kind() {
+                    ColumnKind::Int8 => row.read::<i8>(sheet_column.offset() as u32)?.try_into()?,
+                    ColumnKind::UInt8 => row.read::<u8>(sheet_column.offset() as u32)?.into(),
+                    ColumnKind::Int16 => {
+                        row.read::<i16>(sheet_column.offset() as u32)?.try_into()?
+                    }
+                    ColumnKind::UInt16 => row.read::<u16>(sheet_column.offset() as u32)?.into(),
+                    ColumnKind::Int32 => {
+                        row.read::<i32>(sheet_column.offset() as u32)?.try_into()?
+                    }
+                    ColumnKind::UInt32 => row.read::<u32>(sheet_column.offset() as u32)?.into(),
+                    // ColumnKind::Int64 => row.read::<i64>(sheet_column.offset() as u32)?.to_string(),
+                    // ColumnKind::UInt64 => {
+                    //     row.read::<u64>(sheet_column.offset() as u32)?.to_string()
+                    // }
+                    _ => {
+                        bail!("Invalid column kind for icon: {:?}", sheet_column.kind());
+                    }
+                };
+                self.draw_icon(ui, icon_id);
             }
-            ColumnKind::UInt8 => {
-                let value = row.read::<u8>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
+            SchemaColumnMeta::ModelId => {
+                let model_id: u64 = match sheet_column.kind() {
+                    ColumnKind::UInt32 => row.read::<u32>(sheet_column.offset() as u32)?.into(),
+                    ColumnKind::UInt64 => row.read::<u64>(sheet_column.offset() as u32)?,
+                    _ => {
+                        bail!(
+                            "Invalid column kind for model id: {:?}",
+                            sheet_column.kind()
+                        );
+                    }
+                };
+                Self::copyable_label(ui, model_id);
             }
-            ColumnKind::Int16 => {
-                let value = row.read::<i16>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
+            SchemaColumnMeta::Color => {
+                let color: u32 = match sheet_column.kind() {
+                    ColumnKind::UInt32 => row.read::<u32>(sheet_column.offset() as u32)?,
+                    _ => {
+                        bail!("Invalid column kind for color: {:?}", sheet_column.kind());
+                    }
+                };
+                let color_bytes = u32::to_le_bytes(color);
+                let (a, r, g, b) = color_bytes.iter().collect_tuple().unwrap();
+                let color = Color32::from_rgba_unmultiplied(*r, *g, *b, *a);
+                let resp = {
+                    let (rect, response) =
+                        ui.allocate_at_least(ui.available_size_before_wrap(), Sense::click());
+                    if ui.is_rect_visible(rect) {
+                        show_color_at(ui.painter(), color, rect);
+                    }
+                    response
+                };
+                let hex = if color.a() == u8::MAX {
+                    HexColor::Hex6(color)
+                } else {
+                    HexColor::Hex8(color)
+                };
+                resp.on_hover_text(hex.to_string()).context_menu(|ui| {
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(hex.to_string());
+                        ui.close_menu();
+                    }
+                });
             }
-            ColumnKind::UInt16 => {
-                let value = row.read::<u16>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
+            SchemaColumnMeta::Link(sheets) => {
+                let row_id: u32 = match sheet_column.kind() {
+                    ColumnKind::Int8 => row.read::<i8>(sheet_column.offset() as u32)?.try_into()?,
+                    ColumnKind::UInt8 => row.read::<u8>(sheet_column.offset() as u32)?.into(),
+                    ColumnKind::Int16 => {
+                        row.read::<i16>(sheet_column.offset() as u32)?.try_into()?
+                    }
+                    ColumnKind::UInt16 => row.read::<u16>(sheet_column.offset() as u32)?.into(),
+                    ColumnKind::Int32 => {
+                        row.read::<i32>(sheet_column.offset() as u32)?.try_into()?
+                    }
+                    ColumnKind::UInt32 => row.read::<u32>(sheet_column.offset() as u32)?.into(),
+                    ColumnKind::Int64 => {
+                        row.read::<i64>(sheet_column.offset() as u32)?.try_into()?
+                    }
+                    ColumnKind::UInt64 => {
+                        row.read::<u64>(sheet_column.offset() as u32)?.try_into()?
+                    }
+                    _ => {
+                        bail!("Invalid column kind for link: {:?}", sheet_column.kind());
+                    }
+                };
+
+                let mut drawn = false;
+                for sheet_name in sheets {
+                    if let Some(result) =
+                        self.try_retrieve_linked_sheet(ui.ctx(), sheet_name.clone())
+                    {
+                        match result {
+                            Ok(sheet) => {
+                                if sheet.get_row(row_id).is_ok() {
+                                    Self::copyable_label(ui, format!("{sheet_name}#{row_id}"));
+                                    drawn = true;
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                log::error!("Failed to retrieve linked sheet: {:?}", err);
+                            }
+                        }
+                    } else {
+                        Self::copyable_label(ui, format!("...#{row_id}"));
+                        drawn = true;
+                        break;
+                    }
+                }
+
+                if !drawn {
+                    Self::copyable_label(ui, format!("???#{row_id}"));
+                }
             }
-            ColumnKind::Int32 => {
-                let value = row.read::<i32>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
+            SchemaColumnMeta::ConditionalLink { column_idx, links } => {
+                let switch_column = self.columns.get(*column_idx as usize).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Failed to find column index for conditional link: {}",
+                        column_idx
+                    )
+                })?;
+                let switch_data: i32 = match switch_column.kind() {
+                    ColumnKind::Int8 => row.read::<i8>(switch_column.offset() as u32)?.into(),
+                    ColumnKind::UInt8 => row.read::<u8>(switch_column.offset() as u32)?.into(),
+                    ColumnKind::Int16 => row.read::<i16>(switch_column.offset() as u32)?.into(),
+                    ColumnKind::UInt16 => row.read::<u16>(switch_column.offset() as u32)?.into(),
+                    ColumnKind::Int32 => row.read::<i32>(switch_column.offset() as u32)?,
+                    ColumnKind::UInt32 => {
+                        row.read::<u32>(switch_column.offset() as u32)?.try_into()?
+                    }
+                    ColumnKind::Int64 => {
+                        row.read::<i64>(switch_column.offset() as u32)?.try_into()?
+                    }
+                    ColumnKind::UInt64 => {
+                        row.read::<u64>(switch_column.offset() as u32)?.try_into()?
+                    }
+                    _ => {
+                        bail!(
+                            "Invalid column kind for condition link's switch: {:?}",
+                            switch_column.kind()
+                        );
+                    }
+                };
+                if let Some(sheets) = links.get(&switch_data) {
+                    self.draw_column(
+                        ui,
+                        row,
+                        sheet_column,
+                        &SchemaColumn {
+                            name: schema_column.name.clone(),
+                            meta: SchemaColumnMeta::Link(sheets.clone()),
+                        },
+                    )?;
+                } else {
+                    Self::copyable_label(ui, format!("???#{switch_data}"));
+                }
             }
-            ColumnKind::UInt32 => {
-                let value = row.read::<u32>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
-            }
-            ColumnKind::Float32 => {
-                let value = row.read::<f32>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
-            }
-            ColumnKind::Int64 => {
-                let value = row.read::<i64>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
-            }
-            ColumnKind::UInt64 => {
-                let value = row.read::<u64>(sheet_column.offset() as u32)?;
-                Self::copyable_label(ui, value);
-            }
-            ColumnKind::PackedBool0
-            | ColumnKind::PackedBool1
-            | ColumnKind::PackedBool2
-            | ColumnKind::PackedBool3
-            | ColumnKind::PackedBool4
-            | ColumnKind::PackedBool5
-            | ColumnKind::PackedBool6
-            | ColumnKind::PackedBool7 => {
-                let value = row.read_packed_bool(
-                    sheet_column.offset() as u32,
-                    (u16::from(sheet_column.kind()) - u16::from(ColumnKind::PackedBool0)) as u8,
-                );
-                Self::copyable_label(ui, value);
-            }
-        };
+        }
         Ok(())
     }
 }
