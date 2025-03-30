@@ -1,5 +1,5 @@
 use crate::{
-    schema::{Field, Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
+    schema::{Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
     syntax_highlighting,
     utils::TrackedPromise,
 };
@@ -34,19 +34,24 @@ impl EditableSchema {
         }
     }
 
-    pub fn from_blank(sheet_name: impl Into<String>, column_count: usize) -> anyhow::Result<Self> {
-        let schema = Schema {
-            name: sheet_name.into(),
-            fields: (0..column_count)
-                .map(|i| Field {
-                    name: Some(format!("Unknown{i}")),
-                    ..Default::default()
-                })
-                .collect_vec(),
-            ..Default::default()
-        };
+    fn new_unchecked(schema: Schema) -> anyhow::Result<Self> {
         let text = serde_yml::to_string(&schema)?;
-        Ok(Self::new(schema.name, text))
+        Ok(Self {
+            sheet_name: schema.name.clone(),
+            original: text.clone(),
+            text,
+            is_modified: false,
+            schema: Ok(Ok(schema)),
+            save_promise: None,
+        })
+    }
+
+    pub fn from_blank(sheet_name: impl Into<String>, column_count: usize) -> anyhow::Result<Self> {
+        Self::new_unchecked(Schema::from_blank(sheet_name, column_count))
+    }
+
+    pub fn from_miscellaneous(sheet_name: impl Into<String>) -> anyhow::Result<Self> {
+        Self::new_unchecked(Schema::misc_sheet(sheet_name))
     }
 
     pub fn get_text(&self) -> &String {

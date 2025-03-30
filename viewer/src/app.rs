@@ -1,5 +1,5 @@
 use egui::{
-    Button, FontData, FontFamily, Id, Label, Layout, RichText, ScrollArea, TextEdit, Vec2,
+    Button, FontData, FontFamily, Id, Label, Layout, RichText, ScrollArea, TextEdit, Vec2, Widget,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
 };
 use egui_extras::install_image_loaders;
@@ -33,7 +33,7 @@ pub struct App {
     sheet_data: KeyedCache<
         (Language, String),
         Either<
-            TrackedPromise<anyhow::Result<(BaseSheet, anyhow::Result<String>)>>,
+            TrackedPromise<anyhow::Result<(BaseSheet, Option<anyhow::Result<String>>)>>,
             anyhow::Result<(SheetTable, EditableSchema)>,
         >,
     >,
@@ -212,6 +212,13 @@ impl App {
                     .get_or_set_ref(&(self.state.language, sheet_name.clone()), || {
                         let language = self.state.language;
                         let sheet_name = sheet_name.clone();
+                        let is_sheet_miscellaneous = backend
+                            .excel()
+                            .get_entries()
+                            .get(&sheet_name)
+                            .cloned()
+                            .unwrap_or_default()
+                            < 0;
                         let excel = backend.excel().clone();
                         let schema = backend.schema().clone();
 
@@ -219,7 +226,13 @@ impl App {
                         Left(TrackedPromise::spawn_local(ctx.clone(), async move {
                             let ret = Ok(futures_util::try_join!(
                                 excel.get_sheet(&sheet_name, language),
-                                async { Ok(schema.get_schema_text(&sheet_name).await) },
+                                async {
+                                    if !is_sheet_miscellaneous {
+                                        Ok(Some(schema.get_schema_text(&sheet_name).await))
+                                    } else {
+                                        Ok(None)
+                                    }
+                                },
                             )?);
                             ret
                         }))
@@ -242,12 +255,13 @@ impl App {
                 let new_result = result.and_then(|(sheet, schema)| {
                     let sheet_name = sheet.name().to_owned();
                     let editor = match schema {
-                        Ok(schema) => EditableSchema::new(sheet_name, schema),
-                        Err(error) => {
+                        Some(Ok(schema)) => EditableSchema::new(sheet_name, schema),
+                        Some(Err(error)) => {
                             // Soft-fail on schema retrieval/parsing errors
                             log::error!("Failed to get schema: {:?}", error);
                             EditableSchema::from_blank(sheet_name, sheet.columns().len())?
                         }
+                        None => EditableSchema::from_miscellaneous(sheet_name)?,
                     };
                     let table = SheetTable::new(sheet.clone(), editor.get_schema().cloned());
                     Ok((table, editor))
@@ -270,15 +284,25 @@ impl App {
             };
 
             ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                let mut visible = editor.visible(ui);
-                let resp = ui.horizontal(|ui| {
-                    ui.set_min_height(ui.text_style_height(&egui::TextStyle::Heading));
-                    ui.toggle_value(&mut visible, "Edit Schema")
-                        .on_hover_text("Edit the schema for this sheet")
+                let is_miscellaneous = backend
+                    .excel()
+                    .get_entries()
+                    .get(sheet_name)
+                    .cloned()
+                    .unwrap_or_default()
+                    < 0;
+
+                ui.add_enabled_ui(!is_miscellaneous, |ui| {
+                    let mut visible = editor.visible(ui);
+                    let resp = ui.horizontal(|ui| {
+                        ui.set_min_height(ui.text_style_height(&egui::TextStyle::Heading));
+                        ui.toggle_value(&mut visible, "Edit Schema")
+                            .on_hover_text("Edit the schema for this sheet")
+                    });
+                    if resp.inner.changed() {
+                        editor.set_visible(ui, visible);
+                    }
                 });
-                if resp.inner.changed() {
-                    editor.set_visible(ui, visible);
-                }
 
                 ui.add_sized(
                     Vec2::new(ui.available_width(), 0.0),
