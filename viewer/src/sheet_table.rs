@@ -1,6 +1,6 @@
 use anyhow::bail;
 use egui::{
-    Align, Color32, Direction, Id, Layout, Margin, Sense, UiBuilder, Widget,
+    Align, Color32, Direction, Id, Layout, Margin, Sense, UiBuilder, Vec2, Widget,
     color_picker::show_color_at, ecolor::HexColor,
 };
 use egui_table::TableDelegate;
@@ -14,7 +14,6 @@ use std::{
     cell::{OnceCell, RefCell},
     collections::HashMap,
     ops::Deref,
-    u8,
 };
 
 use crate::{
@@ -309,7 +308,8 @@ impl SheetTable {
                 |ui| {
                     egui::Image::new(source)
                         .sense(Sense::click())
-                        .max_height(32.0)
+                        .maintain_aspect_ratio(true)
+                        .fit_to_exact_size(Vec2::new(f32::INFINITY, 32.0))
                         .ui(ui)
                 },
             )
