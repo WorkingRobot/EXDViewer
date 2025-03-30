@@ -48,6 +48,7 @@ fn main() {
         egui_logger::builder().build(),
     )
     .init();
+    log::set_max_level(log::LevelFilter::Info);
 
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
