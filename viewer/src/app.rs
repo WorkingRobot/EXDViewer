@@ -224,7 +224,7 @@ impl App {
 
                         let ctx = ui.ctx().clone();
                         Left(TrackedPromise::spawn_local(ctx.clone(), async move {
-                            let ret = Ok(futures_util::try_join!(
+                            Ok(futures_util::try_join!(
                                 excel.get_sheet(&sheet_name, language),
                                 async {
                                     if !is_sheet_miscellaneous {
@@ -233,8 +233,7 @@ impl App {
                                         Ok(None)
                                     }
                                 },
-                            )?);
-                            ret
+                            )?)
                         }))
                     });
 

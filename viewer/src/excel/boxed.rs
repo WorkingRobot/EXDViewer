@@ -9,7 +9,7 @@ impl BoxedExcelProvider {
     ) -> Result<Self, ironworks::Error> {
         CachedProvider::new(
             Box::new(value) as Box<dyn ExcelFileProvider>,
-            std::num::NonZeroUsize::new(10).unwrap(),
+            std::num::NonZeroUsize::new(64).unwrap(),
         )
         .await
     }
@@ -17,7 +17,7 @@ impl BoxedExcelProvider {
     pub async fn new_web(value: super::web::WebFileProvider) -> Result<Self, ironworks::Error> {
         CachedProvider::new(
             Box::new(value) as Box<dyn ExcelFileProvider>,
-            std::num::NonZeroUsize::new(64).unwrap(),
+            std::num::NonZeroUsize::new(256).unwrap(),
         )
         .await
     }

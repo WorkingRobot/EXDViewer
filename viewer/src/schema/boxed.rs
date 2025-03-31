@@ -13,7 +13,7 @@ impl BoxedSchemaProvider {
     pub fn new_web(value: super::web::WebProvider) -> Self {
         CachedProvider::new(
             Box::new(value) as Box<dyn SchemaProvider>,
-            std::num::NonZeroUsize::new(64).unwrap(),
+            std::num::NonZeroUsize::new(256).unwrap(),
         )
     }
 }
