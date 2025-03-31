@@ -1,7 +1,6 @@
 use crate::{
     schema::{Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
-    syntax_highlighting,
-    utils::TrackedPromise,
+    utils::{CodeTheme, TrackedPromise, highlight},
 };
 use egui::{
     CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,
@@ -303,17 +302,11 @@ impl EditableSchema {
                     )
                     .show_inside(ui, |ui| {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                            let theme =
-                                syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+                            let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
 
                             let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
-                                let mut layout_job = syntax_highlighting::highlight(
-                                    ui.ctx(),
-                                    ui.style(),
-                                    &theme,
-                                    string,
-                                    "yaml",
-                                );
+                                let mut layout_job =
+                                    highlight(ui.ctx(), ui.style(), &theme, string, "yaml");
                                 if *word_wrap_enabled {
                                     layout_job.wrap.max_width = wrap_width;
                                 }

@@ -18,10 +18,7 @@ use std::{
 };
 use url::Url;
 
-use crate::{
-    utils::{CloneableResult, SharedFuture},
-    value_cache::KeyedCache,
-};
+use crate::utils::{CloneableResult, KeyedCache, SharedFuture};
 
 use super::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet};
 

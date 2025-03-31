@@ -14,10 +14,7 @@ mod excel;
 mod schema;
 mod setup;
 mod sheet_table;
-mod syntax_highlighting;
 mod utils;
-mod value_cache;
-mod web_stream;
 
 pub use app::App;
 

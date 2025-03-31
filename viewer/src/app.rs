@@ -19,9 +19,9 @@ use crate::{
     schema::provider::SchemaProvider,
     setup::{self, SetupWindow},
     sheet_table::SheetTable,
-    syntax_highlighting::CodeTheme,
-    utils::{BackgroundInitializer, IconManager, TrackedPromise, tick_promises},
-    value_cache::KeyedCache,
+    utils::{
+        BackgroundInitializer, CodeTheme, IconManager, KeyedCache, TrackedPromise, tick_promises,
+    },
 };
 
 #[derive(Default)]
