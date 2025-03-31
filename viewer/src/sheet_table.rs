@@ -1,10 +1,10 @@
 use anyhow::bail;
 use egui::{
     Align, Color32, Direction, Id, Layout, Margin, Sense, UiBuilder, Vec2, Widget,
-    color_picker::show_color_at, ecolor::HexColor,
+    color_picker::show_color_at, ecolor::HexColor, mutex::RwLock,
 };
 use egui_table::TableDelegate;
-use either::Either::{Left, Right};
+use either::Either::{self, Left, Right};
 use ironworks::{
     excel::Language,
     file::exh::{ColumnDefinition, ColumnKind},
@@ -14,6 +14,7 @@ use std::{
     cell::{OnceCell, RefCell},
     collections::HashMap,
     ops::Deref,
+    sync::Arc,
 };
 
 use crate::{
@@ -23,20 +24,33 @@ use crate::{
         get_icon_path,
         provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     },
-    schema::{Field, FieldType, Schema},
+    schema::{Field, FieldType, Schema, provider::SchemaProvider},
     utils::{CloneableResult, IconManager, TrackedPromise},
 };
 
-pub struct SheetTable {
+#[derive(Clone)]
+pub struct SheetTable(Arc<RwLock<SheetTableImpl>>);
+
+pub struct SheetTableImpl {
     sheet: BaseSheet,
     columns: Vec<SheetColumnDefinition>,
     subrow_lookup: Option<Vec<u32>>,
     row_sizes: RefCell<Vec<f32>>,
     schema_columns: Vec<SchemaColumn>,
-    referenced_sheets: RefCell<HashMap<String, TrackedPromise<CloneableResult<BaseSheet>>>>,
+    display_column_idx: Option<u32>,
+    referenced_sheets: RefCell<
+        HashMap<
+            String,
+            Either<
+                TrackedPromise<anyhow::Result<(BaseSheet, Option<Schema>)>>,
+                CloneableResult<SheetTable>,
+            >,
+        >,
+    >,
     draw_state: OnceCell<DrawState>,
 }
 
+#[derive(Clone)]
 struct DrawState {
     backend: Backend,
     language: Language,
@@ -45,10 +59,55 @@ struct DrawState {
 
 impl SheetTable {
     pub fn new(sheet: BaseSheet, schema: Option<Schema>) -> Self {
-        let schema_columns = schema
+        Self(Arc::new(RwLock::new(SheetTableImpl::new(sheet, schema))))
+    }
+
+    fn new_with_state(sheet: BaseSheet, schema: Option<Schema>, state: DrawState) -> Self {
+        let table = SheetTableImpl::new(sheet, schema);
+        if table.draw_state.set(state).is_err() {
+            panic!("Failed to set draw state");
+        }
+        Self(Arc::new(RwLock::new(table)))
+    }
+
+    pub fn name(&self) -> String {
+        self.0.read().name().to_owned()
+    }
+
+    pub fn sheet(&self) -> BaseSheet {
+        self.0.read().sheet.clone()
+    }
+
+    pub fn set_schema(&self, schema: Option<Schema>) -> anyhow::Result<()> {
+        self.0.write().set_schema(schema)
+    }
+
+    pub fn draw(
+        &self,
+        backend: &Backend,
+        language: Language,
+        icon_manager: &IconManager,
+        ui: &mut egui::Ui,
+    ) {
+        self.0.write().draw(backend, language, icon_manager, ui)
+    }
+
+    fn draw_display_column(
+        &self,
+        ui: &mut egui::Ui,
+        row_id: u32,
+        row: ExcelRow<'_>,
+    ) -> anyhow::Result<()> {
+        self.0.read().draw_display_column(ui, row_id, row)
+    }
+}
+
+impl SheetTableImpl {
+    pub fn new(sheet: BaseSheet, schema: Option<Schema>) -> Self {
+        let (schema_columns, display_column_idx) = schema
             .as_ref()
             .and_then(|schema| SchemaColumn::from_schema(schema, true, true).ok())
-            .unwrap_or_else(|| SchemaColumn::from_blank(sheet.columns().len() as u32));
+            .unwrap_or_else(|| (SchemaColumn::from_blank(sheet.columns().len() as u32), None));
 
         let columns = SheetColumnDefinition::from_sheet(&sheet);
         let row_sizes = RefCell::new(Vec::with_capacity(sheet.row_count() as usize));
@@ -75,6 +134,7 @@ impl SheetTable {
             subrow_lookup,
             row_sizes,
             schema_columns,
+            display_column_idx,
             referenced_sheets: RefCell::new(HashMap::new()),
             draw_state: OnceCell::new(),
         }
@@ -85,23 +145,41 @@ impl SheetTable {
     }
 
     pub fn set_schema(&mut self, schema: Option<Schema>) -> anyhow::Result<()> {
-        self.schema_columns = schema
+        (self.schema_columns, self.display_column_idx) = schema
             .map(|s| SchemaColumn::from_schema(&s, true, true))
             .map(|s| {
                 s.map(|r| {
-                    if r.len() == self.sheet.columns().len() {
+                    if r.0.len() == self.sheet.columns().len() {
                         Ok(r)
                     } else {
                         bail!(
                             "Schema column count does not match sheet column count: {} != {}",
-                            r.len(),
+                            r.0.len(),
                             self.sheet.columns().len()
                         )
                     }
                 })?
             })
-            .unwrap_or_else(|| Ok(SchemaColumn::from_blank(self.sheet.columns().len() as u32)))?;
+            .unwrap_or_else(|| {
+                Ok((
+                    SchemaColumn::from_blank(self.sheet.columns().len() as u32),
+                    None,
+                ))
+            })?;
         Ok(())
+    }
+
+    pub fn set_draw_state(
+        &mut self,
+        backend: &Backend,
+        language: Language,
+        icon_manager: &IconManager,
+    ) {
+        self.draw_state.get_or_init(|| DrawState {
+            backend: backend.clone(),
+            language,
+            icon_manager: icon_manager.clone(),
+        });
     }
 
     pub fn draw(
@@ -111,11 +189,7 @@ impl SheetTable {
         icon_manager: &IconManager,
         ui: &mut egui::Ui,
     ) {
-        self.draw_state.get_or_init(|| DrawState {
-            backend: backend.clone(),
-            language,
-            icon_manager: icon_manager.clone(),
-        });
+        self.set_draw_state(backend, language, icon_manager);
         ui.push_id(Id::new(self.sheet.name()), |ui| {
             egui_table::Table::new()
                 .num_rows(self.sheet.subrow_count().into())
@@ -160,26 +234,62 @@ impl SheetTable {
         &self,
         ctx: &egui::Context,
         name: String,
-    ) -> Option<anyhow::Result<BaseSheet>> {
+    ) -> Option<anyhow::Result<SheetTable>> {
         let state = self.draw_state.get().unwrap();
 
         let mut sheets = self.referenced_sheets.borrow_mut();
-        let promise = sheets.entry(name).or_insert_with_key(|name| {
+        let entry = sheets.entry(name).or_insert_with_key(|name| {
             let backend = state.backend.clone();
             let name = name.clone();
             let language = state.language;
-            TrackedPromise::spawn_local(ctx.clone(), async move {
-                backend
-                    .excel()
-                    .get_sheet(&name, language)
-                    .await
-                    .map_err(|e| e.into())
-            })
+            Left(TrackedPromise::spawn_local(ctx.clone(), async move {
+                let sheet_future = backend.excel().get_sheet(&name, language);
+                let schema_future = backend.schema().get_schema_text(&name);
+                Ok(futures_util::try_join!(
+                    async move { sheet_future.await }, //.map_err(|e| CloneableError::from(e)) },
+                    async move {
+                        Ok(schema_future
+                            .await
+                            .and_then(|s| Schema::from_str(&s))
+                            .map(|a| a.ok())
+                            .ok()
+                            .flatten())
+                    }
+                )?)
+            }))
         });
-        promise.ready().cloned().map(|result| match result {
-            Ok(sheet) => Ok(sheet),
-            Err(err) => Err(err.into()),
-        })
+
+        let should_swap = if let Left(promise) = entry {
+            promise.ready().is_some()
+        } else {
+            false
+        };
+
+        if should_swap {
+            let mut replaced_data = Right(Err(anyhow::anyhow!("Failed to swap back!").into()));
+            std::mem::swap(entry, &mut replaced_data);
+            let promise = match replaced_data {
+                Left(promise) => promise,
+                Right(_) => unreachable!(),
+            };
+            let result = poll_promise::Promise::from(promise).block_and_take();
+            let new_result = result
+                .and_then(|(sheet, schema)| {
+                    Ok(SheetTable::new_with_state(
+                        sheet.clone(),
+                        schema,
+                        self.draw_state.get().unwrap().clone(),
+                    ))
+                })
+                .map_err(|e| e.into());
+            replaced_data = Right(new_result);
+            std::mem::swap(entry, &mut replaced_data);
+        }
+
+        match entry {
+            Left(_) => None,
+            Right(result) => Some(result.as_ref().cloned().map_err(|e| e.clone().into())),
+        }
     }
 
     fn size_column(
@@ -477,9 +587,9 @@ impl SheetTable {
                         self.try_retrieve_linked_sheet(ui.ctx(), sheet_name.clone())
                     {
                         match result {
-                            Ok(sheet) => {
-                                if sheet.get_row(row_id).is_ok() {
-                                    Self::copyable_label(ui, format!("{sheet_name}#{row_id}"));
+                            Ok(table) => {
+                                if let Ok(row) = table.sheet().get_row(row_id) {
+                                    table.draw_display_column(ui, row_id, row)?;
                                     drawn = true;
                                     break;
                                 }
@@ -545,9 +655,27 @@ impl SheetTable {
         }
         Ok(())
     }
+
+    fn draw_display_column(
+        &self,
+        ui: &mut egui::Ui,
+        row_id: u32,
+        row: ExcelRow<'_>,
+    ) -> anyhow::Result<()> {
+        if let Some(column_idx) = self.display_column_idx {
+            if let (Some(sheet_column), Some(schema_column)) = (
+                self.columns.get(column_idx as usize),
+                self.schema_columns.get(column_idx as usize),
+            ) {
+                return self.draw_column(ui, row, sheet_column, schema_column);
+            }
+        }
+        Self::copyable_label(ui, format!("{}#{row_id}", self.name()));
+        Ok(())
+    }
 }
 
-impl TableDelegate for SheetTable {
+impl TableDelegate for SheetTableImpl {
     fn header_cell_ui(&mut self, ui: &mut egui::Ui, cell_inf: &egui_table::HeaderCellInfo) {
         let egui_table::HeaderCellInfo { col_range, .. } = cell_inf;
 
@@ -794,7 +922,7 @@ impl SchemaColumn {
         schema: &Schema,
         pending_fields: bool,
         pending_names: bool,
-    ) -> anyhow::Result<Vec<Self>> {
+    ) -> anyhow::Result<(Vec<Self>, Option<u32>)> {
         let fields = pending_fields
             .then_some(())
             .and(schema.pending_fields.as_ref())
@@ -802,7 +930,16 @@ impl SchemaColumn {
 
         let mut ret = vec![];
         Self::get_columns_inner(&mut ret, "".to_string(), fields, pending_names, false)?;
-        Ok(ret)
+
+        let display_idx = if let Some(display_field) = &schema.display_field {
+            ret.iter()
+                .find_position(|c| c.name == *display_field)
+                .map(|f| f.0 as u32)
+        } else {
+            None
+        };
+
+        Ok((ret, display_idx))
     }
 
     fn from_blank(column_count: u32) -> Vec<Self> {
