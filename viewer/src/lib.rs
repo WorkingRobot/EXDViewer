@@ -13,7 +13,7 @@ mod editable_schema;
 mod excel;
 mod schema;
 mod setup;
-mod sheet_table;
+mod sheet;
 mod utils;
 
 pub use app::App;

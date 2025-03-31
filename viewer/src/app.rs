@@ -18,7 +18,7 @@ use crate::{
     },
     schema::provider::SchemaProvider,
     setup::{self, SetupWindow},
-    sheet_table::SheetTable,
+    sheet::SheetTable,
     utils::{
         BackgroundInitializer, CodeTheme, IconManager, KeyedCache, TrackedPromise, tick_promises,
     },
