@@ -5,9 +5,10 @@ use itertools::Itertools;
 
 use crate::schema::{Field, FieldType, Schema};
 
-struct SchemaColumn {
-    name: String,
-    meta: SchemaColumnMeta,
+#[derive(Debug, Clone)]
+pub struct SchemaColumn {
+    pub name: String,
+    pub meta: SchemaColumnMeta,
 }
 
 impl SchemaColumn {
@@ -127,7 +128,7 @@ impl SchemaColumn {
         Ok(())
     }
 
-    fn from_schema(
+    pub fn from_schema(
         schema: &Schema,
         pending_fields: bool,
         pending_names: bool,
@@ -151,7 +152,7 @@ impl SchemaColumn {
         Ok((ret, display_idx))
     }
 
-    fn from_blank(column_count: u32) -> Vec<Self> {
+    pub fn from_blank(column_count: u32) -> Vec<Self> {
         (0..column_count)
             .map(|i| Self {
                 name: format!("Column{}", i),
@@ -159,10 +160,14 @@ impl SchemaColumn {
             })
             .collect()
     }
+
+    pub fn new(name: String, meta: SchemaColumnMeta) -> Self {
+        Self { name, meta }
+    }
 }
 
 #[derive(Debug, Clone)]
-enum SchemaColumnMeta {
+pub enum SchemaColumnMeta {
     Scalar,
     Icon,
     ModelId,

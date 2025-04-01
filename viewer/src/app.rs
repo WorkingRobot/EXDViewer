@@ -3,7 +3,6 @@ use egui::{
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
 };
 use egui_extras::install_image_loaders;
-use either::Either::{self, Left, Right};
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ironworks::excel::Language;
 use itertools::Itertools;
@@ -18,9 +17,10 @@ use crate::{
     },
     schema::provider::SchemaProvider,
     setup::{self, SetupWindow},
-    sheet::SheetTable,
+    sheet::{GlobalContext, SheetTable, TableContext},
     utils::{
-        BackgroundInitializer, CodeTheme, IconManager, KeyedCache, TrackedPromise, tick_promises,
+        BackgroundInitializer, CodeTheme, ConvertiblePromise, IconManager, KeyedCache,
+        TrackedPromise, tick_promises,
     },
 };
 
@@ -32,7 +32,7 @@ pub struct App {
     backend: Option<BackgroundInitializer<Backend>>,
     sheet_data: KeyedCache<
         (Language, String),
-        Either<
+        ConvertiblePromise<
             TrackedPromise<anyhow::Result<(BaseSheet, Option<anyhow::Result<String>>)>>,
             anyhow::Result<(SheetTable, EditableSchema)>,
         >,
@@ -50,20 +50,20 @@ impl App {
         // Note that you must enable the `persistence` feature for this to work.
         if let Some(storage) = cc.storage {
             if let Some(state) = eframe::get_value(storage, eframe::APP_KEY) {
-                return Self::from_state(state);
+                return Self::from_state(&cc.egui_ctx, state);
             }
         }
 
         Self::default()
     }
 
-    fn from_state(state: AppState) -> Self {
+    fn from_state(ctx: &egui::Context, state: AppState) -> Self {
         let mut ret = Self {
             state,
             ..Default::default()
         };
         if let Some(config) = &ret.state.config {
-            ret.set_config(None, config.clone());
+            ret.set_config(ctx, config.clone());
         }
         ret
     }
@@ -101,7 +101,7 @@ impl App {
         self.state.config = None;
     }
 
-    fn set_config(&mut self, ctx: Option<&egui::Context>, config: AppConfig) {
+    fn set_config(&mut self, ctx: &egui::Context, config: AppConfig) {
         self.sheet_data.clear();
         self.backend = Some(BackgroundInitializer::new(
             ctx,
@@ -223,35 +223,25 @@ impl App {
                         let schema = backend.schema().clone();
 
                         let ctx = ui.ctx().clone();
-                        Left(TrackedPromise::spawn_local(ctx.clone(), async move {
-                            Ok(futures_util::try_join!(
-                                excel.get_sheet(&sheet_name, language),
-                                async {
-                                    if !is_sheet_miscellaneous {
-                                        Ok(Some(schema.get_schema_text(&sheet_name).await))
-                                    } else {
-                                        Ok(None)
-                                    }
-                                },
-                            )?)
-                        }))
+                        ConvertiblePromise::new_promise(TrackedPromise::spawn_local(
+                            ctx.clone(),
+                            async move {
+                                Ok(futures_util::try_join!(
+                                    excel.get_sheet(&sheet_name, language),
+                                    async {
+                                        if !is_sheet_miscellaneous {
+                                            Ok(Some(schema.get_schema_text(&sheet_name).await))
+                                        } else {
+                                            Ok(None)
+                                        }
+                                    },
+                                )?)
+                            },
+                        ))
                     });
 
-            let should_swap = if let Left(promise) = sheet_data {
-                promise.ready().is_some()
-            } else {
-                false
-            };
-
-            if should_swap {
-                let mut replaced_data = Right(Err(anyhow::anyhow!("Failed to swap back!")));
-                std::mem::swap(sheet_data, &mut replaced_data);
-                let promise = match replaced_data {
-                    Left(promise) => promise,
-                    Right(_) => unreachable!(),
-                };
-                let result = poll_promise::Promise::from(promise).block_and_take();
-                let new_result = result.and_then(|(sheet, schema)| {
+            let sheet_data = sheet_data.get(|result| {
+                result.and_then(|(sheet, schema)| {
                     let sheet_name = sheet.name().to_owned();
                     let editor = match schema {
                         Some(Ok(schema)) => EditableSchema::new(sheet_name, schema),
@@ -262,21 +252,28 @@ impl App {
                         }
                         None => EditableSchema::from_miscellaneous(sheet_name)?,
                     };
-                    let table = SheetTable::new(sheet.clone(), editor.get_schema().cloned());
+                    let table = SheetTable::new(TableContext::new(
+                        GlobalContext::new(
+                            ui.ctx().clone(),
+                            backend.clone(),
+                            self.state.language,
+                            self.icon_manager.clone(),
+                        ),
+                        sheet.clone(),
+                        editor.get_schema().cloned(),
+                    ));
                     Ok((table, editor))
-                });
-                replaced_data = Right(new_result);
-                std::mem::swap(sheet_data, &mut replaced_data);
-            }
+                })
+            });
 
             let (table, editor) = match sheet_data {
-                Right(Ok(data)) => data,
-                Right(Err(err)) => {
+                Some(Ok(data)) => data,
+                Some(Err(err)) => {
                     ui.label("Failed to load sheet");
                     ui.label(err.to_string());
                     return;
                 }
-                Left(_) => {
+                None => {
                     ui.label("Loading...");
                     return;
                 }
@@ -318,13 +315,13 @@ impl App {
             );
             if resp.changed() {
                 if let Some(schema) = editor.get_schema() {
-                    if let Err(e) = table.set_schema(Some(schema.clone())) {
+                    if let Err(e) = table.context().set_schema(Some(schema.clone())) {
                         log::error!("Failed to set schema: {:?}", e);
                     }
                 }
             }
 
-            table.draw(backend, self.state.language, &self.icon_manager, ui);
+            table.draw(ui);
         });
     }
 }
@@ -421,7 +418,7 @@ impl eframe::App for App {
             }
         };
         if let Some(config) = config {
-            self.set_config(Some(ctx), config);
+            self.set_config(ctx, config);
         }
     }
 }

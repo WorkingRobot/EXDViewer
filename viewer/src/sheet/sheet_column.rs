@@ -5,7 +5,8 @@ use itertools::Itertools;
 
 use crate::excel::{base::BaseSheet, provider::ExcelHeader};
 
-struct SheetColumnDefinition {
+#[derive(Clone, Debug)]
+pub struct SheetColumnDefinition {
     pub column: ColumnDefinition,
     pub id: u32,
 }
