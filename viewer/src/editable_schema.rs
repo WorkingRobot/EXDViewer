@@ -65,26 +65,26 @@ impl EditableSchema {
         self.schema.as_ref().ok().and_then(|r| r.as_ref().ok())
     }
 
-    pub fn set_visible(&mut self, ui: &mut egui::Ui, visible: bool) {
+    pub fn set_visible(&self, ui: &mut egui::Ui, visible: bool) {
         let id = Id::new("schema-editor-visible");
         ui.data_mut(|d| {
             d.insert_persisted(id, visible);
         });
     }
 
-    pub fn visible(&mut self, ui: &mut egui::Ui) -> bool {
+    pub fn visible(&self, ui: &mut egui::Ui) -> bool {
         let id = Id::new("schema-editor-visible");
         ui.data_mut(|d| d.get_persisted(id).unwrap_or_default())
     }
 
-    fn set_errors_visible(&mut self, ui: &mut egui::Ui, visible: bool) {
+    fn set_errors_visible(&self, ui: &mut egui::Ui, visible: bool) {
         let id = Id::new("schema-editor-errors-shown");
         ui.data_mut(|d| {
             d.insert_persisted(id, visible);
         });
     }
 
-    fn errors_visible(&mut self, ui: &mut egui::Ui) -> bool {
+    fn errors_visible(&self, ui: &mut egui::Ui) -> bool {
         let id = Id::new("schema-editor-errors-shown");
         ui.data_mut(|d| d.get_persisted(id).unwrap_or_default())
     }
