@@ -1,3 +1,5 @@
+use std::num::NonZero;
+
 use egui::{
     Button, FontData, FontFamily, Id, Label, Layout, RichText, ScrollArea, TextEdit, Vec2, Widget,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
@@ -6,6 +8,7 @@ use egui_extras::install_image_loaders;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ironworks::excel::Language;
 use itertools::Itertools;
+use lru::LruCache;
 
 use crate::{
     backend::Backend,
@@ -19,18 +22,17 @@ use crate::{
     setup::{self, SetupWindow},
     sheet::{GlobalContext, SheetTable, TableContext},
     utils::{
-        BackgroundInitializer, CodeTheme, ConvertiblePromise, IconManager, KeyedCache,
-        TrackedPromise, tick_promises,
+        BackgroundInitializer, CodeTheme, ConvertiblePromise, IconManager, TrackedPromise,
+        tick_promises,
     },
 };
 
-#[derive(Default)]
 pub struct App {
     state: AppState,
     icon_manager: IconManager,
     setup_window: setup::SetupWindow,
     backend: Option<BackgroundInitializer<Backend>>,
-    sheet_data: KeyedCache<
+    sheet_data: LruCache<
         (Language, String),
         ConvertiblePromise<
             TrackedPromise<anyhow::Result<(BaseSheet, Option<anyhow::Result<String>>)>>,
@@ -38,6 +40,19 @@ pub struct App {
         >,
     >,
     sheet_matcher: SkimMatcherV2,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            state: AppState::default(),
+            icon_manager: IconManager::new(),
+            setup_window: SetupWindow::new(),
+            backend: None,
+            sheet_data: LruCache::new(NonZero::new(32).unwrap()),
+            sheet_matcher: SkimMatcherV2::default(),
+        }
+    }
 }
 
 impl App {
@@ -207,38 +222,39 @@ impl App {
                 None => return,
             };
 
-            let sheet_data =
-                self.sheet_data
-                    .get_or_set_ref(&(self.state.language, sheet_name.clone()), || {
-                        let language = self.state.language;
-                        let sheet_name = sheet_name.clone();
-                        let is_sheet_miscellaneous = backend
-                            .excel()
-                            .get_entries()
-                            .get(&sheet_name)
-                            .cloned()
-                            .unwrap_or_default()
-                            < 0;
-                        let excel = backend.excel().clone();
-                        let schema = backend.schema().clone();
+            let sheet_data = self.sheet_data.get_or_insert_mut_ref(
+                &(self.state.language, sheet_name.clone()),
+                || {
+                    let language = self.state.language;
+                    let sheet_name = sheet_name.clone();
+                    let is_sheet_miscellaneous = backend
+                        .excel()
+                        .get_entries()
+                        .get(&sheet_name)
+                        .cloned()
+                        .unwrap_or_default()
+                        < 0;
+                    let excel = backend.excel().clone();
+                    let schema = backend.schema().clone();
 
-                        let ctx = ui.ctx().clone();
-                        ConvertiblePromise::new_promise(TrackedPromise::spawn_local(
-                            ctx.clone(),
-                            async move {
-                                Ok(futures_util::try_join!(
-                                    excel.get_sheet(&sheet_name, language),
-                                    async {
-                                        if !is_sheet_miscellaneous {
-                                            Ok(Some(schema.get_schema_text(&sheet_name).await))
-                                        } else {
-                                            Ok(None)
-                                        }
-                                    },
-                                )?)
-                            },
-                        ))
-                    });
+                    let ctx = ui.ctx().clone();
+                    ConvertiblePromise::new_promise(TrackedPromise::spawn_local(
+                        ctx.clone(),
+                        async move {
+                            Ok(futures_util::try_join!(
+                                excel.get_sheet(&sheet_name, language),
+                                async {
+                                    if !is_sheet_miscellaneous {
+                                        Ok(Some(schema.get_schema_text(&sheet_name).await))
+                                    } else {
+                                        Ok(None)
+                                    }
+                                },
+                            )?)
+                        },
+                    ))
+                },
+            );
 
             let sheet_data = sheet_data.get(|result| {
                 result.and_then(|(sheet, schema)| {
@@ -420,6 +436,8 @@ impl eframe::App for App {
         if let Some(config) = config {
             self.set_config(ctx, config);
         }
+
+        tick_promises(ctx);
     }
 }
 
