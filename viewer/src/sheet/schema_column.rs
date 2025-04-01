@@ -14,16 +14,13 @@ pub struct SchemaColumn {
 impl SchemaColumn {
     fn get_columns_inner(
         ret: &mut Vec<Self>,
+        column_placeholder: &mut u32,
+        column_lookups: &mut Vec<String>,
         scope: String,
         fields: &[Field],
         pending_names: bool,
         is_array: bool,
     ) -> anyhow::Result<()> {
-        let column_offset = ret.len() as u32;
-
-        let mut column_placeholder = u32::MAX;
-        let mut column_lookups = vec![];
-
         for field in fields {
             let mut scope = scope.clone();
             if is_array {
@@ -44,6 +41,8 @@ impl SchemaColumn {
                 for i in 0..(field.count.unwrap_or(1)) {
                     Self::get_columns_inner(
                         ret,
+                        column_placeholder,
+                        column_lookups,
                         scope.clone() + &format!("[{}]", i),
                         subfields,
                         pending_names,
@@ -62,12 +61,13 @@ impl SchemaColumn {
                         if let Some(targets) = &field.targets {
                             SchemaColumnMeta::Link(targets.clone())
                         } else if let Some(condition) = &field.condition {
-                            column_placeholder -= 1;
-                            column_lookups.push(&condition.switch);
-                            SchemaColumnMeta::ConditionalLink {
-                                column_idx: column_placeholder,
+                            column_lookups.push(condition.switch.clone());
+                            let ret = SchemaColumnMeta::ConditionalLink {
+                                column_idx: *column_placeholder,
                                 links: condition.cases.clone(),
-                            }
+                            };
+                            *column_placeholder += 1;
+                            ret
                         } else {
                             bail!("Link field missing targets or condition: {:?}", field);
                         }
@@ -79,52 +79,51 @@ impl SchemaColumn {
             }
         }
 
-        for i in 0..ret.len() - column_offset as usize {
-            let column = &ret[column_offset as usize + i];
-            if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = column.meta {
-                let column_lookup_idx = u32::MAX - column_idx - 1;
-                let column_lookup_name = match column_lookups.get(column_lookup_idx as usize) {
-                    Some(&name) => name,
+        Ok(())
+    }
+
+    fn resolve_placeholders(
+        ret: &mut Vec<Self>,
+        column_lookups: &Vec<String>,
+    ) -> anyhow::Result<()> {
+        for i in 0..ret.len() {
+            let column = &ret[i];
+            if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = &column.meta {
+                let switch_name = match column_lookups.get(*column_idx as usize) {
+                    Some(name) => name,
                     None => {
                         bail!(
                             "Failed to find column lookup name for {}'s conditional link: {}",
                             column.name,
-                            column_lookup_idx
+                            *column_idx
                         );
                     }
                 };
 
-                let resolved_column_idx = column_offset
-                    + match ret[column_offset as usize..]
-                        .iter()
-                        .enumerate()
-                        .find_map(|(i, c)| {
-                            if c.name[scope.len()..] == *column_lookup_name {
-                                Some(i as u32)
-                            } else {
-                                None
-                            }
-                        }) {
-                        Some(idx) => idx,
-                        None => {
-                            bail!(
-                                "Failed to find column index for {}'s conditional link: {}",
-                                column.name,
-                                column_lookup_name
-                            );
-                        }
-                    };
+                let resolved_column_idx = match ret.iter().enumerate().find_map(|(i, c)| {
+                    if c.name == *switch_name {
+                        Some(i as u32)
+                    } else {
+                        None
+                    }
+                }) {
+                    Some(idx) => idx,
+                    None => {
+                        bail!(
+                            "Failed to find column index for {}'s conditional link: {}",
+                            column.name,
+                            switch_name
+                        );
+                    }
+                };
 
-                if let SchemaColumnMeta::ConditionalLink { column_idx, .. } =
-                    &mut ret[column_offset as usize + i].meta
-                {
+                if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = &mut ret[i].meta {
                     *column_idx = resolved_column_idx;
                 } else {
                     unreachable!();
                 }
             }
         }
-
         Ok(())
     }
 
@@ -139,7 +138,18 @@ impl SchemaColumn {
             .unwrap_or(&schema.fields);
 
         let mut ret = vec![];
-        Self::get_columns_inner(&mut ret, "".to_string(), fields, pending_names, false)?;
+        let mut column_placeholder = 0;
+        let mut column_lookups = vec![];
+        Self::get_columns_inner(
+            &mut ret,
+            &mut column_placeholder,
+            &mut column_lookups,
+            "".to_string(),
+            fields,
+            pending_names,
+            false,
+        )?;
+        Self::resolve_placeholders(&mut ret, &column_lookups)?;
 
         let display_idx = if let Some(display_field) = &schema.display_field {
             ret.iter()
