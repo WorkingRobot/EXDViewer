@@ -74,16 +74,20 @@ impl<'a> Cell<'a> {
                 self.draw_color(ui, color);
             }
             SchemaColumnMeta::Link(sheets) => {
-                let row_id: u32 = read_integer(
+                let row_id: isize = read_integer(
                     self.row,
                     self.sheet_column.offset() as u32,
                     self.sheet_column.kind(),
                 )?;
 
-                match self.table_context.resolve_link(sheets, row_id) {
+                match row_id
+                    .try_into()
+                    .ok()
+                    .and_then(|id| self.table_context.resolve_link(sheets, id))
+                {
                     Some(Some((sheet_name, table))) => {
                         if let Some(cell) =
-                            table.display_field_cell(table.sheet().get_row(row_id).unwrap())
+                            table.display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
                         {
                             cell?.draw(ui)?;
                         } else {
@@ -281,7 +285,7 @@ impl Widget for Cell<'_> {
         if let Err(err) = self.draw(ui) {
             log::error!("Failed to draw cell: {:?}", err);
             return ui
-                .colored_label(Color32::LIGHT_RED, "⚠️")
+                .colored_label(Color32::LIGHT_RED, "⚠")
                 .on_hover_text(err.to_string());
         }
         ui.response()
@@ -333,5 +337,11 @@ fn read_integer<T: num_traits::NumCast>(
         ColumnKind::UInt64 => T::from(row.read::<u64>(offset)?),
         _ => bail!("Invalid column kind for integer: {:?}", kind),
     }
-    .ok_or_else(|| anyhow::anyhow!("Failed to convert value to target type"))
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "Failed to convert value to target type: {:?} -> {}",
+            read_string(row, offset, kind).unwrap_or_default(),
+            std::any::type_name::<T>()
+        )
+    })
 }
