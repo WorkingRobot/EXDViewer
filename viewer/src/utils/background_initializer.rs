@@ -11,30 +11,20 @@ struct BackgroundInitializerImpl<T: 'static> {
 
 impl<T: 'static> BackgroundInitializer<T> {
     pub fn new(
-        ctx: Option<&egui::Context>,
+        ctx: &egui::Context,
         future: impl Future<Output = anyhow::Result<T>> + 'static,
     ) -> Self {
         Self(Arc::new_cyclic(|this| {
             let this = this.clone();
             BackgroundInitializerImpl {
                 value: RefCell::new(None),
-                initializer: if let Some(ctx) = ctx {
-                    TrackedPromise::spawn_local(ctx.clone(), async move {
-                        let val = future.await?;
-                        let this: Arc<BackgroundInitializerImpl<T>> =
-                            this.upgrade().ok_or(anyhow::anyhow!("self dropped"))?;
-                        *this.value.borrow_mut() = Some(Arc::new(val));
-                        Ok(())
-                    })
-                } else {
-                    TrackedPromise::spawn_local_untracked(async move {
-                        let val = future.await?;
-                        let this: Arc<BackgroundInitializerImpl<T>> =
-                            this.upgrade().ok_or(anyhow::anyhow!("self dropped"))?;
-                        *this.value.borrow_mut() = Some(Arc::new(val));
-                        Ok(())
-                    })
-                },
+                initializer: TrackedPromise::spawn_local(ctx.clone(), async move {
+                    let val = future.await?;
+                    let this: Arc<BackgroundInitializerImpl<T>> =
+                        this.upgrade().ok_or(anyhow::anyhow!("self dropped"))?;
+                    *this.value.borrow_mut() = Some(Arc::new(val));
+                    Ok(())
+                }),
             }
         }))
     }

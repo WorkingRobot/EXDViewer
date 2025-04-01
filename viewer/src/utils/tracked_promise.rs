@@ -5,7 +5,7 @@ use poll_promise::Promise;
 
 pub struct TrackedPromise<T: Send + 'static> {
     promise: Promise<T>,
-    context: Option<egui::Context>,
+    context: egui::Context,
 }
 
 pub fn tick_promises(ctx: &egui::Context) {
@@ -22,16 +22,9 @@ pub fn tick_promises(ctx: &egui::Context) {
 }
 
 impl<T: Send + 'static> TrackedPromise<T> {
-    pub fn spawn_local_untracked(future: impl Future<Output = T> + 'static) -> Self {
-        Self {
-            context: None,
-            promise: Promise::spawn_local(future),
-        }
-    }
-
     pub fn spawn_local(ctx: egui::Context, future: impl Future<Output = T> + 'static) -> Self {
         Self {
-            context: Some(ctx.clone()),
+            context: ctx.clone(),
             promise: Promise::spawn_local(async move {
                 Self::increment(&ctx);
                 let ret = future.await;
