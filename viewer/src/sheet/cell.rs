@@ -1,6 +1,7 @@
 use anyhow::bail;
 use egui::{
-    Color32, Direction, Layout, Sense, Vec2, Widget, color_picker::show_color_at, ecolor::HexColor,
+    Color32, Direction, InnerResponse, Layout, Sense, Vec2, Widget, color_picker::show_color_at,
+    ecolor::HexColor,
 };
 use either::Either::{Left, Right};
 use ironworks::file::exh::ColumnKind;
@@ -22,6 +23,11 @@ pub struct Cell<'a> {
     table_context: &'a TableContext,
 }
 
+pub enum CellResponse {
+    None,
+    Icon(u32),
+}
+
 impl<'a> Cell<'a> {
     pub fn new(
         row: ExcelRow<'a>,
@@ -37,7 +43,7 @@ impl<'a> Cell<'a> {
         }
     }
 
-    fn draw(self, ui: &mut egui::Ui) -> anyhow::Result<()> {
+    fn draw(self, ui: &mut egui::Ui) -> anyhow::Result<CellResponse> {
         match self.schema_column {
             SchemaColumnMeta::Scalar => {
                 let value = read_string(
@@ -53,7 +59,9 @@ impl<'a> Cell<'a> {
                     self.sheet_column.offset() as u32,
                     self.sheet_column.kind(),
                 )?;
-                self.draw_icon(ui, icon_id);
+                if self.draw_icon(ui, icon_id) {
+                    return Ok(CellResponse::Icon(icon_id));
+                }
             }
             SchemaColumnMeta::ModelId => {
                 let model_id: u64 = read_integer(
@@ -122,14 +130,14 @@ impl<'a> Cell<'a> {
                 }
             }
         }
-        Ok(())
+        Ok(CellResponse::None)
     }
 
     fn draw_copyable_text(&self, ui: &mut egui::Ui, text: String) {
         copyable_label(ui, text);
     }
 
-    fn draw_icon(&self, ui: &mut egui::Ui, icon_id: u32) {
+    fn draw_icon(&self, ui: &mut egui::Ui, icon_id: u32) -> bool {
         let (excel, icon_mgr) = (
             self.table_context.global().backend().excel(),
             &self.table_context.global().icon_manager(),
@@ -160,11 +168,11 @@ impl<'a> Cell<'a> {
         } else {
             ui.label("Icon not found")
         };
-        resp.on_hover_text(format!(
+        let resp = resp.on_hover_text(format!(
             "Id: {icon_id}\nPath: {}",
             get_icon_path(icon_id, true)
-        ))
-        .context_menu(|ui| {
+        ));
+        resp.context_menu(|ui| {
             if ui.button("Copy").clicked() {
                 ui.ctx().copy_text(icon_id.to_string());
                 ui.close_menu();
@@ -175,6 +183,7 @@ impl<'a> Cell<'a> {
             //     }
             // });
         });
+        resp.clicked()
     }
 
     fn draw_color(&self, ui: &mut egui::Ui, color: Color32) {
@@ -278,6 +287,21 @@ impl<'a> Cell<'a> {
         self.draw(&mut size_ui)?;
         Ok(size_ui.min_rect().size().y)
     }
+
+    pub fn show(self, ui: &mut egui::Ui) -> egui::InnerResponse<CellResponse> {
+        match self.draw(ui) {
+            Ok(resp) => {
+                return InnerResponse::new(resp, ui.response());
+            }
+            Err(err) => {
+                log::error!("Failed to draw cell: {:?}", err);
+                let resp = ui
+                    .colored_label(Color32::LIGHT_RED, "⚠")
+                    .on_hover_text(err.to_string());
+                return InnerResponse::new(CellResponse::None, resp);
+            }
+        }
+    }
 }
 
 impl Widget for Cell<'_> {
@@ -295,7 +319,7 @@ impl Widget for Cell<'_> {
 fn read_string(row: ExcelRow<'_>, offset: u32, kind: ColumnKind) -> anyhow::Result<String> {
     Ok(match kind {
         ColumnKind::String => row.read_string(offset)?.format()?,
-        ColumnKind::Bool => row.read_bool(offset).to_string(),
+        ColumnKind::Bool => row.read_bool(offset)?.to_string(),
         ColumnKind::Int8 => row.read::<i8>(offset)?.to_string(),
         ColumnKind::UInt8 => row.read::<u8>(offset)?.to_string(),
         ColumnKind::Int16 => row.read::<i16>(offset)?.to_string(),
@@ -316,7 +340,7 @@ fn read_string(row: ExcelRow<'_>, offset: u32, kind: ColumnKind) -> anyhow::Resu
             .read_packed_bool(
                 offset,
                 (u16::from(kind) - u16::from(ColumnKind::PackedBool0)) as u8,
-            )
+            )?
             .to_string(),
     })
 }

@@ -1,15 +1,16 @@
-use egui::{Id, Margin, UiBuilder, Widget};
+use egui::{Id, InnerResponse, Margin, Modal, UiBuilder};
 use egui_table::TableDelegate;
 use std::cell::RefCell;
 
 use crate::excel::provider::{ExcelHeader, ExcelRow, ExcelSheet};
 
-use super::table_context::TableContext;
+use super::{cell::CellResponse, table_context::TableContext};
 
 pub struct SheetTable {
     context: TableContext,
     subrow_lookup: Option<Vec<u32>>,
     row_sizes: RefCell<Vec<f32>>,
+    modal_image: Option<u32>,
 }
 
 impl SheetTable {
@@ -37,11 +38,13 @@ impl SheetTable {
             context,
             subrow_lookup,
             row_sizes,
+            modal_image: None,
         }
     }
 
     pub fn draw(&mut self, ui: &mut egui::Ui) {
-        ui.push_id(Id::new(self.context.sheet().name()), |ui| {
+        let id = Id::new(self.context.sheet().name());
+        ui.push_id(id, |ui| {
             egui_table::Table::new()
                 .num_rows(self.context.sheet().subrow_count().into())
                 .columns(vec![
@@ -56,6 +59,17 @@ impl SheetTable {
                 )])
                 .show(ui, self)
         });
+
+        if let Some(icon_id) = &self.modal_image {
+            let resp = Modal::new(Id::new("icon_modal")).show(ui.ctx(), |ui| {
+                if let Some(icon) = self.context.global().icon_manager().get_icon(*icon_id) {
+                    ui.add(egui::Image::new(icon).fit_to_exact_size(ui.available_size()));
+                }
+            });
+            if resp.should_close() {
+                self.modal_image = None;
+            }
+        }
     }
 
     pub fn context(&self) -> &TableContext {
@@ -169,28 +183,32 @@ impl TableDelegate for SheetTable {
                 .rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
         }
 
-        egui::Frame::NONE
+        let resp = egui::Frame::NONE
             .inner_margin(Margin::symmetric(4, 2))
             .show(ui, |ui| {
                 if let Some(column_idx) = column_idx {
                     match self.context.cell(row_data, column_idx as u32) {
-                        Ok(cell) => {
-                            cell.ui(ui);
-                        }
+                        Ok(cell) => cell.show(ui),
                         Err(e) => {
                             log::error!("Failed to get column {column_idx}: {e:?}");
+                            InnerResponse::new(crate::sheet::cell::CellResponse::None, ui.label(""))
                         }
                     }
                 } else {
-                    if let Some(subrow_id) = subrow_id {
+                    let resp = if let Some(subrow_id) = subrow_id {
                         ui.label(format!("{row_id}.{subrow_id}"))
-                            .on_hover_text(format!("Row {row_id}, Subrow {subrow_id}"));
+                            .on_hover_text(format!("Row {row_id}, Subrow {subrow_id}"))
                     } else {
                         ui.label(row_id.to_string())
-                            .on_hover_text(format!("Row {row_id}"));
-                    }
+                            .on_hover_text(format!("Row {row_id}"))
+                    };
+                    InnerResponse::new(crate::sheet::cell::CellResponse::None, resp)
                 }
-            });
+            })
+            .inner;
+        if let CellResponse::Icon(icon_id) = resp.inner {
+            self.modal_image = Some(icon_id);
+        }
     }
 
     fn row_top_offset(&self, ctx: &egui::Context, _table_id: Id, row_nr: u64) -> f32 {
