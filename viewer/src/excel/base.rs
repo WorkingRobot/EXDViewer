@@ -1,6 +1,5 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use binrw::{BinRead, BinResult, meta::ReadEndian};
 use either::Either;
 use image::RgbaImage;
 use intmap::IntMap;
@@ -12,15 +11,12 @@ use ironworks::{
         exh::{ColumnDefinition, PageDefinition, SheetKind},
     },
 };
-use std::{
-    cell::RefCell, collections::HashMap, io::Cursor, num::NonZeroUsize, ops::Range, rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, collections::HashMap, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
 use url::Url;
 
 use crate::utils::{CloneableResult, KeyedCache, SharedFuture};
 
-use super::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet};
+use super::provider::{ExcelHeader, ExcelPage, ExcelProvider, ExcelRow, ExcelSheet};
 
 #[async_trait(?Send)]
 pub trait FileProvider {
@@ -266,7 +262,7 @@ pub struct BaseSheet {
 #[derive(Debug)]
 struct BaseSheetImpl {
     header: BaseHeader,
-    pages: Vec<Page>,
+    pages: Vec<ExcelPage>,
     subrow_count: u32,
     row_lookup: IntMap<u32, RowLocation>,
     row_id_lookup: Vec<(u32, Range<u32>)>,
@@ -307,9 +303,9 @@ impl BaseSheet {
             .map(|page_def| provider.data(&header.imp.name, page_def.start_id(), language));
         let page_data = futures_util::future::try_join_all(page_futures).await?;
         for data in page_data {
-            let page = Page {
+            let page = ExcelPage {
                 row_size,
-                offset: data.data_offset.try_into()?,
+                data_offset: data.data_offset.try_into()?,
                 data: data.data,
             };
             let page_idx = pages.len() as u16;
@@ -445,53 +441,18 @@ impl ExcelSheet for BaseSheet {
             ));
         }
         let page = &self.imp.pages[location.page_idx as usize];
-        let (offset, length) = if self.has_subrows() {
+        let struct_offset = location.offset + RowHeader::SIZE as u32;
+        let (offset, row_size) = if self.has_subrows() {
             (
-                location.offset
-                    + RowHeader::SIZE as u32
+                struct_offset
                     + subrow_id as u32 * (SubrowHeader::SIZE as u32 + page.row_size as u32)
                     + SubrowHeader::SIZE as u32,
-                page.row_size as u32,
+                location.subrow_count as u32 * (SubrowHeader::SIZE as u32 + page.row_size as u32),
             )
         } else {
-            (
-                location.offset + RowHeader::SIZE as u32,
-                page.read_bw::<RowHeader>(location.offset)?.data_size,
-            )
+            (struct_offset, page.row_size as u32)
         };
-        page.get_row(offset, length)
-    }
-}
-
-#[derive(Debug)]
-struct Page {
-    row_size: u16,
-    offset: u32,
-    data: Vec<u8>,
-}
-
-impl Page {
-    pub fn get_row(&self, offset: u32, length: u32) -> Result<ExcelRow<'_>> {
-        Ok(ExcelRow::new(
-            self.data
-                .get((offset - self.offset) as usize..(offset - self.offset + length) as usize)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Failed to get page data for offset {offset} length {length} ({})",
-                        self.data.len() + self.offset as usize
-                    )
-                })?,
-            self.row_size,
-        ))
-    }
-
-    pub fn read_bw<T: BinRead + ReadEndian>(&self, offset: u32) -> BinResult<T>
-    where
-        for<'a> <T as BinRead>::Args<'a>: Default,
-    {
-        T::read(&mut Cursor::new(
-            &self.data[offset as usize - self.offset as usize..],
-        ))
+        Ok(ExcelRow::new(page, offset, struct_offset + row_size))
     }
 }
 

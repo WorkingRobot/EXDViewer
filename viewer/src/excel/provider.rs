@@ -1,7 +1,7 @@
-use std::{collections::HashMap, io::Cursor};
+use std::{collections::HashMap, error::Error, io::Cursor};
 
 use anyhow::Result;
-use binrw::{BinRead, BinResult, binread, helpers::until_exclusive, meta::ReadEndian};
+use binrw::{BinRead, binread, helpers::until_exclusive, meta::ReadEndian};
 use either::Either;
 use image::RgbaImage;
 use ironworks::{
@@ -45,10 +45,66 @@ pub trait ExcelSheet: ExcelHeader {
     fn get_subrow(&self, row_id: u32, subrow_id: u16) -> Result<ExcelRow<'_>>;
 }
 
+#[derive(Debug)]
+pub struct ExcelPage {
+    pub row_size: u16,
+    pub data_offset: u32,
+    // exd file: [data offset bytes] [data]
+    pub data: Vec<u8>,
+}
+
+impl ExcelPage {
+    fn get_range(&self, offset: u32, size: u32) -> anyhow::Result<&[u8]> {
+        self.data
+            .get((offset - self.data_offset) as usize..(offset - self.data_offset + size) as usize)
+            .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {} in row", offset))
+    }
+
+    fn get_cursor(&self, offset: u32) -> anyhow::Result<Cursor<&[u8]>> {
+        let data = self
+            .data
+            .get((offset - self.data_offset) as usize..)
+            .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {} in row", offset))?;
+        Ok(Cursor::new(data))
+    }
+
+    pub fn read_string(&self, offset: u32, string_offset: u32) -> anyhow::Result<SeString<'_>> {
+        let offset = string_offset + self.read::<u32>(offset)?;
+        Ok(SeString::new(self.read_bw::<SeStringWrapper>(offset)?.0))
+    }
+
+    pub fn read_bool(&self, offset: u32) -> anyhow::Result<bool> {
+        Ok(self.get_range(offset, 1)?[0] != 0)
+    }
+
+    pub fn read_packed_bool(&self, offset: u32, bit: u8) -> anyhow::Result<bool> {
+        Ok(self.get_range(offset, 1)?[0] & (1 << bit) != 0)
+    }
+
+    pub fn read_bw<T: BinRead + ReadEndian>(&self, offset: u32) -> anyhow::Result<T>
+    where
+        for<'b> <T as BinRead>::Args<'b>: Default,
+    {
+        Ok(T::read(&mut self.get_cursor(offset)?)?)
+    }
+
+    pub fn read<'a, T: FromBytes>(&'a self, offset: u32) -> anyhow::Result<T>
+    where
+        T::Bytes: Sized + TryFrom<&'a [u8]>,
+        <<T as FromBytes>::Bytes as TryFrom<&'a [u8]>>::Error: Sync + Send + Error + 'static,
+    {
+        let size = std::mem::size_of::<T::Bytes>() as u32;
+        // Check that the slice has enough bytes at the given offset.
+        let slice: &T::Bytes = &self.get_range(offset, size)?.try_into()?;
+        Ok(T::from_be_bytes(slice))
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ExcelRow<'a> {
-    data: &'a [u8],
-    row_size: u16,
+    page: &'a ExcelPage,
+    offset: u32,
+    string_offset: u32,
 }
 
 #[binread]
@@ -56,49 +112,32 @@ pub struct ExcelRow<'a> {
 struct SeStringWrapper(#[br(parse_with = until_exclusive(|&byte| byte==0))] Vec<u8>);
 
 impl<'a> ExcelRow<'a> {
-    pub fn new(data: &'a [u8], row_size: u16) -> Self {
-        Self { data, row_size }
-    }
-
-    pub fn row_size(&self) -> u16 {
-        self.row_size
-    }
-
-    pub fn data(&self) -> &'a [u8] {
-        self.data
+    pub fn new(page: &'a ExcelPage, offset: u32, string_offset: u32) -> Self {
+        Self {
+            page,
+            offset,
+            string_offset,
+        }
     }
 
     pub fn read_string(&self, offset: u32) -> anyhow::Result<SeString<'_>> {
-        let offset = self.read::<u32>(offset)? + self.row_size() as u32;
-        Ok(SeString::new(self.read_bw::<SeStringWrapper>(offset)?.0))
+        self.page
+            .read_string(self.offset + offset, self.string_offset)
     }
 
-    pub fn read_bool(&self, offset: u32) -> bool {
-        self.data()[offset as usize] != 0
+    pub fn read_bool(&self, offset: u32) -> anyhow::Result<bool> {
+        self.page.read_bool(self.offset + offset)
     }
 
-    pub fn read_packed_bool(&self, offset: u32, bit: u8) -> bool {
-        self.data()[offset as usize] & (1 << bit) != 0
+    pub fn read_packed_bool(&self, offset: u32, bit: u8) -> anyhow::Result<bool> {
+        self.page.read_packed_bool(self.offset + offset, bit)
     }
 
-    pub fn read_bw<T: BinRead + ReadEndian>(&self, offset: u32) -> BinResult<T>
-    where
-        for<'b> <T as BinRead>::Args<'b>: Default,
-    {
-        T::read(&mut Cursor::new(&self.data()[offset as usize..]))
-    }
-
-    pub fn read<T: FromBytes>(
-        &self,
-        offset: u32,
-    ) -> Result<T, <T::Bytes as TryFrom<&'a [u8]>>::Error>
+    pub fn read<T: FromBytes>(&self, offset: u32) -> anyhow::Result<T>
     where
         T::Bytes: Sized + TryFrom<&'a [u8]>,
+        <<T as FromBytes>::Bytes as TryFrom<&'a [u8]>>::Error: Sync + Send + Error + 'static,
     {
-        let size = std::mem::size_of::<T::Bytes>();
-        // Check that the slice has enough bytes at the given offset.
-        let slice: &T::Bytes =
-            &self.data()[offset as usize..(offset as usize + size)].try_into()?;
-        Ok(T::from_be_bytes(slice))
+        self.page.read(self.offset + offset)
     }
 }
