@@ -111,7 +111,7 @@ impl<'a> Cell<'a> {
                 }
             }
             SchemaColumnMeta::ConditionalLink { column_idx, links } => {
-                let (_, switch_column) = self.table_context.get_column(column_idx)?;
+                let (_, switch_column) = self.table_context.get_column_by_offset(column_idx)?;
                 let switch_data: i32 = read_integer(
                     self.row,
                     switch_column.offset() as u32,
@@ -254,7 +254,7 @@ impl<'a> Cell<'a> {
                 }
             }
             SchemaColumnMeta::ConditionalLink { column_idx, links } => {
-                let (_, switch_column) = self.table_context.get_column(*column_idx)?;
+                let (_, switch_column) = self.table_context.get_column_by_offset(*column_idx)?;
                 let switch_data: i32 = read_integer(
                     self.row,
                     switch_column.offset() as u32,

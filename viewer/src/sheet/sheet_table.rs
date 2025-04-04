@@ -101,7 +101,7 @@ impl SheetTable {
         let (row_id, subrow_id) = self.get_row_id(row_nr)?;
         let row = self.get_row_data(row_id, subrow_id)?;
         let size = (0..self.context.sheet().columns().len())
-            .filter_map(|column_idx| self.context.cell(row, column_idx as u32).ok())
+            .filter_map(|column_idx| self.context.cell_by_offset(row, column_idx as u32).ok())
             .map(|c| c.size(ui))
             .reduce(|a, b| a.max(b));
         Ok(size.unwrap_or_default() + 4.0)
@@ -141,7 +141,23 @@ impl TableDelegate for SheetTable {
         } else {
             Some(col_range.start - 1)
         };
-        let column = column_idx.and_then(|c| Some((c, self.context.get_column(c as u32).ok()?)));
+
+        let sorted_by_offset = ui.data_mut(|d| {
+            d.get_persisted::<bool>(Id::new("sorted-by-offset"))
+                .unwrap_or_default()
+        });
+
+        let column = column_idx.and_then(|c| {
+            Some((
+                c,
+                if sorted_by_offset {
+                    self.context.get_column_by_offset(c as u32)
+                } else {
+                    self.context.get_column_by_index(c as u32)
+                }
+                .ok()?,
+            ))
+        });
 
         let margin = 4;
 
@@ -178,6 +194,11 @@ impl TableDelegate for SheetTable {
             }
         };
 
+        let sorted_by_offset = ui.data_mut(|d| {
+            d.get_persisted::<bool>(Id::new("sorted-by-offset"))
+                .unwrap_or_default()
+        });
+
         if row_nr % 2 == 1 {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
@@ -187,7 +208,12 @@ impl TableDelegate for SheetTable {
             .inner_margin(Margin::symmetric(4, 2))
             .show(ui, |ui| {
                 if let Some(column_idx) = column_idx {
-                    match self.context.cell(row_data, column_idx as u32) {
+                    let cell = if sorted_by_offset {
+                        self.context.cell_by_offset(row_data, column_idx as u32)
+                    } else {
+                        self.context.cell_by_index(row_data, column_idx as u32)
+                    };
+                    match cell {
                         Ok(cell) => cell.show(ui),
                         Err(e) => {
                             log::error!("Failed to get column {column_idx}: {e:?}");

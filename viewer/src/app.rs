@@ -136,6 +136,17 @@ impl App {
         ctx.data_mut(|d| d.insert_persisted(Id::new("logger-shown"), shown));
     }
 
+    fn is_sorted_by_offset(ctx: &egui::Context) -> bool {
+        ctx.data_mut(|d| {
+            d.get_persisted::<bool>(Id::new("sorted-by-offset"))
+                .unwrap_or_default()
+        })
+    }
+
+    fn set_sorted_by_offset(ctx: &egui::Context, value: bool) {
+        ctx.data_mut(|d| d.insert_persisted(Id::new("sorted-by-offset"), value));
+    }
+
     fn draw_with_backend(&mut self, ctx: &egui::Context, backend: &Backend) {
         egui::SidePanel::left("sheet_list").show(ctx, |ui| {
             egui::panel::TopBottomPanel::top("header").show_inside(ui, |ui| {
@@ -355,7 +366,7 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("App", |ui| {
-                    if ui.button("Reset").clicked() {
+                    if ui.button("Configure").clicked() {
                         if let Some(config) = self.state.config.clone() {
                             self.setup_window = SetupWindow::from_config(config);
                         } else {
@@ -383,15 +394,29 @@ impl eframe::App for App {
                     }
                 });
 
-                {
-                    let mut logger_shown = Self::is_logger_shown(ctx);
-                    if ui
-                        .toggle_value(&mut logger_shown, "Show Log Window")
-                        .changed()
+                ui.menu_button("View", |ui| {
+                    ui.menu_button("Sort Columns by", |ui| {
+                        let mut sorted_by_offset = Self::is_sorted_by_offset(ctx);
+                        if ui.toggle_value(&mut sorted_by_offset, "Offset").changed() {
+                            Self::set_sorted_by_offset(ctx, sorted_by_offset);
+                            ui.close_menu();
+                        }
+
+                        let mut sort_by_index = !sorted_by_offset;
+                        if ui.toggle_value(&mut sort_by_index, "Index").changed() {
+                            Self::set_sorted_by_offset(ctx, !sort_by_index);
+                            ui.close_menu();
+                        }
+                    });
+
                     {
-                        Self::set_logger_shown(ctx, logger_shown);
+                        let mut logger_shown = Self::is_logger_shown(ctx);
+                        if ui.checkbox(&mut logger_shown, "Show Log Window").changed() {
+                            Self::set_logger_shown(ctx, logger_shown);
+                            ui.close_menu();
+                        }
                     }
-                }
+                });
 
                 ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
                     egui::widgets::global_theme_preference_buttons(ui);

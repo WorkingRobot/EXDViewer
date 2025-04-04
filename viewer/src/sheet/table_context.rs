@@ -1,6 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use anyhow::bail;
+use itertools::Itertools;
 
 use crate::{
     excel::{
@@ -24,6 +25,7 @@ pub struct TableContextImpl {
 
     sheet: BaseSheet,
 
+    column_ordering: Vec<u32>,
     sheet_columns: Vec<SheetColumnDefinition>,
     schema_columns: RefCell<Vec<SchemaColumn>>,
     display_column_idx: std::cell::Cell<Option<u32>>,
@@ -43,10 +45,17 @@ impl TableContext {
     pub fn new(global: GlobalContext, sheet: BaseSheet, schema: Option<Schema>) -> Self {
         let sheet_columns = SheetColumnDefinition::from_sheet(&sheet);
         let schema_columns = SchemaColumn::from_blank(sheet_columns.len() as u32);
+        let column_ordering = sheet_columns
+            .iter()
+            .enumerate()
+            .sorted_by_key(|&(_i, p)| p.id)
+            .map(|(i, _p)| i as u32)
+            .collect_vec();
 
         let ret = Self(Arc::new(TableContextImpl {
             global,
             sheet,
+            column_ordering,
             sheet_columns,
             schema_columns: RefCell::new(schema_columns),
             display_column_idx: std::cell::Cell::new(None),
@@ -66,7 +75,7 @@ impl TableContext {
         &self.0.global
     }
 
-    pub fn get_column(
+    pub fn get_column_by_offset(
         &self,
         column_idx: u32,
     ) -> anyhow::Result<(SchemaColumn, &SheetColumnDefinition)> {
@@ -94,6 +103,24 @@ impl TableContext {
                     )
                 })?,
         ))
+    }
+
+    pub fn get_column_by_index(
+        &self,
+        column_idx: u32,
+    ) -> anyhow::Result<(SchemaColumn, &SheetColumnDefinition)> {
+        let column_idx = self
+            .0
+            .column_ordering
+            .get(column_idx as usize)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Column index out of bounds: {} >= {}",
+                    column_idx,
+                    self.0.column_ordering.len()
+                )
+            })?;
+        self.get_column_by_offset(*column_idx)
     }
 
     pub fn set_schema(&self, schema: Option<Schema>) -> anyhow::Result<()> {
@@ -179,12 +206,25 @@ impl TableContext {
             })
     }
 
-    pub fn cell<'a>(&'a self, row: ExcelRow<'a>, column_idx: u32) -> anyhow::Result<Cell<'a>> {
-        let (schema_column, sheet_column) = self.get_column(column_idx)?;
+    pub fn cell_by_offset<'a>(
+        &'a self,
+        row: ExcelRow<'a>,
+        column_idx: u32,
+    ) -> anyhow::Result<Cell<'a>> {
+        let (schema_column, sheet_column) = self.get_column_by_offset(column_idx)?;
+        Ok(Cell::new(row, schema_column.meta, sheet_column, self))
+    }
+
+    pub fn cell_by_index<'a>(
+        &'a self,
+        row: ExcelRow<'a>,
+        column_idx: u32,
+    ) -> anyhow::Result<Cell<'a>> {
+        let (schema_column, sheet_column) = self.get_column_by_index(column_idx)?;
         Ok(Cell::new(row, schema_column.meta, sheet_column, self))
     }
 
     pub fn display_field_cell<'a>(&'a self, row: ExcelRow<'a>) -> Option<anyhow::Result<Cell<'a>>> {
-        Some(self.cell(row, self.0.display_column_idx.get()?))
+        Some(self.cell_by_offset(row, self.0.display_column_idx.get()?))
     }
 }
