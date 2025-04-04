@@ -6,6 +6,7 @@ use actix_web::{
     dev::{HttpServiceFactory, ServiceResponse},
     error::{ErrorBadRequest, ErrorInternalServerError},
     get,
+    http::header::ContentDisposition,
     middleware::{ErrorHandlerResponse, ErrorHandlers},
     web::{self, Bytes},
 };
@@ -34,9 +35,11 @@ async fn get_file(
     query: web::Query<FileQuery>,
 ) -> Result<HttpResponse> {
     let query = query.into_inner();
-    let data = data.get(query.version, query.path);
+    let data = data.get(query.version, query.path.clone());
     match data {
-        Ok(data) => Ok(HttpResponse::Ok().body(data.as_ref().clone())),
+        Ok(data) => Ok(HttpResponse::Ok()
+            .insert_header(ContentDisposition::attachment(query.path))
+            .body(data.as_ref().clone())),
         Err(err) if matches!(err, ironworks::Error::NotFound(_)) => Err(ErrorBadRequest(err)),
         Err(err) => Err(ErrorInternalServerError(err)),
     }
