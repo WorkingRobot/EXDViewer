@@ -38,7 +38,9 @@ async fn get_file(
     let data = data.get(query.version, query.path.clone());
     match data {
         Ok(data) => Ok(HttpResponse::Ok()
-            .insert_header(ContentDisposition::attachment(query.path))
+            .insert_header(ContentDisposition::attachment(
+                query.path.split_at(query.path.rfind('/').unwrap_or(0)).1,
+            ))
             .body(data.as_ref().clone())),
         Err(err) if matches!(err, ironworks::Error::NotFound(_)) => Err(ErrorBadRequest(err)),
         Err(err) => Err(ErrorInternalServerError(err)),
