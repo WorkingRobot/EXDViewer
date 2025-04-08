@@ -1,15 +1,23 @@
 use std::env::current_dir;
 
-use egui::{Frame, Vec2, WidgetText};
+use egui::{Frame, TextEdit, Vec2, WidgetText};
+use futures_util::TryFutureExt;
+use poll_promise::Promise;
+use pollster::FutureExt;
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
 
 use crate::{
     DEFAULT_API_URL, DEFAULT_SCHEMA_URL,
     data::{AppConfig, InstallLocation, SchemaLocation},
+    utils::web_store::WebStore,
 };
 
 pub struct SetupWindow {
     location: InstallLocation,
     schema: SchemaLocation,
+    #[cfg(target_arch = "wasm32")]
+    folder_picker_promise: Option<JsFuture>,
 }
 
 impl Default for SetupWindow {
@@ -25,6 +33,8 @@ impl Default for SetupWindow {
         Self {
             location,
             schema: SchemaLocation::Web(super::DEFAULT_SCHEMA_URL.to_string()),
+            #[cfg(target_arch = "wasm32")]
+            folder_picker_promise: None,
         }
     }
 }
@@ -38,6 +48,8 @@ impl SetupWindow {
         Self {
             location: config.location,
             schema: config.schema,
+            #[cfg(target_arch = "wasm32")]
+            folder_picker_promise: None,
         }
     }
 
@@ -72,7 +84,7 @@ impl SetupWindow {
                             #[cfg(not(target_arch = "wasm32"))]
                             if radio(
                                 ui,
-                                matches!(self.location, InstallLocation::Sqpack(_)),
+                                matches!(self.location, InstallLocation::Sqpack(..)),
                                 "Local",
                             ) {
                                 self.location = InstallLocation::Sqpack(
@@ -82,7 +94,16 @@ impl SetupWindow {
                                         .unwrap_or("/".to_owned()),
                                 );
                             }
-                            if radio(ui, matches!(self.location, InstallLocation::Web(_)), "Web") {
+                            #[cfg(target_arch = "wasm32")]
+                            if radio(
+                                ui,
+                                matches!(self.location, InstallLocation::WebSqpack(..)),
+                                "Local",
+                            ) {
+                                self.location =
+                                    InstallLocation::WebSqpack("Install".to_string(), u32::MAX);
+                            }
+                            if radio(ui, matches!(self.location, InstallLocation::Web(..)), "Web") {
                                 self.location = InstallLocation::Web(DEFAULT_API_URL.to_string());
                             }
                         });
@@ -99,6 +120,52 @@ impl SetupWindow {
                                             .and_then(|d| d.to_str().map(|s| s.to_owned()))
                                         {
                                             *path = picked_path;
+                                        }
+                                    }
+                                });
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            InstallLocation::WebSqpack(name, id) => {
+                                ui.horizontal(|ui| {
+                                    ui.label("Display Name:");
+                                    ui.text_edit_singleline(name);
+                                    ui.label("ID:");
+                                    ui.label(id.to_string());
+                                    if ui.button("...").clicked() {
+                                        let promise = web_sys::window()
+                                            .expect("no window")
+                                            .show_directory_picker();
+                                        match promise {
+                                            Ok(promise) => {
+                                                match JsFuture::from(promise).block_on() {
+                                                    Ok(dir_handle) => {
+                                                        let dir_handle: web_sys::FileSystemDirectoryHandle =
+                                                            dir_handle
+                                                                .dyn_into()
+                                                                .expect("Failed to cast to FileSystemDirectoryHandle");
+                                                        let new_name = dir_handle
+                                                            .name();
+                                                        let new_id=WebStore::open().block_on().unwrap().set(dir_handle.into()).block_on().unwrap();
+                                                        log::info!("Picked folder: {:?}", name);
+                                                        log::info!("Picked folder ID: {:?}", id);
+                                                        *id = new_id;
+                                                        *name = new_name;
+                                                    }
+                                                    Err(err) => {
+                                                        log::error!(
+                                                            "Failed to open folder picker: {:?}",
+                                                            err
+                                                        );
+                                                    }
+                                                }
+                                                // self.folder_picker_promise = Some(promise.into());
+                                            }
+                                            Err(err) => {
+                                                log::error!(
+                                                    "Failed to open folder picker: {:?}",
+                                                    err
+                                                );
+                                            }
                                         }
                                     }
                                 });
@@ -126,6 +193,15 @@ impl SetupWindow {
                                         .unwrap_or("/".to_owned()),
                                 );
                             }
+                            #[cfg(target_arch = "wasm32")]
+                            if radio(
+                                ui,
+                                matches!(self.schema, SchemaLocation::WebLocal(..)),
+                                "Local",
+                            ) {
+                                self.schema =
+                                    SchemaLocation::WebLocal("Install".to_string(), u32::MAX);
+                            }
                             if radio(ui, matches!(self.schema, SchemaLocation::Web(_)), "Web") {
                                 self.schema = SchemaLocation::Web(DEFAULT_SCHEMA_URL.to_string());
                             }
@@ -144,6 +220,19 @@ impl SetupWindow {
                                         {
                                             *path = picked_path;
                                         }
+                                    }
+                                });
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            SchemaLocation::WebLocal(name, id) => {
+                                ui.horizontal(|ui| {
+                                    ui.label("Display Name:");
+                                    ui.add(
+                                        TextEdit::singleline(name)
+                                            .hint_text(format!("Internal ID {id}")),
+                                    );
+                                    if ui.button("...").clicked() {
+                                        log::info!("Open file picker");
                                     }
                                 });
                             }

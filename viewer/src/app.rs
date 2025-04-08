@@ -32,6 +32,8 @@ pub struct App {
     icon_manager: IconManager,
     setup_window: setup::SetupWindow,
     backend: Option<BackgroundInitializer<Backend>>,
+    #[cfg(target_arch = "wasm32")]
+    web_worker: Option<BackgroundInitializer<crate::utils::web_worker::WorkerMessenger>>,
     sheet_data: LruCache<
         (Language, String),
         ConvertiblePromise<
@@ -49,6 +51,8 @@ impl Default for App {
             icon_manager: IconManager::new(),
             setup_window: SetupWindow::new(),
             backend: None,
+            #[cfg(target_arch = "wasm32")]
+            web_worker: None,
             sheet_data: LruCache::new(NonZero::new(32).unwrap()),
             sheet_matcher: SkimMatcherV2::default(),
         }
@@ -108,6 +112,15 @@ impl App {
                 priority: FontPriority::Lowest,
             }],
         ));
+    }
+
+    fn setup_worker(&mut self, ctx: &egui::Context) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.web_worker = Some(BackgroundInitializer::new(ctx, async {
+                Ok(crate::utils::web_worker::WorkerMessenger::new().await?)
+            }));
+        }
     }
 
     fn clear_config(&mut self) {

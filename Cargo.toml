@@ -1,6 +1,0 @@
-[workspace]
-members = ["viewer", "web"]
-resolver = "3"
-
-[patch.crates-io]
-ironworks = { path = "deps/ironworks/ironworks" }

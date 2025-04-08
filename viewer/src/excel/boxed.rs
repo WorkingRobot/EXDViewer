@@ -14,6 +14,17 @@ impl BoxedExcelProvider {
         .await
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new_web_sqpack(
+        value: super::web_sqpack::WebSqpackFileProvider,
+    ) -> Result<Self, ironworks::Error> {
+        CachedProvider::new(
+            Box::new(value) as Box<dyn ExcelFileProvider>,
+            std::num::NonZeroUsize::new(64).unwrap(),
+        )
+        .await
+    }
+
     pub async fn new_web(value: super::web::WebFileProvider) -> Result<Self, ironworks::Error> {
         CachedProvider::new(
             Box::new(value) as Box<dyn ExcelFileProvider>,

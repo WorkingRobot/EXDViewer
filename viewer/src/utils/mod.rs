@@ -3,11 +3,18 @@ mod cache;
 mod cloneable_error;
 mod convertible_promise;
 mod icon_manager;
+// #[cfg(target_arch = "wasm32")]
+// pub mod js_stream;
+#[cfg(target_arch = "wasm32")]
+pub mod js_error;
 mod shared_future;
 mod syntax_highlighting;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod tex_loader;
 mod tracked_promise;
+#[cfg(target_arch = "wasm32")]
+pub mod web_store;
+#[cfg(target_arch = "wasm32")]
+pub mod web_worker;
 
 pub use background_initializer::BackgroundInitializer;
 pub use cache::KeyedCache;

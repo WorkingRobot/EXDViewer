@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 use image::{DynamicImage, ImageBuffer, ImageFormat};
 use image_dds::Surface;
-use ironworks::file::tex;
 use ironworks::{Error, Ironworks};
+use ironworks::{Resource, file::tex};
 use itertools::Itertools;
 use std::io::Cursor;
 
 // https://github.com/ackwell/boilmaster/blob/3d180aae4a3b5719324f5a16d22b392e4859ac07/crates/bm_asset/src/texture.rs
-pub fn read(ironworks: &Ironworks, path: &str) -> Result<DynamicImage> {
+pub fn read<R: Resource>(ironworks: &Ironworks<R>, path: &str) -> Result<DynamicImage> {
     let texture = match ironworks.file::<tex::Texture>(path) {
         Ok(value) => value,
         Err(ironworks::Error::NotFound(a)) => Err(Error::NotFound(a))?,
