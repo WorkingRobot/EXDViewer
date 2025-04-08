@@ -22,7 +22,16 @@ impl FromStr for WebFileProvider {
 impl FileProvider for WebFileProvider {
     async fn file<T: File>(&self, path: &str) -> Result<T, ironworks::Error> {
         let mut url = self.0.clone();
-        url.query_pairs_mut().append_pair("path", path);
+        {
+            let mut path_segments = url.path_segments_mut().map_err(|_| {
+                ironworks::Error::Invalid(
+                    ironworks::ErrorValue::Other("URL".to_string()),
+                    "path parsing error".to_string(),
+                )
+            })?;
+            path_segments.push("latest");
+            path_segments.extend(path.split('/'));
+        }
 
         let resp = ehttp::fetch_async(Request::get(url))
             .await

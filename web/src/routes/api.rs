@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 
 use actix_web::{
     HttpResponse, Result,
@@ -10,41 +10,106 @@ use actix_web::{
     middleware::{ErrorHandlerResponse, ErrorHandlers},
     web::{self, Bytes},
 };
+use actix_web_lab::header::{CacheControl, CacheDirective};
 use serde::Deserialize;
 
 use crate::data::{GameData, GameVersion};
 
 pub fn service() -> impl HttpServiceFactory {
-    web::scope("/api").service(get_file).wrap(
-        ErrorHandlers::new()
-            .default_handler_client(|r| log_error(true, r))
-            .default_handler_server(|r| log_error(false, r)),
-    )
+    web::scope("/api")
+        .service(get_file)
+        .service(get_versions)
+        .wrap(
+            ErrorHandlers::new()
+                .default_handler_client(|r| log_error(true, r))
+                .default_handler_server(|r| log_error(false, r)),
+        )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum QueryGameVersion {
+    #[default]
+    Latest,
+    Specific(GameVersion),
+}
+
+impl<'a> Deserialize<'a> for QueryGameVersion {
+    fn deserialize<D: serde::Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("invalid game version"))
+    }
+}
+
+impl TryFrom<String> for QueryGameVersion {
+    type Error = ();
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.eq_ignore_ascii_case("latest") {
+            Ok(Self::Latest)
+        } else {
+            Ok(Self::Specific(value.try_into()?))
+        }
+    }
+}
+
+impl Display for QueryGameVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QueryGameVersion::Latest => write!(f, "latest"),
+            QueryGameVersion::Specific(version) => write!(f, "{}", version),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct FileQuery {
+    pub version: QueryGameVersion,
     pub path: String,
-    #[serde(default)]
-    pub version: GameVersion,
 }
 
-#[get("/")]
+#[get("/{version}/{path:.+}/")]
 async fn get_file(
     data: web::Data<Arc<GameData>>,
-    query: web::Query<FileQuery>,
+    path: web::Path<FileQuery>,
 ) -> Result<HttpResponse> {
-    let query = query.into_inner();
-    let data = data.get(query.version, query.path.clone());
+    let FileQuery { version, path } = path.into_inner();
+
+    let resolved_ver = match &version {
+        QueryGameVersion::Latest => {
+            data.versions()
+                .ok_or(ErrorBadRequest("No version info available"))?
+                .latest
+        }
+        QueryGameVersion::Specific(version) => version.clone(),
+    };
+    let file_name = path.split_at(path.rfind('/').unwrap_or(0) + 1).1;
+
+    let mut directives = vec![CacheDirective::Public];
+    if version != QueryGameVersion::Latest {
+        directives.push(CacheDirective::Immutable);
+        directives.push(CacheDirective::MaxAge(60 * 60 * 24 * 30));
+    } else {
+        directives.push(CacheDirective::MaxAge(60 * 60 * 24));
+    }
+
+    let data = data.get(resolved_ver, path.clone());
     match data {
         Ok(data) => Ok(HttpResponse::Ok()
-            .insert_header(ContentDisposition::attachment(
-                query.path.split_at(query.path.rfind('/').unwrap_or(0)).1,
-            ))
+            .insert_header(ContentDisposition::attachment(file_name))
+            .insert_header(CacheControl(directives))
             .body(data.as_ref().clone())),
         Err(err) if matches!(err, ironworks::Error::NotFound(_)) => Err(ErrorBadRequest(err)),
         Err(err) => Err(ErrorInternalServerError(err)),
     }
+}
+
+#[get("/versions/")]
+async fn get_versions(data: web::Data<Arc<GameData>>) -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(
+        data.versions()
+            .ok_or(ErrorBadRequest("No version info available"))?,
+    ))
 }
 
 fn log_error<B: MessageBody + 'static>(

@@ -48,7 +48,10 @@ impl CronJob for UpdateGameData {
     async fn run(&self, stop_signal: CancellationToken) -> anyhow::Result<()> {
         let mut cmd = Command::new(self.downloader_path.as_os_str());
 
+        let latest_version_file = self.output_path.join("latest-ver.txt");
+        let latest_version = std::fs::read_to_string(&latest_version_file).ok();
         let latest_path = self.output_path.join("latest");
+        log::info!("Latest version: {:?}", latest_version);
         let _deleter = FolderDeleter::new(latest_path.clone());
 
         cmd.args(["--verbose", "true"])
@@ -163,9 +166,10 @@ impl CronJob for UpdateGameData {
             fs_extra::dir::copy(
                 &latest_path,
                 &dest_path,
-                &CopyOptions::new().overwrite(true),
+                &CopyOptions::new().content_only(true).overwrite(true),
             )?;
             log::info!("Copied to {}", installed_version);
+            std::fs::write(&latest_version_file, &installed_version)?;
         } else {
             log::info!("Game data not updated; already at {}", installed_version);
         }
