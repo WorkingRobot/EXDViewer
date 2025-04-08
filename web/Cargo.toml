@@ -11,6 +11,7 @@ actix-cors = "0.7.0"
 actix-web = "4.9.0"
 actix-web-lab = "0.24.1"
 actix-web-prom = { version = "0.9.0", features = ["process"] }
+actix-web-helmet = "0.2.0"
 actix-files = "0.6.6"
 anyhow = "1.0.95"
 config = { version = "0.15.8", default-features = false, features = ["yaml"] }

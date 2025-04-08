@@ -7,8 +7,11 @@ use ::config::{Config, Environment, File, FileFormat};
 use actix_cors::Cors;
 use actix_web::{
     App, HttpServer,
-    middleware::{Logger, NormalizePath, TrailingSlash},
+    middleware::{Condition, Logger, NormalizePath, TrailingSlash},
     web::Data,
+};
+use actix_web_helmet::{
+    CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, Helmet, XContentTypeOptions,
 };
 use actix_web_prom::PrometheusMetricsBuilder;
 use data::GameData;
@@ -74,9 +77,18 @@ async fn main() -> Result<(), ServerError> {
     let server_config = config.clone();
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(
+                Helmet::new()
+                    .add(CrossOriginOpenerPolicy::same_origin())
+                    .add(CrossOriginEmbedderPolicy::require_corp())
+                    .add(XContentTypeOptions::nosniff()),
+            )
             .wrap(Cors::default())
             .wrap(NormalizePath::new(TrailingSlash::Always))
-            .wrap(server_prometheus.clone())
+            .wrap(Condition::new(
+                server_config.metrics_server_addr.is_some(),
+                server_prometheus.clone(),
+            ))
             .wrap(
                 server_config
                     .log_access_format
@@ -101,30 +113,35 @@ async fn main() -> Result<(), ServerError> {
             *e.downcast::<prometheus::Error>()
                 .expect("Unknown error from prometheus builder")
         })?;
-    let prometheus_server = HttpServer::new(move || {
-        App::new().wrap(private_prometheus.clone()).wrap(
-            config
-                .log_access_format
-                .as_deref()
-                .map_or_else(Logger::default, Logger::new),
-        )
-    })
-    .workers(1)
-    .bind(config.metrics_server_addr.clone())?
-    .run();
-
-    log::info!(
-        "Metrics http server running at http://{}",
-        config.metrics_server_addr
-    );
+    let prometheus_server = if let Some(metrics_addr) = &config.metrics_server_addr {
+        let ret = HttpServer::new(move || {
+            App::new().wrap(private_prometheus.clone()).wrap(
+                config
+                    .log_access_format
+                    .as_deref()
+                    .map_or_else(Logger::default, Logger::new),
+            )
+        })
+        .workers(1)
+        .bind(metrics_addr)?
+        .run();
+        log::info!("Metrics http server running at http://{}", metrics_addr);
+        Some(ret)
+    } else {
+        log::info!("Metrics server disabled");
+        None
+    };
 
     let server_task = tokio::task::spawn(server);
-    let prometheus_server_task = tokio::task::spawn(prometheus_server);
+    let prometheus_server_task = prometheus_server.map(|s| tokio::task::spawn(s));
 
     let server_ret = server_task.await;
 
     update_game_data_token.cancel();
-    let prometheus_server_ret = prometheus_server_task.await;
+    let prometheus_server_ret = match prometheus_server_task {
+        Some(task) => task.await,
+        None => Ok(Ok(())),
+    };
 
     server_ret??;
     prometheus_server_ret??;

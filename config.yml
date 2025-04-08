@@ -1,6 +1,5 @@
 log_filter: info,waitingway_web=debug,tracing::span=warn,serenity::gateway::shard=warn,serenity::http=warn
 server_addr: 0.0.0.0:3000
-metrics_server_addr: 0.0.0.0:4000
 downloader:
   storage_dir: downloads
   slug: 4e9a232b

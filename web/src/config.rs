@@ -12,7 +12,7 @@ pub struct DownloaderConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub server_addr: String,
-    pub metrics_server_addr: String,
+    pub metrics_server_addr: Option<String>,
     pub log_filter: Option<String>,
     pub log_access_format: Option<String>,
     pub downloader: DownloaderConfig,
