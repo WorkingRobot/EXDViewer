@@ -3,12 +3,14 @@ use egui::{
     Color32, Direction, InnerResponse, Layout, Sense, Vec2, Widget, color_picker::show_color_at,
     ecolor::HexColor,
 };
-use either::Either::{Left, Right};
 use ironworks::file::exh::ColumnKind;
 
-use crate::excel::{
-    get_icon_path,
-    provider::{ExcelProvider, ExcelRow, ExcelSheet},
+use crate::{
+    excel::{
+        get_icon_path,
+        provider::{ExcelProvider, ExcelRow, ExcelSheet},
+    },
+    utils::{ManagedIcon, TrackedPromise},
 };
 
 use super::{
@@ -44,7 +46,7 @@ impl<'a> Cell<'a> {
     }
 
     fn draw(self, ui: &mut egui::Ui) -> anyhow::Result<CellResponse> {
-        match self.schema_column {
+        match &self.schema_column {
             SchemaColumnMeta::Scalar => {
                 let value = read_string(
                     self.row,
@@ -91,7 +93,7 @@ impl<'a> Cell<'a> {
                 match row_id
                     .try_into()
                     .ok()
-                    .and_then(|id| self.table_context.resolve_link(sheets, id))
+                    .and_then(|id| self.table_context.resolve_link(sheets.clone(), id))
                 {
                     Some(Some((sheet_name, table))) => {
                         if let Some(cell) =
@@ -111,7 +113,7 @@ impl<'a> Cell<'a> {
                 }
             }
             SchemaColumnMeta::ConditionalLink { column_idx, links } => {
-                let (_, switch_column) = self.table_context.get_column_by_offset(column_idx)?;
+                let (_, switch_column) = self.table_context.get_column_by_offset(*column_idx)?;
                 let switch_data: i32 = read_integer(
                     self.row,
                     switch_column.offset() as u32,
@@ -139,34 +141,39 @@ impl<'a> Cell<'a> {
 
     fn draw_icon(&self, ui: &mut egui::Ui, icon_id: u32) -> bool {
         let (excel, icon_mgr) = (
-            self.table_context.global().backend().excel(),
+            self.table_context.global().backend().excel().clone(),
             &self.table_context.global().icon_manager(),
         );
-        let image_source = icon_mgr.get_icon(icon_id).or_else(|| {
-            log::info!("Icon not found in cache: {icon_id}");
-            match excel.get_icon(icon_id) {
-                Ok(Left(url)) => Some(icon_mgr.insert_icon_url(icon_id, url)),
-                Ok(Right(image)) => Some(icon_mgr.insert_icon_texture(icon_id, ui.ctx(), image)),
-                Err(err) => {
-                    log::error!("Failed to get icon: {:?}", err);
-                    None
-                }
-            }
+        let ctx = ui.ctx().clone();
+        let image_source = icon_mgr.get_or_insert_icon(icon_id, ui.ctx(), move || {
+            log::debug!("Icon not found in cache: {icon_id}");
+            TrackedPromise::spawn_local(ctx.clone(), async move { excel.get_icon(icon_id).await })
         });
-        let resp = if let Some(source) = image_source {
-            ui.with_layout(
-                Layout::centered_and_justified(Direction::LeftToRight),
-                |ui| {
-                    egui::Image::new(source)
-                        .sense(Sense::click())
-                        .maintain_aspect_ratio(true)
-                        .fit_to_exact_size(Vec2::new(f32::INFINITY, 32.0))
-                        .ui(ui)
-                },
-            )
-            .inner
-        } else {
-            ui.label("Icon not found")
+        let resp = match image_source {
+            ManagedIcon::Loaded(source) => {
+                ui.with_layout(
+                    Layout::centered_and_justified(Direction::LeftToRight),
+                    |ui| {
+                        egui::Image::new(source)
+                            .sense(Sense::click())
+                            .maintain_aspect_ratio(true)
+                            .fit_to_exact_size(Vec2::new(f32::INFINITY, 32.0))
+                            .ui(ui)
+                    },
+                )
+                .inner
+            }
+            ManagedIcon::Failed(_) => ui.label("Failed to load icon"),
+            ManagedIcon::Loading => {
+                ui.with_layout(
+                    Layout::centered_and_justified(Direction::LeftToRight),
+                    |ui| ui.add(egui::Spinner::new().size(32.0)),
+                )
+                .inner
+            }
+            ManagedIcon::NotLoaded => {
+                unreachable!()
+            }
         };
         let resp = resp.on_hover_text(format!(
             "Id: {icon_id}\nPath: {}",
@@ -234,16 +241,20 @@ impl<'a> Cell<'a> {
             SchemaColumnMeta::ModelId => self.size_text(ui),
             SchemaColumnMeta::Color => self.size_text(ui),
             SchemaColumnMeta::Link(sheets) => {
-                let row_id: u32 = read_integer(
+                let row_id: isize = read_integer(
                     self.row,
                     self.sheet_column.offset() as u32,
                     self.sheet_column.kind(),
                 )?;
 
-                match self.table_context.resolve_link(sheets.clone(), row_id) {
+                match row_id
+                    .try_into()
+                    .ok()
+                    .and_then(|id| self.table_context.resolve_link(sheets.clone(), id))
+                {
                     Some(Some((_, table))) => {
                         if let Some(cell) =
-                            table.display_field_cell(table.sheet().get_row(row_id).unwrap())
+                            table.display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
                         {
                             cell?.size_internal(ui)?
                         } else {

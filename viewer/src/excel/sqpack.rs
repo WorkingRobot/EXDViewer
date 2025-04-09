@@ -25,7 +25,7 @@ impl FileProvider for SqpackFileProvider {
         self.0.file(path)
     }
 
-    fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
         let path = get_icon_path(icon_id, true);
         let data = tex_loader::read(&self.0, &path)?;
         Ok(Either::Right(data.into_rgba8()))

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub enum InstallLocation {
     #[cfg(not(target_arch = "wasm32"))]
     Sqpack(String),
+    #[cfg(target_arch = "wasm32")]
+    Worker(String),
     Web(String),
 }
 

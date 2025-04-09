@@ -1,17 +1,33 @@
 use std::{collections::HashMap, sync::Arc};
 
 use egui::{
-    ColorImage, ImageSource, TextureHandle, TextureOptions, load::SizedTexture, mutex::RwLock,
+    ColorImage, ImageSource, TextureHandle, TextureOptions, load::SizedTexture, mutex::Mutex,
 };
+use either::Either;
 use image::RgbaImage;
 use url::Url;
 
+use super::{CloneableResult, ConvertiblePromise, TrackedPromise, cloneable_error::CloneableError};
+
+pub enum ManagedIcon {
+    Loaded(ImageSource<'static>),
+    Failed(CloneableError),
+    Loading,
+    NotLoaded,
+}
+
 #[derive(Clone, Default)]
-pub struct IconManager(Arc<RwLock<IconManagerImpl>>);
+pub struct IconManager(Arc<Mutex<IconManagerImpl>>);
 
 #[derive(Default)]
 struct IconManagerImpl {
-    cache: HashMap<u32, ImageSource<'static>>,
+    cache: HashMap<
+        u32,
+        ConvertiblePromise<
+            TrackedPromise<anyhow::Result<Either<Url, RgbaImage>>>,
+            CloneableResult<ImageSource<'static>>,
+        >,
+    >,
     loaded_handles: Vec<TextureHandle>,
 }
 
@@ -21,32 +37,23 @@ impl IconManager {
     }
 
     pub fn clear(&self) {
-        self.0.write().clear()
+        self.0.lock().clear()
     }
 
-    pub fn insert_icon_image_source(
+    // None = not loaded, Some(None) = loaded but failed/doesn't exist, Some(Some) = loaded successfully
+    pub fn get_icon(&self, icon_id: u32, context: &egui::Context) -> ManagedIcon {
+        self.0.lock().get_icon(icon_id, context)
+    }
+
+    pub fn get_or_insert_icon(
         &self,
         icon_id: u32,
-        data: ImageSource<'static>,
-    ) -> ImageSource<'static> {
-        self.0.write().insert_icon_image_source(icon_id, data)
-    }
-
-    pub fn insert_icon_url(&self, icon_id: u32, data: Url) -> ImageSource<'static> {
-        self.0.write().insert_icon_url(icon_id, data)
-    }
-
-    pub fn insert_icon_texture(
-        &self,
-        icon_id: u32,
-        ctx: &egui::Context,
-        data: RgbaImage,
-    ) -> ImageSource<'static> {
-        self.0.write().insert_icon_texture(icon_id, ctx, data)
-    }
-
-    pub fn get_icon(&self, icon_id: u32) -> Option<ImageSource<'static>> {
-        self.0.read().get_icon(icon_id)
+        context: &egui::Context,
+        promise_creator: impl FnOnce() -> TrackedPromise<anyhow::Result<Either<Url, RgbaImage>>>,
+    ) -> ManagedIcon {
+        self.0
+            .lock()
+            .get_or_insert_icon_promise(icon_id, context, promise_creator)
     }
 }
 
@@ -56,41 +63,65 @@ impl IconManagerImpl {
         self.cache.clear();
     }
 
-    pub fn insert_icon_image_source(
-        &mut self,
-        icon_id: u32,
-        data: ImageSource<'static>,
-    ) -> ImageSource<'static> {
-        self.cache.entry(icon_id).insert_entry(data).get().clone()
-    }
-
-    pub fn insert_icon_url(&mut self, icon_id: u32, data: Url) -> ImageSource<'static> {
-        self.insert_icon_image_source(icon_id, ImageSource::Uri(data.to_string().into()))
-    }
-
-    pub fn insert_icon_texture(
-        &mut self,
+    fn convert_promise(
+        handles: &mut Vec<TextureHandle>,
         icon_id: u32,
         ctx: &egui::Context,
-        data: RgbaImage,
-    ) -> ImageSource<'static> {
-        let handle = ctx.load_texture(
-            format!("Icon {icon_id}"),
-            ColorImage::from_rgba_unmultiplied(
-                [data.width() as _, data.height() as _],
-                data.as_flat_samples().as_slice(),
-            ),
-            TextureOptions::LINEAR,
-        );
-        let ret = self.insert_icon_image_source(
-            icon_id,
-            ImageSource::Texture(SizedTexture::from_handle(&handle)),
-        );
-        self.loaded_handles.push(handle);
-        ret
+        result: anyhow::Result<Either<Url, RgbaImage>>,
+    ) -> CloneableResult<ImageSource<'static>> {
+        match result {
+            Ok(Either::Left(url)) => Ok(ImageSource::Uri(url.to_string().into())),
+            Ok(Either::Right(data)) => {
+                let handle = ctx.load_texture(
+                    format!("Icon {icon_id}"),
+                    ColorImage::from_rgba_unmultiplied(
+                        [data.width() as _, data.height() as _],
+                        data.as_flat_samples().as_slice(),
+                    ),
+                    TextureOptions::LINEAR,
+                );
+                let ret = SizedTexture::from_handle(&handle);
+                handles.push(handle);
+                Ok(ImageSource::Texture(ret))
+            }
+            Err(e) => {
+                log::error!("Failed to load icon: {e:?}");
+                Err(e.into())
+            }
+        }
     }
 
-    pub fn get_icon(&self, icon_id: u32) -> Option<ImageSource<'static>> {
-        self.cache.get(&icon_id).cloned()
+    pub fn get_icon(&mut self, icon_id: u32, context: &egui::Context) -> ManagedIcon {
+        let entry = match self.cache.get_mut(&icon_id) {
+            Some(entry) => entry,
+            None => return ManagedIcon::NotLoaded,
+        };
+        let ret = entry
+            .get(|r| Self::convert_promise(&mut self.loaded_handles, icon_id, context, r))
+            .cloned();
+        match ret {
+            Some(Ok(image)) => ManagedIcon::Loaded(image),
+            Some(Err(e)) => ManagedIcon::Failed(e),
+            None => ManagedIcon::Loading,
+        }
+    }
+
+    pub fn get_or_insert_icon_promise(
+        &mut self,
+        icon_id: u32,
+        context: &egui::Context,
+        promise_creator: impl FnOnce() -> TrackedPromise<anyhow::Result<Either<Url, RgbaImage>>>,
+    ) -> ManagedIcon {
+        let ret = self
+            .cache
+            .entry(icon_id)
+            .or_insert_with(|| ConvertiblePromise::new_promise(promise_creator()))
+            .get(|r| Self::convert_promise(&mut self.loaded_handles, icon_id, context, r))
+            .cloned();
+        match ret {
+            Some(Ok(image)) => ManagedIcon::Loaded(image),
+            Some(Err(e)) => ManagedIcon::Failed(e),
+            None => ManagedIcon::Loading,
+        }
     }
 }

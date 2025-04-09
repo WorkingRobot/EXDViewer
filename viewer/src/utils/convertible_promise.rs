@@ -3,6 +3,8 @@ use std::ops::Deref;
 use either::Either::{self, Left, Right};
 use poll_promise::Promise;
 
+use super::TrackedPromise;
+
 pub trait PromiseKind {
     type Output: Send + 'static;
 
@@ -10,7 +12,19 @@ pub trait PromiseKind {
     fn block_and_take(self) -> Self::Output;
 }
 
-impl<P: Into<Promise<R>> + Deref<Target = Promise<R>>, R: Send + 'static> PromiseKind for P {
+impl<R: Send + 'static> PromiseKind for Promise<R> {
+    type Output = R;
+
+    fn ready(&self) -> bool {
+        self.ready().is_some()
+    }
+
+    fn block_and_take(self) -> R {
+        self.block_and_take()
+    }
+}
+
+impl<R: Send + 'static> PromiseKind for TrackedPromise<R> {
     type Output = R;
 
     fn ready(&self) -> bool {
@@ -18,7 +32,7 @@ impl<P: Into<Promise<R>> + Deref<Target = Promise<R>>, R: Send + 'static> Promis
     }
 
     fn block_and_take(self) -> R {
-        self.into().block_and_take()
+        Promise::from(self).block_and_take()
     }
 }
 
