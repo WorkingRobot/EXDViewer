@@ -4,7 +4,7 @@ use std::{str::FromStr, sync::Arc};
 use crate::{
     data::{AppConfig, InstallLocation, SchemaLocation},
     excel::{boxed::BoxedExcelProvider, web::WebFileProvider},
-    schema::{boxed::BoxedSchemaProvider, local::LocalProvider, web::WebProvider},
+    schema::{boxed::BoxedSchemaProvider, web::WebProvider},
 };
 
 #[derive(Clone)]
@@ -26,6 +26,14 @@ impl Backend {
                     ))
                     .await?
                 }
+                #[cfg(target_arch = "wasm32")]
+                InstallLocation::Worker(path) => {
+                    BoxedExcelProvider::new_worker(
+                        crate::excel::worker::WorkerFileProvider::new(path).await?,
+                    )
+                    .await?
+                }
+
                 InstallLocation::Web(base_url) => {
                     BoxedExcelProvider::new_web(WebFileProvider::from_str(&base_url)?).await?
                 }
@@ -33,7 +41,7 @@ impl Backend {
             schema_provider: match config.schema {
                 #[cfg(not(target_arch = "wasm32"))]
                 SchemaLocation::Local(path) => {
-                    BoxedSchemaProvider::new_local(LocalProvider::new(&path))
+                    BoxedSchemaProvider::new_local(crate::schema::local::LocalProvider::new(&path))
                 }
                 SchemaLocation::Web(base_url) => {
                     BoxedSchemaProvider::new_web(WebProvider::new(base_url))

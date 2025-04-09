@@ -1,8 +1,11 @@
-use egui::{Id, InnerResponse, Margin, Modal, UiBuilder};
+use egui::{Id, InnerResponse, Margin, Modal, Spinner, UiBuilder};
 use egui_table::TableDelegate;
 use std::cell::RefCell;
 
-use crate::excel::provider::{ExcelHeader, ExcelRow, ExcelSheet};
+use crate::{
+    excel::provider::{ExcelHeader, ExcelRow, ExcelSheet},
+    utils::ManagedIcon,
+};
 
 use super::{cell::CellResponse, table_context::TableContext};
 
@@ -62,8 +65,22 @@ impl SheetTable {
 
         if let Some(icon_id) = &self.modal_image {
             let resp = Modal::new(Id::new("icon_modal")).show(ui.ctx(), |ui| {
-                if let Some(icon) = self.context.global().icon_manager().get_icon(*icon_id) {
-                    ui.add(egui::Image::new(icon).fit_to_exact_size(ui.available_size()));
+                let resp = self
+                    .context
+                    .global()
+                    .icon_manager()
+                    .get_icon(*icon_id, ui.ctx());
+                match resp {
+                    ManagedIcon::Loaded(icon) => {
+                        ui.add(egui::Image::new(icon).fit_to_exact_size(ui.available_size()))
+                    }
+                    ManagedIcon::Failed(e) => {
+                        ui.label("Failed to load icon").on_hover_text(e.to_string())
+                    }
+                    ManagedIcon::Loading => {
+                        ui.add(Spinner::new().size(ui.available_size().min_elem()))
+                    }
+                    ManagedIcon::NotLoaded => ui.label("Icon not loaded"),
                 }
             });
             if resp.should_close() {

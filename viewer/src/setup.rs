@@ -1,5 +1,3 @@
-use std::env::current_dir;
-
 use egui::{Frame, Vec2, WidgetText};
 
 use crate::{
@@ -10,6 +8,8 @@ use crate::{
 pub struct SetupWindow {
     location: InstallLocation,
     schema: SchemaLocation,
+    #[cfg(target_arch = "wasm32")]
+    folder_promise: Option<crate::utils::TrackedPromise<anyhow::Result<String>>>,
 }
 
 impl Default for SetupWindow {
@@ -25,6 +25,8 @@ impl Default for SetupWindow {
         Self {
             location,
             schema: SchemaLocation::Web(super::DEFAULT_SCHEMA_URL.to_string()),
+            #[cfg(target_arch = "wasm32")]
+            folder_promise: None,
         }
     }
 }
@@ -38,6 +40,8 @@ impl SetupWindow {
         Self {
             location: config.location,
             schema: config.schema,
+            #[cfg(target_arch = "wasm32")]
+            folder_promise: None,
         }
     }
 
@@ -46,6 +50,21 @@ impl SetupWindow {
         ctx: &egui::Context,
         loading_state: Option<Option<&anyhow::Error>>,
     ) -> Option<AppConfig> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(result) = self.folder_promise.take_if(|p| p.ready().is_some()) {
+                let result = poll_promise::Promise::from(result).block_and_take();
+                match result {
+                    Ok(path) => {
+                        self.location = InstallLocation::Worker(path);
+                    }
+                    Err(e) => {
+                        log::error!("Error picking folder: {e}");
+                    }
+                }
+            }
+        }
+
         let resp = egui::Modal::new("setup_modal".into())
             .frame(Frame::window(&ctx.style()))
             .show(ctx, |ui| {
@@ -76,11 +95,20 @@ impl SetupWindow {
                                 "Local",
                             ) {
                                 self.location = InstallLocation::Sqpack(
-                                    current_dir()
+                                    std::env::current_dir()
                                         .ok()
                                         .and_then(|p| Some(p.to_str()?.to_string()))
                                         .unwrap_or("/".to_owned()),
                                 );
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            if radio(
+                                ui,
+                                matches!(self.location, InstallLocation::Worker(_)),
+                                "Local",
+                            ) {
+                                self.location =
+                                    InstallLocation::Worker("Select folder".to_string());
                             }
                             if radio(ui, matches!(self.location, InstallLocation::Web(_)), "Web") {
                                 self.location = InstallLocation::Web(DEFAULT_API_URL.to_string());
@@ -103,6 +131,19 @@ impl SetupWindow {
                                     }
                                 });
                             }
+
+                            #[cfg(target_arch = "wasm32")]
+                            InstallLocation::Worker(name) => {
+                                ui.horizontal(|ui| {
+                                    ui.label("Name:");
+                                    ui.text_edit_singleline(&mut name.as_str());
+                                    if ui.button("...").clicked() {
+                                        self.folder_promise =
+                                            Some(Self::open_worker_folder_picker(ui.ctx().clone()));
+                                    }
+                                });
+                            }
+
                             InstallLocation::Web(url) => {
                                 ui.horizontal(|ui| {
                                     ui.label("URL:");
@@ -120,7 +161,7 @@ impl SetupWindow {
                             #[cfg(not(target_arch = "wasm32"))]
                             if radio(ui, matches!(self.schema, SchemaLocation::Local(_)), "Local") {
                                 self.schema = SchemaLocation::Local(
-                                    current_dir()
+                                    std::env::current_dir()
                                         .ok()
                                         .and_then(|p| Some(p.to_str()?.to_string()))
                                         .unwrap_or("/".to_owned()),
@@ -173,6 +214,39 @@ impl SetupWindow {
         } else {
             None
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn open_worker_folder_picker(
+        ctx: egui::Context,
+    ) -> crate::utils::TrackedPromise<anyhow::Result<String>> {
+        use anyhow::anyhow;
+        use eframe::wasm_bindgen::JsCast;
+        use wasm_bindgen_futures::JsFuture;
+        use web_sys::{
+            DirectoryPickerOptions, FileSystemDirectoryHandle, FileSystemPermissionMode,
+        };
+
+        use crate::excel::worker::WorkerFileProvider;
+
+        crate::utils::TrackedPromise::spawn_local(ctx, async move {
+            let opts = DirectoryPickerOptions::new();
+            opts.set_mode(FileSystemPermissionMode::Read);
+            let promise = web_sys::window()
+                .expect("no window")
+                .show_directory_picker_with_options(&opts);
+            let promise = promise.map_err(|e| anyhow!("Error picking folder: {e:?}"))?;
+            let result = JsFuture::from(promise).await;
+            match result {
+                Ok(handle) => {
+                    let handle = handle
+                        .dyn_into::<FileSystemDirectoryHandle>()
+                        .map_err(|_| anyhow!("Error casting to FileSystemDirectoryHandle"))?;
+                    WorkerFileProvider::add_folder(handle).await
+                }
+                Err(e) => Err(anyhow!("Error picking folder: {e:?}")),
+            }
+        })
     }
 }
 

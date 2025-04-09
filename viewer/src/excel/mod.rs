@@ -8,6 +8,8 @@ pub mod provider;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod sqpack;
 pub mod web;
+#[cfg(target_arch = "wasm32")]
+pub mod worker;
 
 pub fn get_icon_path(icon_id: u32, hires: bool) -> String {
     format!(
