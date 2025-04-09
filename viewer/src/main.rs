@@ -50,8 +50,6 @@ fn main() {
     .init();
     log::set_max_level(log::LevelFilter::Info);
 
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
-
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async {
