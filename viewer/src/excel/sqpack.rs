@@ -4,11 +4,15 @@ use super::{base::FileProvider, get_icon_path};
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
-use ironworks::{Ironworks, file::File, sqpack::Install};
+use ironworks::{
+    Ironworks,
+    file::File,
+    sqpack::{Install, SqPack},
+};
 use std::{path::PathBuf, str::FromStr};
 use url::Url;
 
-pub struct SqpackFileProvider(Ironworks);
+pub struct SqpackFileProvider(Ironworks<SqPack<Install>>);
 
 impl SqpackFileProvider {
     pub fn new(install_location: &str) -> Self {

@@ -3,7 +3,10 @@ use std::{cell::RefCell, convert::Infallible, rc::Rc};
 use eframe::wasm_bindgen::JsCast;
 use gloo_worker::{HandlerId, Worker, WorkerScope};
 use indexed_db::Database;
-use ironworks::{Ironworks, sqpack::VInstall};
+use ironworks::{
+    Ironworks,
+    sqpack::{SqPack, VInstall},
+};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{FileSystemDirectoryHandle, js_sys::JsString};
@@ -208,12 +211,12 @@ impl Worker for SqpackWorker {
     }
 }
 
-struct InstallInstance(pub Ironworks);
+struct InstallInstance(pub Ironworks<SqPack<VInstall<DirectoryVfs>>>);
 
 impl InstallInstance {
     async fn new(handle: FileSystemDirectoryHandle) -> std::io::Result<Self> {
         let resource = VInstall::at_sqpack(DirectoryVfs::new(handle).await?);
-        let resource = ironworks::sqpack::SqPack::new(resource);
+        let resource = SqPack::new(resource);
         Ok(Self(Ironworks::new().with_resource(resource)))
     }
 }

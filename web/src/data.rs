@@ -5,10 +5,7 @@ use std::{
     time::Duration,
 };
 
-use ironworks::{
-    Ironworks,
-    sqpack::{Install, SqPack},
-};
+use ironworks::{SharedIronworks, sqpack::Install};
 use itertools::Itertools;
 use mini_moka::sync::{Cache, CacheBuilder};
 use regex_lite::Regex;
@@ -47,7 +44,7 @@ pub struct VersionInfo {
 pub struct GameData {
     path: PathBuf,
     version_info_cache: Cache<(), VersionInfo>,
-    version_cache: Cache<GameVersion, Arc<Ironworks<SqPack<Install>>>>,
+    version_cache: Cache<GameVersion, Arc<SharedIronworks>>,
     file_cache: Cache<(GameVersion, String), Arc<Vec<u8>>>,
 }
 
@@ -105,10 +102,7 @@ impl GameData {
         Some(ret)
     }
 
-    fn get_version(
-        &self,
-        version: GameVersion,
-    ) -> Result<Arc<Ironworks<SqPack<Install>>>, ironworks::Error> {
+    fn get_version(&self, version: GameVersion) -> Result<Arc<SharedIronworks>, ironworks::Error> {
         if let Some(ret) = self.version_cache.get(&version) {
             return Ok(ret);
         }
@@ -124,7 +118,7 @@ impl GameData {
 
         let resource = Install::at_sqpack(path);
         let resource = ironworks::sqpack::SqPack::new(resource);
-        let ironworks = Arc::new(Ironworks::new().with_resource(resource));
+        let ironworks = Arc::new(SharedIronworks::new().with_resource(Box::new(resource)));
         self.version_cache.insert(version, ironworks.clone());
         Ok(ironworks)
     }
