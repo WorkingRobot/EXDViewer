@@ -15,6 +15,8 @@ mod schema;
 mod setup;
 mod sheet;
 mod utils;
+#[cfg(target_arch = "wasm32")]
+pub mod worker;
 
 pub use app::App;
 

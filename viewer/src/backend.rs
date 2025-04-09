@@ -50,3 +50,28 @@ impl Backend {
         &self.0.schema_provider
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+pub mod worker {
+    use std::{
+        cell::LazyCell,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
+    use gloo_worker::{Spawnable, WorkerBridge};
+
+    use crate::worker::{PreservingCodec, SqpackWorker};
+
+    static WORKER_FLAG: AtomicBool = AtomicBool::new(false);
+
+    thread_local! {
+        pub static WORKER: LazyCell<WorkerBridge<SqpackWorker>> = LazyCell::new(|| {
+            if WORKER_FLAG.swap(true, Ordering::SeqCst) {
+                panic!("Worker already initialized");
+            }
+            SqpackWorker::spawner()
+                .encoding::<PreservingCodec>()
+                .spawn("./worker.js")
+        });
+    }
+}
