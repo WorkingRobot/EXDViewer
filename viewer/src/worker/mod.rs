@@ -2,8 +2,10 @@ use eframe::wasm_bindgen::{JsCast, JsValue};
 use web_sys::js_sys;
 
 mod codec;
+mod directory;
 mod file;
 mod sqpack_worker;
+mod stopwatch;
 mod vfs;
 
 pub use codec::PreservingCodec;

@@ -67,6 +67,7 @@ web-sys = { version = "0.3.77", features = [
     "PermissionState",
     "FileReaderSync",
     "DirectoryPickerOptions",
+    "FileSystemWritableFileStream",
 ] }
 getrandom = { version = "0.2.15", features = [
     "js",

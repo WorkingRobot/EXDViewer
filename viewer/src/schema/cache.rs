@@ -53,12 +53,12 @@ impl<T: SchemaProvider + 'static> SchemaProvider for CachedProvider<T> {
         self.0.provider.can_save_schemas()
     }
 
-    fn save_schema_start_dir(&self) -> std::path::PathBuf {
+    fn save_schema_start_dir(&self) -> Option<std::path::PathBuf> {
         self.0.provider.save_schema_start_dir()
     }
 
-    fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()> {
-        self.0.provider.save_schema(name, text)?;
+    async fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()> {
+        self.0.provider.save_schema(name, text).await?;
         self.0.cache.borrow_mut().pop(name);
         Ok(())
     }
@@ -74,11 +74,11 @@ impl SchemaProvider for Box<dyn SchemaProvider> {
         self.as_ref().can_save_schemas()
     }
 
-    fn save_schema_start_dir(&self) -> std::path::PathBuf {
+    fn save_schema_start_dir(&self) -> Option<std::path::PathBuf> {
         self.as_ref().save_schema_start_dir()
     }
 
-    fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()> {
-        self.as_ref().save_schema(name, text)
+    async fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()> {
+        self.as_ref().save_schema(name, text).await
     }
 }

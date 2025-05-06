@@ -36,11 +36,11 @@ impl SchemaProvider for WebProvider {
         false
     }
 
-    fn save_schema_start_dir(&self) -> std::path::PathBuf {
-        unreachable!("Saving schemas is not supported by this provider");
+    fn save_schema_start_dir(&self) -> Option<std::path::PathBuf> {
+        None
     }
 
-    fn save_schema(&self, _name: &str, _text: &str) -> anyhow::Result<()> {
+    async fn save_schema(&self, _name: &str, _text: &str) -> anyhow::Result<()> {
         unreachable!("Saving schemas is not supported by this provider");
     }
 }

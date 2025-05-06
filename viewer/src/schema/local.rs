@@ -28,11 +28,11 @@ impl SchemaProvider for LocalProvider {
         true
     }
 
-    fn save_schema_start_dir(&self) -> PathBuf {
-        self.base_path.clone()
+    fn save_schema_start_dir(&self) -> Option<PathBuf> {
+        Some(self.base_path.clone())
     }
 
-    fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()> {
+    async fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()> {
         std::fs::write(self.base_path.join(format!("{name}.yml")), text)?;
         Ok(())
     }

@@ -18,6 +18,7 @@ pub struct EditableSchema {
     is_modified: bool,
     schema: anyhow::Result<Result<Schema, VecDeque<OutputUnit<ErrorDescription>>>>,
     save_promise: Option<TrackedPromise<()>>,
+    save_as_promise: Option<TrackedPromise<()>>,
 }
 
 impl EditableSchema {
@@ -30,6 +31,7 @@ impl EditableSchema {
             is_modified: false,
             schema,
             save_promise: None,
+            save_as_promise: None,
         }
     }
 
@@ -42,6 +44,7 @@ impl EditableSchema {
             is_modified: false,
             schema: Ok(Ok(schema)),
             save_promise: None,
+            save_as_promise: None,
         })
     }
 
@@ -142,9 +145,7 @@ impl EditableSchema {
                 }
                 if provider.can_save_schemas() {
                     if consume_shortcut(ui, &shortcut_save) {
-                        if let Err(e) = provider.save_schema(&self.sheet_name, self.get_text()) {
-                            log::error!("Failed to save schema: {}", e);
-                        }
+                        self.command_save(ui.ctx(), provider);
                     }
                 }
                 if consume_shortcut(ui, &shortcut_save_as) {
@@ -183,11 +184,7 @@ impl EditableSchema {
                                     self.is_modified() && provider.can_save_schemas(),
                                     |ui| {
                                         if shortcut_button(ui, "Save", &shortcut_save).clicked() {
-                                            if let Err(e) = provider
-                                                .save_schema(&self.sheet_name, self.get_text())
-                                            {
-                                                log::error!("Failed to save schema: {}", e);
-                                            }
+                                            self.command_save(ui.ctx(), provider);
                                             ui.close_menu();
                                         }
                                     },
@@ -393,17 +390,28 @@ impl EditableSchema {
         TextBuffer::clear(&mut self.text);
     }
 
+    fn command_save(&mut self, ctx: &egui::Context, provider: &BoxedSchemaProvider) {
+        let sheet_name = self.sheet_name.clone();
+        let sheet_data = self.text.clone();
+        let provider = provider.clone();
+
+        self.save_promise = Some(TrackedPromise::spawn_local(ctx.clone(), async move {
+            if let Err(e) = provider.save_schema(&sheet_name, &sheet_data).await {
+                log::error!("Failed to save schema: {}", e);
+            }
+        }));
+    }
+
     fn command_save_as(&mut self, ctx: &egui::Context, provider: &BoxedSchemaProvider) {
-        let start_dir = if provider.can_save_schemas() {
-            Some(provider.save_schema_start_dir())
-        } else {
-            None
-        };
+        let start_dir = provider
+            .can_save_schemas()
+            .then(|| provider.save_schema_start_dir())
+            .flatten();
 
         let sheet_name = self.sheet_name.clone();
         let sheet_data = self.text.clone();
 
-        self.save_promise = Some(TrackedPromise::spawn_local(ctx.clone(), async move {
+        self.save_as_promise = Some(TrackedPromise::spawn_local(ctx.clone(), async move {
             let mut dialog = rfd::AsyncFileDialog::new()
                 .set_title("Save Schema As")
                 .set_file_name(format!("{}.yml", sheet_name));

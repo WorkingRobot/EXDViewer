@@ -10,6 +10,14 @@ impl BoxedSchemaProvider {
         )
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_worker(value: super::worker::WorkerProvider) -> Self {
+        CachedProvider::new(
+            Box::new(value) as Box<dyn SchemaProvider>,
+            std::num::NonZeroUsize::new(10).unwrap(),
+        )
+    }
+
     pub fn new_web(value: super::web::WebProvider) -> Self {
         CachedProvider::new(
             Box::new(value) as Box<dyn SchemaProvider>,

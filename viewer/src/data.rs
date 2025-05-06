@@ -14,6 +14,8 @@ pub enum InstallLocation {
 pub enum SchemaLocation {
     #[cfg(not(target_arch = "wasm32"))]
     Local(String),
+    #[cfg(target_arch = "wasm32")]
+    Worker(String),
     Web(String),
 }
 

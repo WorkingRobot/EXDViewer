@@ -43,6 +43,11 @@ impl Backend {
                 SchemaLocation::Local(path) => {
                     BoxedSchemaProvider::new_local(crate::schema::local::LocalProvider::new(&path))
                 }
+                #[cfg(target_arch = "wasm32")]
+                SchemaLocation::Worker(path) => BoxedSchemaProvider::new_worker(
+                    crate::schema::worker::WorkerProvider::new(path).await?,
+                ),
+
                 SchemaLocation::Web(base_url) => {
                     BoxedSchemaProvider::new_web(WebProvider::new(base_url))
                 }

@@ -8,7 +8,7 @@ pub trait SchemaProvider {
 
     fn can_save_schemas(&self) -> bool;
 
-    fn save_schema_start_dir(&self) -> PathBuf;
+    fn save_schema_start_dir(&self) -> Option<PathBuf>;
 
-    fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()>;
+    async fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()>;
 }
