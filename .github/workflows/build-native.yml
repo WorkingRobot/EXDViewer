@@ -1,0 +1,72 @@
+name: Build Native
+on: push
+
+jobs:
+  build:
+    name: Build - ${{ matrix.platform.os-name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os-name: linux-x64
+            runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+          - os-name: linux-arm64
+            runs-on: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+
+          - os-name: win-x64
+            runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary-ext: .exe
+
+          - os-name: win-arm64
+            runs-on: windows-latest
+            target: aarch64-pc-windows-msvc
+            binary-ext: .exe
+
+          - os-name: osx-x64
+            runs-on: macOS-latest
+            target: x86_64-apple-darwin
+
+          - os-name: osx-arm64
+            runs-on: macOS-latest
+            target: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.platform.runs-on }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: "--locked --release --bin exdviewer"
+          strip: true
+
+      - name: Attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            target/${{ matrix.platform.target }}/release/exdviewer${{ matrix.platform.binary-ext }}
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: exdviewer-${{ matrix.platform.os-name }}
+          path: |
+            target/${{ matrix.platform.target }}/release/exdviewer${{ matrix.platform.binary-ext }}
+
+      - uses: svenstaro/upload-release-action@v2
+        name: Upload to Release
+        with:
+          file: target/${{ matrix.platform.target }}/release/exdviewer${{ matrix.platform.binary-ext }}
+          asset_name: exdviewer-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
+          tag: ${{ github.ref }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          overwrite: true
