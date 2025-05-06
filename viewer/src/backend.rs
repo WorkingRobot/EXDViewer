@@ -62,18 +62,19 @@ impl Backend {
 #[cfg(target_arch = "wasm32")]
 pub mod worker {
     use std::{
-        cell::LazyCell,
+        cell::{LazyCell, RefCell},
         sync::atomic::{AtomicBool, Ordering},
     };
 
     use gloo_worker::{Spawnable, WorkerBridge};
+    use pinned::oneshot;
 
-    use crate::worker::{PreservingCodec, SqpackWorker};
+    use crate::worker::{PreservingCodec, SqpackWorker, WorkerRequest, WorkerResponse};
 
     static WORKER_FLAG: AtomicBool = AtomicBool::new(false);
 
     thread_local! {
-        pub static WORKER: LazyCell<WorkerBridge<SqpackWorker>> = LazyCell::new(|| {
+        static WORKER: LazyCell<WorkerBridge<SqpackWorker>> = LazyCell::new(|| {
             if WORKER_FLAG.swap(true, Ordering::SeqCst) {
                 panic!("Worker already initialized");
             }
@@ -81,5 +82,26 @@ pub mod worker {
                 .encoding::<PreservingCodec>()
                 .spawn("./worker.js")
         });
+    }
+
+    pub async fn transact(input: WorkerRequest) -> WorkerResponse {
+        let (tx, rx) = oneshot::channel();
+        let tx = RefCell::new(Some(tx));
+        let bridge = WORKER.with(|w| {
+            w.fork(Some(move |msg| {
+                let ret = tx.take().map(|tx| tx.send(msg));
+                match ret {
+                    Some(Ok(())) => {}
+                    Some(Err(_)) => {
+                        log::error!("WorkerFileProvider: failed to send message");
+                    }
+                    None => {
+                        log::error!("WorkerFileProvider: tx already taken");
+                    }
+                }
+            }))
+        });
+        bridge.send(input);
+        rx.await.unwrap()
     }
 }
