@@ -98,10 +98,10 @@ pub mod worker {
                 match ret {
                     Some(Ok(())) => {}
                     Some(Err(_)) => {
-                        log::error!("WorkerFileProvider: failed to send message");
+                        log::error!("worker: failed to send message");
                     }
                     None => {
-                        log::error!("WorkerFileProvider: tx already taken");
+                        log::error!("worker: tx already taken");
                     }
                 }
             }))

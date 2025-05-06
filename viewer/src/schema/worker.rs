@@ -17,24 +17,20 @@ impl WorkerProvider {
                 match worker::transact(WorkerRequest::SetupSchemaFolder(f)).await {
                     WorkerResponse::SetupSchemaFolder(Ok(())) => Ok(Self(())),
                     WorkerResponse::SetupSchemaFolder(Err(e)) => Err(anyhow::anyhow!(
-                        "WorkerFileProvider: failed to setup schema folder: {}",
+                        "WorkerProvider: failed to setup schema folder: {}",
                         e
                     )),
-                    _ => Err(anyhow::anyhow!(
-                        "WorkerFileProvider: invalid schema response"
-                    )),
+                    _ => Err(anyhow::anyhow!("WorkerProvider: invalid schema response")),
                 }
             }
-            WorkerResponse::GetStoredSchemaFolder(Ok(None)) => Err(anyhow::anyhow!(
-                "WorkerFileProvider: schema folder not found"
-            )),
+            WorkerResponse::GetStoredSchemaFolder(Ok(None)) => {
+                Err(anyhow::anyhow!("WorkerProvider: schema folder not found"))
+            }
             WorkerResponse::GetStoredSchemaFolder(Err(e)) => Err(anyhow::anyhow!(
-                "WorkerFileProvider: failed to setup schema folder: {}",
+                "WorkerProvider: failed to setup schema folder: {}",
                 e
             )),
-            _ => Err(anyhow::anyhow!(
-                "WorkerFileProvider: invalid schema response"
-            )),
+            _ => Err(anyhow::anyhow!("WorkerProvider: invalid schema response")),
         }
     }
 
@@ -42,12 +38,10 @@ impl WorkerProvider {
         match worker::transact(WorkerRequest::GetStoredSchemas()).await {
             WorkerResponse::GetStoredSchemas(Ok(folders)) => Ok(folders),
             WorkerResponse::GetStoredSchemas(Err(e)) => Err(anyhow::anyhow!(
-                "WorkerFileProvider: failed to get schema folders: {}",
+                "WorkerProvider: failed to get schema folders: {}",
                 e
             )),
-            _ => Err(anyhow::anyhow!(
-                "WorkerFileProvider: invalid schema response"
-            )),
+            _ => Err(anyhow::anyhow!("WorkerProvider: invalid schema response")),
         }
     }
 
@@ -59,12 +53,10 @@ impl WorkerProvider {
         {
             WorkerResponse::StoreSchemaFolder(Ok(())) => Ok(handle.name()),
             WorkerResponse::StoreSchemaFolder(Err(e)) => Err(anyhow::anyhow!(
-                "WorkerFileProvider: failed to add schema folder: {}",
+                "WorkerProvider: failed to add schema folder: {}",
                 e
             )),
-            _ => Err(anyhow::anyhow!(
-                "WorkerFileProvider: invalid schema response"
-            )),
+            _ => Err(anyhow::anyhow!("WorkerProvider: invalid schema response")),
         }
     }
 }
@@ -75,11 +67,9 @@ impl SchemaProvider for WorkerProvider {
         if let WorkerResponse::GetSchema(result) =
             worker::transact(WorkerRequest::GetSchema(format!("{name}.yml"))).await
         {
-            result.map_err(|e| anyhow::anyhow!("WorkerFileProvider: failed to get schema: {}", e))
+            result.map_err(|e| anyhow::anyhow!("WorkerProvider: failed to get schema: {}", e))
         } else {
-            return Err(anyhow::anyhow!(
-                "WorkerFileProvider: invalid schema response"
-            ));
+            return Err(anyhow::anyhow!("WorkerProvider: invalid schema response"));
         }
     }
 
@@ -98,11 +88,9 @@ impl SchemaProvider for WorkerProvider {
         )))
         .await
         {
-            result.map_err(|e| anyhow::anyhow!("WorkerFileProvider: failed to save schema: {}", e))
+            result.map_err(|e| anyhow::anyhow!("WorkerProvider: failed to save schema: {}", e))
         } else {
-            return Err(anyhow::anyhow!(
-                "WorkerFileProvider: invalid schema response"
-            ));
+            return Err(anyhow::anyhow!("WorkerProvider: invalid schema response"));
         }
     }
 }
