@@ -3,6 +3,12 @@ on: push
 
 jobs:
   build:
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+
     name: Build - ${{ matrix.platform.os-name }}
     strategy:
       fail-fast: false
