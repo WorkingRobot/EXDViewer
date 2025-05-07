@@ -1,4 +1,4 @@
-use egui::{ComboBox, Frame, Layout, TextEdit, Vec2, WidgetText};
+use egui::{Frame, Layout, Vec2, WidgetText};
 
 use crate::{
     DEFAULT_API_URL, DEFAULT_SCHEMA_URL,
@@ -135,7 +135,7 @@ impl SetupWindow {
                                                 *path = picked_path;
                                             }
                                         }
-                                        ui.add(TextEdit::singleline(path).desired_width(ui.available_width()));
+                                        ui.add(egui::TextEdit::singleline(path).desired_width(ui.available_width()));
                                     });
                                 });
                             }
@@ -152,7 +152,7 @@ impl SetupWindow {
                                                 crate::excel::worker::WorkerFileProvider::add_folder,
                                             );
                                         }
-                                        ComboBox::from_id_salt("install_folder")
+                                        egui::ComboBox::from_id_salt("install_folder")
                                             .selected_text(name.as_str())
                                             .width(ui.available_width())
                                             .show_ui(ui, |ui| {
@@ -170,15 +170,15 @@ impl SetupWindow {
                                                     if entries.is_empty() {
                                                         ui.label("None");
                                                     }
-                                                    else{
-                                                    for entry in entries {
-                                                        ui.selectable_value(
-                                                            name,
-                                                            entry.to_string(),
-                                                            entry,
-                                                        );
+                                                    else {
+                                                        for entry in entries {
+                                                            ui.selectable_value(
+                                                                name,
+                                                                entry.to_string(),
+                                                                entry,
+                                                            );
+                                                        }
                                                     }
-                                                }
                                                 }
                                             }
                                         });
@@ -239,7 +239,7 @@ impl SetupWindow {
                                             *path = picked_path;
                                         }
                                     }
-                                    ui.add(TextEdit::singleline(path).desired_width(ui.available_width()));
+                                    ui.add(egui::TextEdit::singleline(path).desired_width(ui.available_width()));
                                 });
                                 });
                             }
@@ -258,7 +258,7 @@ impl SetupWindow {
                                                 crate::schema::worker::WorkerProvider::add_folder,
                                             );
                                         }
-                                        ComboBox::from_id_salt("schema_folder")
+                                        egui::ComboBox::from_id_salt("schema_folder")
                                         .selected_text(name.as_str())
                                         .width(ui.available_width())
                                         .show_ui(ui, |ui| {
