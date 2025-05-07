@@ -190,7 +190,7 @@ impl App {
                         return Some((0, sheet, id));
                     }
                     self.sheet_matcher
-                        .fuzzy_match(&sheet.as_str(), &self.state.current_filter)
+                        .fuzzy_match(sheet.as_str(), &self.state.current_filter)
                         .map(|score| (score, sheet, id))
                 })
                 .sorted_unstable_by_key(|(score, _, _)| -score)

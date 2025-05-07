@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use anyhow::bail;
 use itertools::Itertools;
@@ -18,7 +18,7 @@ use super::{
 };
 
 #[derive(Clone)]
-pub struct TableContext(Arc<TableContextImpl>);
+pub struct TableContext(Rc<TableContextImpl>);
 
 pub struct TableContextImpl {
     global: GlobalContext,
@@ -52,7 +52,7 @@ impl TableContext {
             .map(|(i, _p)| i as u32)
             .collect_vec();
 
-        let ret = Self(Arc::new(TableContextImpl {
+        let ret = Self(Rc::new(TableContextImpl {
             global,
             sheet,
             column_ordering,
@@ -159,17 +159,14 @@ impl TableContext {
                 async move {
                     let sheet_future = ctx.backend().excel().get_sheet(&name, ctx.language());
                     let schema_future = ctx.backend().schema().get_schema_text(&name);
-                    Ok(futures_util::try_join!(
-                        async move { sheet_future.await },
-                        async move {
-                            Ok(schema_future
-                                .await
-                                .and_then(|s| Schema::from_str(&s))
-                                .map(|a| a.ok())
-                                .ok()
-                                .flatten())
-                        }
-                    )?)
+                    Ok(futures_util::try_join!(sheet_future, async move {
+                        Ok(schema_future
+                            .await
+                            .and_then(|s| Schema::from_str(&s))
+                            .map(|a| a.ok())
+                            .ok()
+                            .flatten())
+                    })?)
                 },
             ))
         });

@@ -82,10 +82,7 @@ impl SchemaColumn {
         Ok(())
     }
 
-    fn resolve_placeholders(
-        ret: &mut Vec<Self>,
-        column_lookups: &Vec<String>,
-    ) -> anyhow::Result<()> {
+    fn resolve_placeholders(ret: &mut [Self], column_lookups: &[String]) -> anyhow::Result<()> {
         for i in 0..ret.len() {
             let column = &ret[i];
             if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = &column.meta {

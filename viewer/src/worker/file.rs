@@ -30,7 +30,7 @@ impl SyncAccessFile {
                 format!("f64 {value:?} is not convertible to u64"),
             ));
         }
-        return Ok(value.trunc() as u64);
+        Ok(value.trunc() as u64)
     }
 
     fn into_f64(value: u64) -> std::io::Result<f64> {
@@ -40,7 +40,7 @@ impl SyncAccessFile {
                 format!("u64 {value:?} is not convertible to f64"),
             ));
         }
-        return Ok(value as f64);
+        Ok(value as f64)
     }
 
     fn get_size(&self) -> std::io::Result<u64> {
@@ -68,7 +68,7 @@ impl Read for SyncAccessFile {
                 buf.get_mut(..(array.length() as usize))
                     .ok_or(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
-                        format!("buffer is too small"),
+                        "buffer is too small".to_string(),
                     ))?,
             );
             Ok(array.length() as usize)
@@ -90,7 +90,7 @@ impl Read for SyncAccessFile {
                 .get_mut(..(array.length() as usize))
                 .ok_or(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("buffer is too small"),
+                    "buffer is too small".to_string(),
                 ))?;
             array.copy_to_uninit(data);
 

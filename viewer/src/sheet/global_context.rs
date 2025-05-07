@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use ironworks::excel::Language;
 
 use crate::{backend::Backend, utils::IconManager};
 
 #[derive(Clone)]
-pub struct GlobalContext(Arc<GlobalContextImpl>);
+pub struct GlobalContext(Rc<GlobalContextImpl>);
 
 pub struct GlobalContextImpl {
     ctx: egui::Context,
@@ -21,7 +21,7 @@ impl GlobalContext {
         language: Language,
         icon_manager: IconManager,
     ) -> Self {
-        Self(Arc::new(GlobalContextImpl {
+        Self(Rc::new(GlobalContextImpl {
             ctx,
             backend,
             language,

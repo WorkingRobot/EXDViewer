@@ -73,7 +73,7 @@ impl SqpackWorker {
     async fn get_db() -> Result<Database<String>, String> {
         let factory = indexed_db::Factory::get()
             .map_err(|e| format!("Failed to get IndexedDB factory: {e}"))?;
-        Ok(factory
+        factory
             .open("sqpack", 4, |evt| async move {
                 let db = evt.database();
                 let _ = db.delete_object_store("folders");
@@ -85,7 +85,7 @@ impl SqpackWorker {
                 Ok(())
             })
             .await
-            .map_err(|e| format!("Failed to open IndexedDB database: {e}"))?)
+            .map_err(|e| format!("Failed to open IndexedDB database: {e}"))
     }
 
     async fn get_db_folders_impl(store: &'static str) -> Result<Vec<String>, String> {
@@ -132,7 +132,7 @@ impl SqpackWorker {
                 Ok(if let Some(data) = data {
                     let data = data
                         .dyn_into::<FileSystemDirectoryHandle>()
-                        .map_err(|_| format!("Failed to cast to FileSystemDirectoryHandle"))?;
+                        .map_err(|_| "Failed to cast to FileSystemDirectoryHandle".to_string())?;
                     Some(data)
                 } else {
                     None

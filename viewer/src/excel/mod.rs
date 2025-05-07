@@ -20,7 +20,7 @@ pub fn get_icon_path(icon_id: u32, hires: bool) -> String {
     )
 }
 
-const XIVAPI_BASE_URL: LazyLock<Url> = LazyLock::new(|| {
+static XIVAPI_BASE_URL: LazyLock<Url> = LazyLock::new(|| {
     Url::parse("https://v2.xivapi.com/api/asset").expect("Failed to parse XIVAPI base URL")
 });
 

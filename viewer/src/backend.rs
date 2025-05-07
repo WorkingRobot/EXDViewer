@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::{str::FromStr, sync::Arc};
+use std::{rc::Rc, str::FromStr};
 
 use crate::{
     data::{AppConfig, InstallLocation, SchemaLocation},
@@ -8,7 +8,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct Backend(Arc<BackendImpl>);
+pub struct Backend(Rc<BackendImpl>);
 
 struct BackendImpl {
     excel_provider: BoxedExcelProvider,
@@ -17,7 +17,7 @@ struct BackendImpl {
 
 impl Backend {
     pub async fn new(config: AppConfig) -> Result<Self> {
-        Ok(Self(Arc::new(BackendImpl {
+        Ok(Self(Rc::new(BackendImpl {
             excel_provider: match config.location {
                 #[cfg(not(target_arch = "wasm32"))]
                 InstallLocation::Sqpack(path) => {

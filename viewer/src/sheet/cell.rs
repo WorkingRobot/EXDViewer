@@ -301,15 +301,13 @@ impl<'a> Cell<'a> {
 
     pub fn show(self, ui: &mut egui::Ui) -> egui::InnerResponse<CellResponse> {
         match self.draw(ui) {
-            Ok(resp) => {
-                return InnerResponse::new(resp, ui.response());
-            }
+            Ok(resp) => InnerResponse::new(resp, ui.response()),
             Err(err) => {
                 log::error!("Failed to draw cell: {:?}", err);
                 let resp = ui
                     .colored_label(Color32::LIGHT_RED, "⚠")
                     .on_hover_text(err.to_string());
-                return InnerResponse::new(CellResponse::None, resp);
+                InnerResponse::new(CellResponse::None, resp)
             }
         }
     }

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     path::{Path, PathBuf},
 };
 
@@ -41,10 +41,16 @@ impl<T> Directory<T> {
         ret.fill_map(ret.handle.clone(), PathBuf::new()).await?;
         Ok(ret)
     }
-
     async fn verify_permission(&self, file: &FileSystemFileHandle) -> std::io::Result<()> {
+        Self::verify_permission_mode(self.mode, file).await
+    }
+
+    async fn verify_permission_mode(
+        mode: FileSystemPermissionMode,
+        file: &FileSystemFileHandle,
+    ) -> std::io::Result<()> {
         let perms = FileSystemHandlePermissionDescriptor::new();
-        perms.set_mode(self.mode);
+        perms.set_mode(mode);
         let perm = JsFuture::from(file.query_permission_with_descriptor(&perms))
             .await
             .map_err(map_jserr)?;
@@ -98,9 +104,9 @@ impl<T> Directory<T> {
                         )
                     })?;
                     let key = path.join(file_handle.name());
-                    if !self.files.contains_key(&key) {
-                        self.verify_permission(&file_handle).await?;
-                        self.files.insert(key, (*self.mapper)(file_handle).await?);
+                    if let Entry::Vacant(e) = self.files.entry(key) {
+                        Self::verify_permission_mode(self.mode, &file_handle).await?;
+                        e.insert((*self.mapper)(file_handle).await?);
                     }
                 }
                 FileSystemHandleKind::Directory if self.recurse => {
