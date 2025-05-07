@@ -124,10 +124,7 @@ impl SetupWindow {
                                 ui.horizontal(|ui| {
                                     ui.label("Path:");
                                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                                        if ui
-                                            .button("Browse")
-                                            .clicked()
-                                        {
+                                        if ui.button("Browse").clicked() {
                                             if let Some(picked_path) = rfd::FileDialog::new()
                                                 .pick_folder()
                                                 .and_then(|d| d.to_str().map(|s| s.to_owned()))
@@ -135,7 +132,10 @@ impl SetupWindow {
                                                 *path = picked_path;
                                             }
                                         }
-                                        ui.add(egui::TextEdit::singleline(path).desired_width(ui.available_width()));
+                                        ui.add(
+                                            egui::TextEdit::singleline(path)
+                                                .desired_width(ui.available_width()),
+                                        );
                                     });
                                 });
                             }
@@ -146,10 +146,12 @@ impl SetupWindow {
                                     ui.label("Name:");
                                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
                                         if ui.button("Browse").clicked() {
+                                            use crate::excel::worker::WorkerFileProvider;
+
                                             self.location_promises.open_folder_picker(
                                                 ui.ctx().clone(),
                                                 web_sys::FileSystemPermissionMode::Read,
-                                                crate::excel::worker::WorkerFileProvider::add_folder,
+                                                WorkerFileProvider::add_folder,
                                             );
                                         }
                                         egui::ComboBox::from_id_salt("install_folder")
@@ -157,31 +159,31 @@ impl SetupWindow {
                                             .width(ui.available_width())
                                             .show_ui(ui, |ui| {
                                                 match self.location_promises.get_folder_list(
-                                                ui.ctx().clone(),
-                                                crate::excel::worker::WorkerFileProvider::folders,
-                                            ) {
-                                                None => {
-                                                    ui.label("Retrieving...");
-                                                }
-                                                Some(Err(e)) => {
-                                                    ui.label(format!("An error occured: {e}"));
-                                                }
-                                                Some(Ok(entries)) => {
-                                                    if entries.is_empty() {
-                                                        ui.label("None");
+                                                    ui.ctx().clone(),
+                                                    crate::excel::worker::WorkerFileProvider::folders,
+                                                ) {
+                                                    None => {
+                                                        ui.label("Retrieving...");
                                                     }
-                                                    else {
-                                                        for entry in entries {
-                                                            ui.selectable_value(
-                                                                name,
-                                                                entry.to_string(),
-                                                                entry,
-                                                            );
+                                                    Some(Err(e)) => {
+                                                        ui.label(format!("An error occured: {e}"));
+                                                    }
+                                                    Some(Ok(entries)) => {
+                                                        if entries.is_empty() {
+                                                            ui.label("None");
+                                                        }
+                                                        else {
+                                                            for entry in entries {
+                                                                ui.selectable_value(
+                                                                    name,
+                                                                    entry.to_string(),
+                                                                    entry,
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                 }
-                                            }
-                                        });
+                                            });
                                     });
                                 });
                             }
@@ -228,19 +230,19 @@ impl SetupWindow {
                                 ui.horizontal(|ui| {
                                     ui.label("Path:");
                                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                                    if ui
-                                        .button("Browse")
-                                        .clicked()
-                                    {
-                                        if let Some(picked_path) = rfd::FileDialog::new()
-                                            .pick_folder()
-                                            .and_then(|d| d.to_str().map(|s| s.to_owned()))
-                                        {
-                                            *path = picked_path;
+                                        if ui.button("Browse").clicked() {
+                                            if let Some(picked_path) = rfd::FileDialog::new()
+                                                .pick_folder()
+                                                .and_then(|d| d.to_str().map(|s| s.to_owned()))
+                                            {
+                                                *path = picked_path;
+                                            }
                                         }
-                                    }
-                                    ui.add(egui::TextEdit::singleline(path).desired_width(ui.available_width()));
-                                });
+                                        ui.add(
+                                            egui::TextEdit::singleline(path)
+                                                .desired_width(ui.available_width()),
+                                        );
+                                    });
                                 });
                             }
 
@@ -249,9 +251,7 @@ impl SetupWindow {
                                 ui.horizontal(|ui| {
                                     ui.label("Name:");
                                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                                        if ui
-                                        .button("Browse")
-                                        .clicked() {
+                                        if ui.button("Browse").clicked() {
                                             self.schema_promises.open_folder_picker(
                                                 ui.ctx().clone(),
                                                 web_sys::FileSystemPermissionMode::Readwrite,
@@ -259,35 +259,34 @@ impl SetupWindow {
                                             );
                                         }
                                         egui::ComboBox::from_id_salt("schema_folder")
-                                        .selected_text(name.as_str())
-                                        .width(ui.available_width())
-                                        .show_ui(ui, |ui| {
-                                            match self.schema_promises.get_folder_list(
-                                                ui.ctx().clone(),
-                                                crate::schema::worker::WorkerProvider::folders,
-                                            ) {
-                                                None => {
-                                                    ui.label("Retrieving...");
-                                                }
-                                                Some(Err(e)) => {
-                                                    ui.label(format!("An error occured: {e}"));
-                                                }
-                                                Some(Ok(entries)) => {
-                                                    if entries.is_empty() {
-                                                        ui.label("None");
+                                            .selected_text(name.as_str())
+                                            .width(ui.available_width())
+                                            .show_ui(ui, |ui| {
+                                                match self.schema_promises.get_folder_list(
+                                                    ui.ctx().clone(),
+                                                    crate::schema::worker::WorkerProvider::folders,
+                                                ) {
+                                                    None => {
+                                                        ui.label("Retrieving...");
                                                     }
-                                                    else {
-                                                        for entry in entries {
-                                                            ui.selectable_value(
-                                                                name,
-                                                                entry.to_string(),
-                                                                entry,
-                                                            );
+                                                    Some(Err(e)) => {
+                                                        ui.label(format!("An error occured: {e}"));
+                                                    }
+                                                    Some(Ok(entries)) => {
+                                                        if entries.is_empty() {
+                                                            ui.label("None");
+                                                        } else {
+                                                            for entry in entries {
+                                                                ui.selectable_value(
+                                                                    name,
+                                                                    entry.to_string(),
+                                                                    entry,
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                 }
-                                            }
-                                        });
+                                            });
                                     });
                                 });
                             }
