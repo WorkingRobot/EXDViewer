@@ -3,6 +3,8 @@ use std::{io::Read, path::Path};
 use ironworks::sqpack::Vfs;
 use web_sys::{File, FileSystemDirectoryHandle, FileSystemPermissionMode};
 
+use crate::utils::JsResult;
+
 use super::{
     directory::{Directory, get_file_blob},
     file::SyncAccessFile,
@@ -11,7 +13,7 @@ use super::{
 pub struct DirectoryVfs(Directory<File>);
 
 impl DirectoryVfs {
-    pub async fn new(handle: FileSystemDirectoryHandle) -> std::io::Result<Self> {
+    pub async fn new(handle: FileSystemDirectoryHandle) -> JsResult<Self> {
         Ok(Self(
             Directory::new(
                 handle,
@@ -48,7 +50,8 @@ impl Vfs for DirectoryVfs {
 
     fn open(&self, path: impl AsRef<Path>) -> std::io::Result<Self::File> {
         let file_handle: File = self.0.get_file_handle(path)?;
-        let file = SyncAccessFile::new(file_handle)?;
+        let file = SyncAccessFile::new(file_handle)
+            .map_err(|jserr| std::io::Error::new(std::io::ErrorKind::Other, jserr))?;
         Ok(file)
     }
 }

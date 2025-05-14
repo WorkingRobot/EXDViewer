@@ -11,12 +11,11 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, js_sys::JsString};
 
-use crate::utils::tex_loader;
+use crate::utils::{JsErr, tex_loader};
 
 use super::{
     directory::{Directory, get_file_blob, get_file_writer},
     file::SyncAccessFile,
-    map_jserr,
     stopwatch::Stopwatch,
     vfs::DirectoryVfs,
 };
@@ -350,6 +349,9 @@ impl Worker for SqpackWorker {
                                 let ret = get_file_blob(handle)
                                     .await
                                     .and_then(SyncAccessFile::new)
+                                    .map_err(|jserr| {
+                                        std::io::Error::new(std::io::ErrorKind::Other, jserr)
+                                    })
                                     .and_then(|mut f| {
                                         let mut s = String::new();
                                         f.read_to_string(&mut s)?;
@@ -378,15 +380,15 @@ impl Worker for SqpackWorker {
                                     Ok(stream) => {
                                         let write_result =
                                             match stream.write_with_str(data.as_str()) {
-                                                Ok(promise) => {
-                                                    JsFuture::from(promise).await.map_err(map_jserr)
-                                                }
-                                                Err(e) => Err(map_jserr(e)),
+                                                Ok(promise) => JsFuture::from(promise)
+                                                    .await
+                                                    .map_err(JsErr::from),
+                                                Err(e) => Err(JsErr::from(e)),
                                             };
 
                                         let close_result = JsFuture::from(stream.close())
                                             .await
-                                            .map_err(map_jserr)
+                                            .map_err(JsErr::from)
                                             .map(|_| ());
 
                                         write_result.and(close_result)
@@ -411,7 +413,11 @@ struct InstallInstance(pub Ironworks<SqPack<VInstall<DirectoryVfs>>>);
 
 impl InstallInstance {
     async fn new(handle: FileSystemDirectoryHandle) -> std::io::Result<Self> {
-        let resource = VInstall::at_sqpack(DirectoryVfs::new(handle).await?);
+        let resource = VInstall::at_sqpack(
+            DirectoryVfs::new(handle)
+                .await
+                .map_err(|jserr| std::io::Error::new(std::io::ErrorKind::Other, jserr))?,
+        );
         let resource = SqPack::new(resource);
         Ok(Self(Ironworks::new().with_resource(resource)))
     }

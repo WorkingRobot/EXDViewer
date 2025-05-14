@@ -12,14 +12,14 @@ use web_sys::{
     PermissionState,
 };
 
-use super::map_jserr;
+use crate::utils::{JsErr, JsResult};
 
 pub struct Directory<T> {
     handle: FileSystemDirectoryHandle,
     files: HashMap<PathBuf, T>,
 
     mode: FileSystemPermissionMode,
-    mapper: Box<dyn Fn(FileSystemFileHandle) -> LocalBoxFuture<'static, std::io::Result<T>>>,
+    mapper: Box<dyn Fn(FileSystemFileHandle) -> LocalBoxFuture<'static, JsResult<T>>>,
     recurse: bool,
 }
 
@@ -27,9 +27,9 @@ impl<T> Directory<T> {
     pub async fn new(
         handle: FileSystemDirectoryHandle,
         mode: FileSystemPermissionMode,
-        mapper: Box<dyn Fn(FileSystemFileHandle) -> LocalBoxFuture<'static, std::io::Result<T>>>,
+        mapper: Box<dyn Fn(FileSystemFileHandle) -> LocalBoxFuture<'static, JsResult<T>>>,
         recurse: bool,
-    ) -> std::io::Result<Self> {
+    ) -> JsResult<Self> {
         let mut ret = Self {
             handle,
             files: HashMap::new(),
@@ -41,68 +41,46 @@ impl<T> Directory<T> {
         ret.fill_map(ret.handle.clone(), PathBuf::new()).await?;
         Ok(ret)
     }
-    async fn verify_permission(&self, file: &FileSystemFileHandle) -> std::io::Result<()> {
+    async fn verify_permission(&self, file: &FileSystemFileHandle) -> JsResult<()> {
         Self::verify_permission_mode(self.mode, file).await
     }
 
     async fn verify_permission_mode(
         mode: FileSystemPermissionMode,
         file: &FileSystemFileHandle,
-    ) -> std::io::Result<()> {
+    ) -> JsResult<()> {
         let perms = FileSystemHandlePermissionDescriptor::new();
         perms.set_mode(mode);
-        let perm = JsFuture::from(file.query_permission_with_descriptor(&perms))
-            .await
-            .map_err(map_jserr)?;
-        let perm = PermissionState::from_js_value(&perm).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "permission is not a PermissionState",
-            )
-        })?;
+        let perm = JsFuture::from(file.query_permission_with_descriptor(&perms)).await?;
+        let perm = PermissionState::from_js_value(&perm)
+            .ok_or_else(|| JsErr::msg("permission is not a PermissionState"))?;
         if perm == PermissionState::Granted {
             return Ok(());
         }
-        let perm = JsFuture::from(file.query_permission_with_descriptor(&perms))
-            .await
-            .map_err(map_jserr)?;
-        let perm = PermissionState::from_js_value(&perm).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "permission is not a PermissionState",
-            )
-        })?;
+        let perm = JsFuture::from(file.query_permission_with_descriptor(&perms)).await?;
+        let perm = PermissionState::from_js_value(&perm)
+            .ok_or_else(|| JsErr::msg("permission is not a PermissionState"))?;
         if perm == PermissionState::Granted {
             return Ok(());
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "permission denied access to file",
-        ))
+        Err(JsErr::msg("permission denied access to file"))
     }
 
     async fn fill_map(
         &mut self,
         directory: FileSystemDirectoryHandle,
         path: PathBuf,
-    ) -> std::io::Result<()> {
+    ) -> JsResult<()> {
         let mut entries = JsStream::from(directory.values());
         while let Some(entry) = entries.next().await {
-            let entry = entry.map_err(map_jserr)?;
-            let entry = entry.dyn_into::<FileSystemHandle>().map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "entry is not a FileSystemHandle",
-                )
-            })?;
+            let entry = entry?
+                .dyn_into::<FileSystemHandle>()
+                .map_err(|_| JsErr::msg("entry is not a FileSystemHandle"))?;
             match entry.kind() {
                 FileSystemHandleKind::File => {
-                    let file_handle = entry.dyn_into::<FileSystemFileHandle>().map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "entry is not a FileSystemFileHandle",
-                        )
-                    })?;
+                    let file_handle = entry
+                        .dyn_into::<FileSystemFileHandle>()
+                        .map_err(|_| JsErr::msg("entry is not a FileSystemFileHandle"))?;
                     let key = path.join(file_handle.name());
                     if let Entry::Vacant(e) = self.files.entry(key) {
                         Self::verify_permission_mode(self.mode, &file_handle).await?;
@@ -110,12 +88,9 @@ impl<T> Directory<T> {
                     }
                 }
                 FileSystemHandleKind::Directory if self.recurse => {
-                    let sub_dir = entry.dyn_into::<FileSystemDirectoryHandle>().map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "entry is not a FileSystemDirectoryHandle",
-                        )
-                    })?;
+                    let sub_dir = entry
+                        .dyn_into::<FileSystemDirectoryHandle>()
+                        .map_err(|_| JsErr::msg("entry is not a FileSystemDirectoryHandle"))?;
                     async {
                         self.fill_map(sub_dir.clone(), path.join(sub_dir.name()))
                             .await
@@ -125,17 +100,14 @@ impl<T> Directory<T> {
                 }
                 FileSystemHandleKind::Directory => {}
                 _ => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "entry is not a FileSystemHandle",
-                    ));
+                    return Err(JsErr::msg("entry is not a FileSystemHandle"));
                 }
             }
         }
         Ok(())
     }
 
-    pub async fn refresh(&mut self) -> std::io::Result<()> {
+    pub async fn refresh(&mut self) -> JsResult<()> {
         self.fill_map(self.handle.clone(), PathBuf::new()).await
     }
 
@@ -163,27 +135,18 @@ impl<T> Directory<T> {
     }
 }
 
-pub async fn get_file_blob(handle: FileSystemFileHandle) -> std::io::Result<File> {
-    let result = JsFuture::from(handle.get_file()).await;
-    let result = result.map_err(map_jserr)?;
-    let result = result.dyn_into::<File>().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "entry is not a File")
-    })?;
-    Ok(result)
+pub async fn get_file_blob(handle: FileSystemFileHandle) -> JsResult<File> {
+    Ok(JsFuture::from(handle.get_file())
+        .await?
+        .dyn_into::<File>()
+        .map_err(|_| JsErr::msg("entry is not a File"))?)
 }
 
 pub async fn get_file_writer(
     handle: FileSystemFileHandle,
-) -> std::io::Result<FileSystemWritableFileStream> {
-    let result = JsFuture::from(handle.create_writable()).await;
-    let result = result.map_err(map_jserr)?;
-    let result = result
+) -> JsResult<FileSystemWritableFileStream> {
+    Ok(JsFuture::from(handle.create_writable())
+        .await?
         .dyn_into::<FileSystemWritableFileStream>()
-        .map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "entry is not a FileSystemWritableFileStream",
-            )
-        })?;
-    Ok(result)
+        .map_err(|_| JsErr::msg("entry is not a FileSystemWritableFileStream"))?)
 }
