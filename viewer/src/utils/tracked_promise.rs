@@ -1,68 +1,58 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
-use egui::Id;
 use poll_promise::Promise;
 
-pub struct TrackedPromise<T: Send + 'static> {
-    promise: Promise<T>,
-    context: egui::Context,
-}
+use super::convertible_promise::PromiseKind;
+
+pub struct TrackedPromise<T: Send + 'static>(Promise<T>);
+
+static RUNNING_PROMISES: AtomicUsize = AtomicUsize::new(0);
 
 pub fn tick_promises(ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     poll_promise::tick_local();
 
-    let running_futures = ctx.data(|w| {
-        w.get_temp::<u32>(Id::new("running-futures"))
-            .unwrap_or_default()
-    });
-    if running_futures != 0 {
-        ctx.request_repaint();
+    let count = RUNNING_PROMISES.load(Ordering::SeqCst);
+    log::info!("Running promises: {}", count);
+    if count != 0 {
+        ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
 
 impl<T: Send + 'static> TrackedPromise<T> {
-    pub fn spawn_local(ctx: egui::Context, future: impl Future<Output = T> + 'static) -> Self {
-        Self {
-            context: ctx.clone(),
-            promise: Promise::spawn_local(async move {
-                Self::increment(&ctx);
-                let ret = future.await;
-                Self::decrement(&ctx);
-                ret
-            }),
-        }
+    pub fn spawn_local(future: impl Future<Output = T> + 'static) -> Self {
+        Self(Promise::spawn_local(async move {
+            Self::increment();
+            let result = future.await;
+            Self::decrement();
+            result
+        }))
     }
 
-    fn increment(ctx: &egui::Context) {
-        ctx.data_mut(|w| {
-            *w.get_temp_mut_or_default::<u32>(Id::new("running-futures")) += 1;
-        });
+    pub fn try_get(&self) -> Option<&T> {
+        self.0.ready()
     }
 
-    fn decrement(ctx: &egui::Context) {
-        ctx.data_mut(|w| {
-            *w.get_temp_mut_or_default::<u32>(Id::new("running-futures")) -= 1;
-        });
+    fn increment() {
+        RUNNING_PROMISES.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn decrement() {
+        RUNNING_PROMISES.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
-impl<T: Send + 'static> From<TrackedPromise<T>> for Promise<T> {
-    fn from(promise: TrackedPromise<T>) -> Self {
-        promise.promise
+impl<R: Send + 'static> PromiseKind for TrackedPromise<R> {
+    type Output = R;
+
+    fn ready(&self) -> bool {
+        self.0.ready().is_some()
     }
-}
 
-impl<T: Send + 'static> Deref for TrackedPromise<T> {
-    type Target = Promise<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.promise
-    }
-}
-
-impl<T: Send + 'static> DerefMut for TrackedPromise<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.promise
+    fn block_and_take(self) -> R {
+        self.0.block_and_take()
     }
 }
