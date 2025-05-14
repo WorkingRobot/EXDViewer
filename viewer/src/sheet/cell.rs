@@ -144,10 +144,9 @@ impl<'a> Cell<'a> {
             self.table_context.global().backend().excel().clone(),
             &self.table_context.global().icon_manager(),
         );
-        let ctx = ui.ctx().clone();
         let image_source = icon_mgr.get_or_insert_icon(icon_id, ui.ctx(), move || {
             log::debug!("Icon not found in cache: {icon_id}");
-            TrackedPromise::spawn_local(ctx.clone(), async move { excel.get_icon(icon_id).await })
+            TrackedPromise::spawn_local(async move { excel.get_icon(icon_id).await })
         });
         let resp = match image_source {
             ManagedIcon::Loaded(source) => {

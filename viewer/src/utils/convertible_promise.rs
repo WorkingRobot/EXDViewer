@@ -1,15 +1,22 @@
-use std::ops::Deref;
-
 use either::Either::{self, Left, Right};
 use poll_promise::Promise;
 
-use super::TrackedPromise;
-
-pub trait PromiseKind {
-    type Output: Send + 'static;
+pub trait PromiseKind
+where
+    Self: Sized,
+{
+    type Output: 'static;
 
     fn ready(&self) -> bool;
     fn block_and_take(self) -> Self::Output;
+
+    fn try_take(self) -> Result<Self::Output, Self> {
+        if self.ready() {
+            Ok(self.block_and_take())
+        } else {
+            Err(self)
+        }
+    }
 }
 
 impl<R: Send + 'static> PromiseKind for Promise<R> {
@@ -21,18 +28,6 @@ impl<R: Send + 'static> PromiseKind for Promise<R> {
 
     fn block_and_take(self) -> R {
         self.block_and_take()
-    }
-}
-
-impl<R: Send + 'static> PromiseKind for TrackedPromise<R> {
-    type Output = R;
-
-    fn ready(&self) -> bool {
-        self.deref().ready().is_some()
-    }
-
-    fn block_and_take(self) -> R {
-        Promise::from(self).block_and_take()
     }
 }
 

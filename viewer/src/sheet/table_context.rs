@@ -154,21 +154,18 @@ impl TableContext {
         let entry = sheets.entry(name).or_insert_with_key(|name| {
             let ctx = self.0.global.clone();
             let name = name.clone();
-            ConvertiblePromise::new_promise(TrackedPromise::spawn_local(
-                ctx.ctx().clone(),
-                async move {
-                    let sheet_future = ctx.backend().excel().get_sheet(&name, ctx.language());
-                    let schema_future = ctx.backend().schema().get_schema_text(&name);
-                    Ok(futures_util::try_join!(sheet_future, async move {
-                        Ok(schema_future
-                            .await
-                            .and_then(|s| Schema::from_str(&s))
-                            .map(|a| a.ok())
-                            .ok()
-                            .flatten())
-                    })?)
-                },
-            ))
+            ConvertiblePromise::new_promise(TrackedPromise::spawn_local(async move {
+                let sheet_future = ctx.backend().excel().get_sheet(&name, ctx.language());
+                let schema_future = ctx.backend().schema().get_schema_text(&name);
+                Ok(futures_util::try_join!(sheet_future, async move {
+                    Ok(schema_future
+                        .await
+                        .and_then(|s| Schema::from_str(&s))
+                        .map(|a| a.ok())
+                        .ok()
+                        .flatten())
+                })?)
+            }))
         });
 
         entry
