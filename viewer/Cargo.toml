@@ -32,6 +32,7 @@ num-traits = "0.2"
 itertools = "0.14"
 rfd = "0.15"
 egui_table = "0.3"
+# egui_router = "0.4" Terrible library, don't use
 egui_extras = { version = "0.31", features = ["http", "image"] }
 syntect = { version = "5.2", default-features = false, features = [
     "default-fancy",
@@ -46,6 +47,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 image_dds = { version = "0.7", default-features = false, features = ["image"] }
 either = "1.15"
 replace_with = "0.1"
+pinned = "0.1"
+matchit = "0.8"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -68,12 +71,14 @@ web-sys = { version = "0.3.77", features = [
     "FileReaderSync",
     "DirectoryPickerOptions",
     "FileSystemWritableFileStream",
+    "History",
+    "PopStateEvent",
+    "HtmlCollection",
 ] }
 getrandom = { version = "0.2.15", features = [
     "js",
 ] } # Fix to allow building for wasm
 gloo-worker = "0.5"
 serde-wasm-bindgen = "0.6"
-pinned = "0.1"
 indexed-db = "0.4"
 web-time = "1.1"
