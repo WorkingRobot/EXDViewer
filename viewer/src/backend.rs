@@ -2,9 +2,9 @@ use anyhow::Result;
 use std::{rc::Rc, str::FromStr};
 
 use crate::{
-    data::{AppConfig, InstallLocation, SchemaLocation},
     excel::{boxed::BoxedExcelProvider, web::WebFileProvider},
     schema::{boxed::BoxedSchemaProvider, web::WebProvider},
+    settings::{BackendConfig, InstallLocation, SchemaLocation},
 };
 
 #[derive(Clone)]
@@ -16,7 +16,7 @@ struct BackendImpl {
 }
 
 impl Backend {
-    pub async fn new(config: AppConfig) -> Result<Self> {
+    pub async fn new(config: BackendConfig) -> Result<Self> {
         Ok(Self(Rc::new(BackendImpl {
             excel_provider: match config.location {
                 #[cfg(not(target_arch = "wasm32"))]

@@ -1,5 +1,6 @@
 use crate::{
     schema::{Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
+    settings::SCHEMA_EDITOR_WORD_WRAP,
     utils::{CodeTheme, TrackedPromise, highlight},
 };
 use egui::{
@@ -92,13 +93,8 @@ impl EditableSchema {
         ui.data_mut(|d| d.get_persisted(id).unwrap_or_default())
     }
 
-    pub fn draw(
-        &mut self,
-        ui: &mut egui::Ui,
-        word_wrap_enabled: &mut bool,
-        provider: &BoxedSchemaProvider,
-    ) -> Response {
-        let resp = self.draw_internal(ui, word_wrap_enabled, provider);
+    pub fn draw(&mut self, ui: &mut egui::Ui, provider: &BoxedSchemaProvider) -> Response {
+        let resp = self.draw_internal(ui, provider);
         if resp.changed() {
             self.schema = Schema::from_str(self.get_text());
             self.is_modified = self.text != self.original;
@@ -106,12 +102,7 @@ impl EditableSchema {
         resp
     }
 
-    fn draw_internal(
-        &mut self,
-        ui: &mut egui::Ui,
-        word_wrap_enabled: &mut bool,
-        provider: &BoxedSchemaProvider,
-    ) -> Response {
+    fn draw_internal(&mut self, ui: &mut egui::Ui, provider: &BoxedSchemaProvider) -> Response {
         let mut response = ui.response();
 
         let is_shown = self.visible(ui);
@@ -145,11 +136,11 @@ impl EditableSchema {
                 }
                 if provider.can_save_schemas() {
                     if consume_shortcut(ui, &shortcut_save) {
-                        self.command_save(ui.ctx(), provider);
+                        self.command_save(provider);
                     }
                 }
                 if consume_shortcut(ui, &shortcut_save_as) {
-                    self.command_save_as(ui.ctx(), provider);
+                    self.command_save_as(provider);
                 }
 
                 TopBottomPanel::top("editor-top-bar")
@@ -184,19 +175,21 @@ impl EditableSchema {
                                     self.is_modified() && provider.can_save_schemas(),
                                     |ui| {
                                         if shortcut_button(ui, "Save", &shortcut_save).clicked() {
-                                            self.command_save(ui.ctx(), provider);
+                                            self.command_save(provider);
                                             ui.close_menu();
                                         }
                                     },
                                 );
                                 if shortcut_button(ui, "Save As", &shortcut_save_as).clicked() {
-                                    self.command_save_as(ui.ctx(), provider);
+                                    self.command_save_as(provider);
                                     ui.close_menu();
                                 }
                             });
 
                             ui.menu_button("View", |ui| {
-                                if ui.toggle_value(word_wrap_enabled, "Word Wrap").changed() {
+                                let mut word_wrap = SCHEMA_EDITOR_WORD_WRAP.get(ui.ctx());
+                                if ui.toggle_value(&mut word_wrap, "Word Wrap").changed() {
+                                    SCHEMA_EDITOR_WORD_WRAP.set(ui.ctx(), word_wrap);
                                     ui.close_menu();
                                 }
                             });
@@ -304,7 +297,7 @@ impl EditableSchema {
                             let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
                                 let mut layout_job =
                                     highlight(ui.ctx(), ui.style(), &theme, string, "yaml");
-                                if *word_wrap_enabled {
+                                if SCHEMA_EDITOR_WORD_WRAP.get(ui.ctx()) {
                                     layout_job.wrap.max_width = wrap_width;
                                 }
                                 ui.fonts(|f| f.layout_job(layout_job))
@@ -390,19 +383,19 @@ impl EditableSchema {
         TextBuffer::clear(&mut self.text);
     }
 
-    fn command_save(&mut self, ctx: &egui::Context, provider: &BoxedSchemaProvider) {
+    fn command_save(&mut self, provider: &BoxedSchemaProvider) {
         let sheet_name = self.sheet_name.clone();
         let sheet_data = self.text.clone();
         let provider = provider.clone();
 
-        self.save_promise = Some(TrackedPromise::spawn_local(ctx.clone(), async move {
+        self.save_promise = Some(TrackedPromise::spawn_local(async move {
             if let Err(e) = provider.save_schema(&sheet_name, &sheet_data).await {
                 log::error!("Failed to save schema: {}", e);
             }
         }));
     }
 
-    fn command_save_as(&mut self, ctx: &egui::Context, provider: &BoxedSchemaProvider) {
+    fn command_save_as(&mut self, provider: &BoxedSchemaProvider) {
         let start_dir = provider
             .can_save_schemas()
             .then(|| provider.save_schema_start_dir())
@@ -411,7 +404,7 @@ impl EditableSchema {
         let sheet_name = self.sheet_name.clone();
         let sheet_data = self.text.clone();
 
-        self.save_as_promise = Some(TrackedPromise::spawn_local(ctx.clone(), async move {
+        self.save_as_promise = Some(TrackedPromise::spawn_local(async move {
             let mut dialog = rfd::AsyncFileDialog::new()
                 .set_title("Save Schema As")
                 .set_file_name(format!("{}.yml", sheet_name));

@@ -8,10 +8,11 @@
 
 mod app;
 mod backend;
-mod data;
 mod editable_schema;
 mod excel;
+mod router;
 mod schema;
+mod settings;
 mod setup;
 mod sheet;
 mod utils;

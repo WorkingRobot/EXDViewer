@@ -2,21 +2,25 @@ use egui::{Frame, Layout, Vec2, WidgetText};
 
 use crate::{
     DEFAULT_API_URL, DEFAULT_SCHEMA_URL,
-    data::{AppConfig, InstallLocation, SchemaLocation},
-    utils::TrackedPromise,
+    backend::Backend,
+    settings::{BACKEND_CONFIG, BackendConfig, InstallLocation, SchemaLocation},
+    utils::{PromiseKind, TrackedPromise, UnsendPromise},
 };
 
 pub struct SetupWindow {
     location: InstallLocation,
     schema: SchemaLocation,
+    is_startup: bool,
     #[cfg(target_arch = "wasm32")]
     location_promises: SetupPromises,
     #[cfg(target_arch = "wasm32")]
     schema_promises: SetupPromises,
+    setup_promise: Option<UnsendPromise<anyhow::Result<(Backend, BackendConfig)>>>,
+    display_error: Option<anyhow::Error>,
 }
 
-impl Default for SetupWindow {
-    fn default() -> Self {
+impl SetupWindow {
+    pub fn from_blank(is_startup: bool) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         let location = ironworks::sqpack::Install::search()
             .and_then(|p| Some(InstallLocation::Sqpack(p.path().to_str()?.to_owned())))
@@ -28,35 +32,35 @@ impl Default for SetupWindow {
         Self {
             location,
             schema: SchemaLocation::Web(super::DEFAULT_SCHEMA_URL.to_string()),
+            is_startup,
             #[cfg(target_arch = "wasm32")]
             location_promises: Default::default(),
             #[cfg(target_arch = "wasm32")]
             schema_promises: Default::default(),
-        }
-    }
-}
-
-impl SetupWindow {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn from_config(config: AppConfig) -> Self {
-        Self {
-            location: config.location,
-            schema: config.schema,
-            #[cfg(target_arch = "wasm32")]
-            location_promises: Default::default(),
-            #[cfg(target_arch = "wasm32")]
-            schema_promises: Default::default(),
+            setup_promise: None,
+            display_error: None,
         }
     }
 
-    pub fn draw(
-        &mut self,
-        ctx: &egui::Context,
-        loading_state: Option<Option<&anyhow::Error>>,
-    ) -> Option<AppConfig> {
+    pub fn from_config(ctx: &egui::Context, is_startup: bool) -> Self {
+        if let Some(Some(config)) = BACKEND_CONFIG.try_get(ctx) {
+            Self {
+                location: config.location,
+                schema: config.schema,
+                is_startup,
+                #[cfg(target_arch = "wasm32")]
+                location_promises: Default::default(),
+                #[cfg(target_arch = "wasm32")]
+                schema_promises: Default::default(),
+                setup_promise: None,
+                display_error: None,
+            }
+        } else {
+            Self::from_blank(is_startup)
+        }
+    }
+
+    pub fn draw(&mut self, ctx: &egui::Context) -> Option<(Backend, BackendConfig)> {
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(path) = self.location_promises.take_folder() {
@@ -68,24 +72,40 @@ impl SetupWindow {
             }
         }
 
-        let resp = egui::Modal::new("setup_modal".into())
+        egui::Modal::new("setup_modal".into())
             .frame(Frame::window(&ctx.style()))
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Setup");
                 });
                 ui.separator();
+
                 let enabled: bool;
-                if let Some(Some(err)) = loading_state {
-                    ui.label(err.to_string());
-                    enabled = true;
-                } else if let Some(None) = loading_state {
-                    ui.label("Loading...");
-                    enabled = false;
-                } else {
-                    enabled = true;
+                match self.setup_promise.take().map(|p| p.try_take()) {
+                    None => {
+                        enabled = true;
+                    }
+                    Some(Err(promise)) => {
+                        self.setup_promise = Some(promise);
+                        enabled = false;
+                        ui.label("Loading...");
+                    }
+                    Some(Ok(Ok(backend))) => {
+                        return Some(backend);
+                    }
+                    Some(Ok(Err(err))) => {
+                        self.display_error = Some(err);
+                        enabled = true;
+                    }
                 }
-                ui.add_enabled_ui(enabled, |ui| {
+
+                if let Some(err) = &self.display_error {
+                    ui.label(err.to_string());
+                }
+                else {
+                    ui.label("Please select the location of the game files and schema.");
+                }
+                let is_go_clicked = ui.add_enabled_ui(enabled, |ui| {
                     egui::containers::Frame::group(ui.style()).show(ui, |ui| {
                         ui.vertical_centered(|ui| {
                             ui.heading("Location");
@@ -149,7 +169,6 @@ impl SetupWindow {
                                             use crate::excel::worker::WorkerFileProvider;
 
                                             self.location_promises.open_folder_picker(
-                                                ui.ctx().clone(),
                                                 web_sys::FileSystemPermissionMode::Read,
                                                 WorkerFileProvider::add_folder,
                                             );
@@ -159,7 +178,6 @@ impl SetupWindow {
                                             .width(ui.available_width())
                                             .show_ui(ui, |ui| {
                                                 match self.location_promises.get_folder_list(
-                                                    ui.ctx().clone(),
                                                     crate::excel::worker::WorkerFileProvider::folders,
                                                 ) {
                                                     None => {
@@ -253,7 +271,6 @@ impl SetupWindow {
                                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
                                         if ui.button("Browse").clicked() {
                                             self.schema_promises.open_folder_picker(
-                                                ui.ctx().clone(),
                                                 web_sys::FileSystemPermissionMode::Readwrite,
                                                 crate::schema::worker::WorkerProvider::add_folder,
                                             );
@@ -263,7 +280,6 @@ impl SetupWindow {
                                             .width(ui.available_width())
                                             .show_ui(ui, |ui| {
                                                 match self.schema_promises.get_folder_list(
-                                                    ui.ctx().clone(),
                                                     crate::schema::worker::WorkerProvider::folders,
                                                 ) {
                                                     None => {
@@ -306,17 +322,23 @@ impl SetupWindow {
                     )
                     .clicked()
                 })
-                .inner
-            });
+                .inner;
 
-        if resp.inner {
-            Some(AppConfig {
-                location: self.location.clone(),
-                schema: self.schema.clone(),
-            })
-        } else {
+            if is_go_clicked || self.is_startup {
+                self.is_startup = false;
+                if self.setup_promise.is_none() {
+                    let location = self.location.clone();
+                    let schema = self.schema.clone();
+                    self.setup_promise = Some(UnsendPromise::new(async move {
+                        let config = BackendConfig { location, schema };
+                        Backend::new(config.clone()).await.map(|backend| {
+                            (backend, config)
+                        })
+                    }));
+                }
+            }
             None
-        }
+        }).inner
     }
 }
 
@@ -340,8 +362,8 @@ struct SetupPromises {
 #[cfg(target_arch = "wasm32")]
 impl SetupPromises {
     fn take_folder(&mut self) -> Option<String> {
-        if let Some(result) = self.selected.take_if(|p| p.poll().is_ready()) {
-            let result = poll_promise::Promise::from(result).block_and_take();
+        if let Some(result) = self.selected.take_if(|p| p.ready()) {
+            let result = result.block_and_take();
 
             self.list.take();
             match result {
@@ -358,7 +380,6 @@ impl SetupPromises {
 
     fn open_folder_picker<F: Future<Output = anyhow::Result<String>>>(
         &mut self,
-        ctx: egui::Context,
         mode: web_sys::FileSystemPermissionMode,
         store_folder: impl Fn(web_sys::FileSystemDirectoryHandle) -> F + 'static,
     ) {
@@ -367,7 +388,7 @@ impl SetupPromises {
         use wasm_bindgen_futures::JsFuture;
         use web_sys::{DirectoryPickerOptions, FileSystemDirectoryHandle};
 
-        let ret = crate::utils::TrackedPromise::spawn_local(ctx, async move {
+        let ret = crate::utils::TrackedPromise::spawn_local(async move {
             let opts = DirectoryPickerOptions::new();
             opts.set_mode(mode);
             let promise = web_sys::window()
@@ -390,14 +411,11 @@ impl SetupPromises {
 
     fn get_folder_list<F: Future<Output = anyhow::Result<Vec<String>>> + 'static>(
         &mut self,
-        ctx: egui::Context,
         future: impl FnOnce() -> F,
     ) -> Option<&anyhow::Result<Vec<String>>> {
         if self.list.is_none() {
-            self.list = Some(TrackedPromise::spawn_local(ctx, future()));
+            self.list = Some(TrackedPromise::spawn_local(future()));
         }
-        let promise = self.list.as_deref().unwrap();
-
-        promise.ready()
+        self.list.as_ref().unwrap().try_get()
     }
 }
