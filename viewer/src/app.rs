@@ -291,13 +291,9 @@ impl App {
     fn draw_sheet_data(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let backend = self.backend.as_ref().unwrap();
-
-            let sheet_name = match SELECTED_SHEET.get(ctx) {
-                Some(sheet) => sheet,
-                None => return,
-            };
-
+            let sheet_name = SELECTED_SHEET.get(ctx).unwrap();
             let language = LANGUAGE.get(ctx);
+
             let sheet_data =
                 self.sheet_data
                     .get_or_insert_mut_ref(&(language, sheet_name.clone()), || {

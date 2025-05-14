@@ -2,30 +2,48 @@
 <html lang="en">
 
 <head>
-    <title>EXDViewer</title>
-
     <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+    <title>EXDViewer</title>
+    <meta property="og:title" content="EXDViewer">
+    <meta property="og:site_name" content="EXDViewer">
+    <meta property="og:url" content="https://exd.camora.dev">
+    <meta name="description" content="Browse and inspect FFXIV internal data directly from your browser">
+    <meta property="og:description" content="Browse and inspect FFXIV internal data directly from your browser">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="https://exd.camora.dev/assets/icon.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:alt" content="EXDViewer logo">
+
+    <link rel="apple-touch-icon" sizes="57x57" href="/assets/icons/apple-icon-57x57.png">
+    <link rel="apple-touch-icon" sizes="60x60" href="/assets/icons/apple-icon-60x60.png">
+    <link rel="apple-touch-icon" sizes="72x72" href="/assets/icons/apple-icon-72x72.png">
+    <link rel="apple-touch-icon" sizes="76x76" href="/assets/icons/apple-icon-76x76.png">
+    <link rel="apple-touch-icon" sizes="114x114" href="/assets/icons/apple-icon-114x114.png">
+    <link rel="apple-touch-icon" sizes="120x120" href="/assets/icons/apple-icon-120x120.png">
+    <link rel="apple-touch-icon" sizes="144x144" href="/assets/icons/apple-icon-144x144.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/assets/icons/apple-icon-152x152.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-icon-180x180.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/assets/icons/android-icon-192x192.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="96x96" href="/assets/icons/favicon-96x96.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/icons/favicon-16x16.png">
+
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#404040">
+    <meta name="color-scheme" content="dark light">
+    <meta name="darkreader-lock">
+
+    <meta name="viewport" content="width=12, initial-scale=1.0, minimum-scale=1.0, user-scalable=no">
 
     <link data-trunk rel="rust" data-wasm-opt="z" data-bin="exdviewer" data-type="main" />
     <link data-trunk rel="rust" data-wasm-opt="z" data-bin="worker" data-type="worker" />
     <base data-trunk-public-url />
 
     <link data-trunk rel="icon" href="assets/favicon.ico">
-
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
-    <link data-trunk rel="copy-file" href="assets/icon-1024.png" data-target-path="assets" />
-    <link data-trunk rel="copy-file" href="assets/icon-256.png" data-target-path="assets" />
-    <link data-trunk rel="copy-file" href="assets/icon_ios_touch_192.png" data-target-path="assets" />
-    <link data-trunk rel="copy-file" href="assets/maskable_icon_x512.png" data-target-path="assets" />
-
-    <link rel="manifest" href="manifest.json">
-    <link rel="apple-touch-icon" href="assets/icon_ios_touch_192.png">
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#404040">
-    <meta name="color-scheme" content="dark light">
-    <meta name="darkreader-lock">
+    <link data-trunk rel="copy-dir" href="assets/icons" data-target-path="assets/icons" />
 
     <style>
         html {
@@ -85,13 +103,13 @@
 
         /* ---------------------------------------------- */
         /* Loading animation from https://loading.io/css/ */
-        .lds-dual-ring {
+        .spinner {
             display: inline-block;
             width: 24px;
             height: 24px;
         }
 
-        .lds-dual-ring:after {
+        .spinner:after {
             content: " ";
             display: block;
             width: 24px;
@@ -100,10 +118,10 @@
             border-radius: 50%;
             border: 3px solid #fff;
             border-color: #fff transparent #fff transparent;
-            animation: lds-dual-ring 1.2s linear infinite;
+            animation: spinner 1.2s linear infinite;
         }
 
-        @keyframes lds-dual-ring {
+        @keyframes spinner {
             0% {
                 transform: rotate(0deg);
             }
@@ -122,10 +140,7 @@
 
     <!-- the loading spinner will be removed in main.rs -->
     <div class="centered" id="loading_text">
-        <p style="font-size:16px">
-            Loading…
-        </p>
-        <div class="lds-dual-ring"></div>
+        <div class="spinner"></div>
     </div>
 </body>
 
