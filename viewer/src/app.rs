@@ -71,15 +71,16 @@ impl App {
         self.router
             .get_or_init(|| create_router(ctx.clone()).unwrap());
 
-        if !super::IS_WEB {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+        if cfg!(debug_assertions) && !super::IS_WEB {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                "EXDViewer - {}",
                 self.router
                     .get()
                     .as_ref()
                     .unwrap()
                     .current_path()
                     .to_string(),
-            ));
+            )));
         }
 
         self.draw_menubar(ctx);
