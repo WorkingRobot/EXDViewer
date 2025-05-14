@@ -1,4 +1,4 @@
-log_filter: info,waitingway_web=debug,tracing::span=warn,serenity::gateway::shard=warn,serenity::http=warn
+log_filter: debug,exdviewer_web=debug,tracing::span=warn
 server_addr: 0.0.0.0:3000
 downloader:
   storage_dir: downloads
