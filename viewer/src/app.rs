@@ -99,6 +99,10 @@ impl App {
         self.router.get().unwrap().navigate(path).unwrap()
     }
 
+    fn navigate_replace(&mut self, path: impl Into<Path>) {
+        self.router.get().unwrap().replace(path).unwrap()
+    }
+
     fn draw_menubar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -420,12 +424,11 @@ impl App {
         if let Some((backend, config)) = self.setup_window.as_mut().unwrap().draw(ui.ctx()) {
             self.backend = Some(backend);
             BACKEND_CONFIG.set(ui.ctx(), Some(config));
-            self.navigate(
-                path.query_pairs()
-                    .get("redirect")
-                    .map(|s| s.as_str())
-                    .unwrap_or("/sheet"),
-            );
+            if let Some(redirect_path) = path.query_pairs().get("redirect").map(|s| s.as_str()) {
+                self.navigate_replace(redirect_path);
+            } else {
+                self.navigate("/sheet");
+            }
         }
     }
 
