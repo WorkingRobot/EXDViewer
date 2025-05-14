@@ -94,6 +94,7 @@ impl SetupWindow {
                         return Some(backend);
                     }
                     Some(Ok(Err(err))) => {
+                        log::error!("Setup Error: {err}");
                         self.display_error = Some(err);
                         enabled = true;
                     }
