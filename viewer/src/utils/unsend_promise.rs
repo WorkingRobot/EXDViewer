@@ -12,11 +12,9 @@ impl<T: 'static> UnsendPromise<T> {
     pub fn new(future: impl Future<Output = T> + 'static) -> Self {
         let (tx, rx) = pinned::oneshot::channel();
         let promise = TrackedPromise::spawn_local(async move {
-            log::info!("UnsendPromise spawned");
             if tx.send(future.await).is_err() {
                 unreachable!("UnsendPromise value already set");
             }
-            log::info!("UnsendPromise completed");
         });
         Self { rx, promise }
     }

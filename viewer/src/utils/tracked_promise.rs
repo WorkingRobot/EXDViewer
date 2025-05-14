@@ -15,9 +15,7 @@ pub fn tick_promises(ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     poll_promise::tick_local();
 
-    let count = RUNNING_PROMISES.load(Ordering::SeqCst);
-    log::info!("Running promises: {}", count);
-    if count != 0 {
+    if RUNNING_PROMISES.load(Ordering::SeqCst) != 0 {
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 }

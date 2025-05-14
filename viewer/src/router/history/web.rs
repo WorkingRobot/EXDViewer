@@ -1,15 +1,12 @@
-use std::sync::mpsc::Receiver;
-
-use eframe::wasm_bindgen::{JsCast, prelude::Closure};
-use web_sys::{js_sys::Number, window};
+use eframe::wasm_bindgen::{JsCast, JsValue, prelude::Closure};
+use web_sys::window;
 
 use crate::{router::path::Path, utils::JsErr};
 
-use super::{History, HistoryEvent};
+use super::History;
 
 pub struct WebHistory {
     base_href: String,
-    rx: Receiver<HistoryEvent>,
     history: web_sys::History,
     cb: Closure<dyn FnMut(web_sys::PopStateEvent)>,
 }
@@ -33,29 +30,7 @@ impl WebHistory {
             .unwrap_or(&base_href)
             .to_string();
 
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        let base_href_clone = base_href.clone();
-        let cb = Closure::wrap(Box::new(move |event: web_sys::PopStateEvent| {
-            let state = event.state().as_f64().map(|n| n as u32);
-            let location = web_sys::window().unwrap().location();
-            let full_path = format!(
-                "{}{}{}",
-                location.pathname().unwrap(),
-                location.search().unwrap(),
-                location.hash().unwrap()
-            );
-            let path = full_path
-                .strip_prefix(&base_href_clone)
-                .unwrap_or("/")
-                .to_string();
-
-            tx.send(HistoryEvent {
-                location: path.into(),
-                state,
-            })
-            .ok();
-
+        let cb = Closure::wrap(Box::new(move |_event: web_sys::PopStateEvent| {
             ctx.request_repaint();
         }) as Box<dyn FnMut(_)>);
 
@@ -65,7 +40,6 @@ impl WebHistory {
 
         Self {
             base_href,
-            rx,
             history: window.history().unwrap(),
             cb,
         }
@@ -91,11 +65,7 @@ impl History for WebHistory {
         Self::new(None, ctx)
     }
 
-    fn tick(&mut self) -> Vec<HistoryEvent> {
-        self.rx.try_iter().collect()
-    }
-
-    fn active_route(&self) -> (Path, Option<u32>) {
+    fn active_route(&self) -> Path {
         let location = window().unwrap().location();
         let full_path = format!(
             "{}{}{}",
@@ -109,26 +79,19 @@ impl History for WebHistory {
             .unwrap_or("/")
             .to_string();
 
-        let state = self
-            .history
-            .state()
-            .ok()
-            .map(|s| s.as_f64())
-            .flatten()
-            .map(|n| n as u32);
-        (path.into(), state)
+        path.into()
     }
 
-    fn push(&mut self, location: Path, state: u32) -> anyhow::Result<()> {
+    fn push(&mut self, location: Path) -> anyhow::Result<()> {
         self.history
-            .push_state_with_url(&Number::from(state), "", Some(&self.prefix_path(&location)))
+            .push_state_with_url(&JsValue::null(), "", Some(&self.prefix_path(&location)))
             .map_err(JsErr::from)?;
         Ok(())
     }
 
-    fn replace(&mut self, location: Path, state: u32) -> anyhow::Result<()> {
+    fn replace(&mut self, location: Path) -> anyhow::Result<()> {
         self.history
-            .replace_state_with_url(&Number::from(state), "", Some(&self.prefix_path(&location)))
+            .replace_state_with_url(&JsValue::null(), "", Some(&self.prefix_path(&location)))
             .map_err(JsErr::from)?;
         Ok(())
     }

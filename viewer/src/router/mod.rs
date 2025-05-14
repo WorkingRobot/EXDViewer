@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use std::cell::RefCell;
 
 use history::History;
 use matchit::{InsertError, Params};
@@ -10,12 +7,6 @@ use path::Path;
 pub mod history;
 pub mod path;
 mod route;
-
-static ID: AtomicU32 = AtomicU32::new(0);
-
-fn next_id() -> u32 {
-    ID.fetch_add(1, Ordering::SeqCst)
-}
 
 pub struct Router<T, H: History = history::DefaultHistory> {
     history: RefCell<H>,
@@ -49,11 +40,11 @@ impl<T, H: History> Router<T, H> {
     }
 
     pub fn navigate(&self, path: impl Into<path::Path>) -> anyhow::Result<()> {
-        self.history.borrow_mut().push(path.into(), next_id())
+        self.history.borrow_mut().push(path.into())
     }
 
     pub fn replace(&self, path: impl Into<path::Path>) -> anyhow::Result<()> {
-        self.history.borrow_mut().replace(path.into(), next_id())
+        self.history.borrow_mut().replace(path.into())
     }
 
     pub fn back(&self) -> anyhow::Result<()> {
@@ -65,7 +56,7 @@ impl<T, H: History> Router<T, H> {
     }
 
     pub fn current_path(&self) -> Path {
-        self.history.borrow().active_route().0
+        self.history.borrow().active_route()
     }
 
     pub fn ui(&self, state: &mut T, ui: &mut egui::Ui) {
@@ -77,6 +68,7 @@ impl<T, H: History> Router<T, H> {
         match self.matcher.at(path.path()) {
             Ok(val) => {
                 if is_new_path {
+                    log::info!("Navigating to {path}");
                     if let Err(path) = val.value.start(state, ui, &path, &val.params) {
                         if let Err(e) = self.replace(path) {
                             log::error!("Failed to navigate: {}", e);
