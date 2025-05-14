@@ -74,12 +74,7 @@ impl App {
         if cfg!(debug_assertions) && !super::IS_WEB {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
                 "EXDViewer - {}",
-                self.router
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .current_path()
-                    .to_string(),
+                self.router.get().as_ref().unwrap().current_path(),
             )));
         }
 

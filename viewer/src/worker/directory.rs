@@ -136,17 +136,17 @@ impl<T> Directory<T> {
 }
 
 pub async fn get_file_blob(handle: FileSystemFileHandle) -> JsResult<File> {
-    Ok(JsFuture::from(handle.get_file())
+    JsFuture::from(handle.get_file())
         .await?
         .dyn_into::<File>()
-        .map_err(|_| JsErr::msg("entry is not a File"))?)
+        .map_err(|_| JsErr::msg("entry is not a File"))
 }
 
 pub async fn get_file_writer(
     handle: FileSystemFileHandle,
 ) -> JsResult<FileSystemWritableFileStream> {
-    Ok(JsFuture::from(handle.create_writable())
+    JsFuture::from(handle.create_writable())
         .await?
         .dyn_into::<FileSystemWritableFileStream>()
-        .map_err(|_| JsErr::msg("entry is not a FileSystemWritableFileStream"))?)
+        .map_err(|_| JsErr::msg("entry is not a FileSystemWritableFileStream"))
 }
