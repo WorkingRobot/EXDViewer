@@ -5,6 +5,8 @@ use egui::text::LayoutJob;
 use serde::{Deserialize, Serialize};
 use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 
+use crate::settings::CODE_SYNTAX_THEME;
+
 /// View some code with syntax highlighting and selection.
 pub fn code_view_ui(
     ui: &mut egui::Ui,
@@ -68,26 +70,20 @@ pub struct CodeTheme {
 impl CodeTheme {
     /// Load code theme from egui memory.
     pub fn from_memory(ctx: &egui::Context, style: &egui::Style) -> Self {
-        #![allow(clippy::needless_return)]
-
-        let default = if style.visuals.dark_mode {
-            "base16-mocha.dark"
-        } else {
-            "Solarized (light)"
-        };
-
-        return ctx.data_mut(|d| {
-            d.get_persisted(egui::Id::new("syntax-theme"))
-                .unwrap_or_else(|| Self {
-                    theme: default.to_owned(),
-                    font_id: egui::FontId::monospace(monospace_font_size(style)),
-                })
-        });
+        CODE_SYNTAX_THEME.get_or_insert(ctx, || Self {
+            theme: if style.visuals.dark_mode {
+                "base16-mocha.dark"
+            } else {
+                "Solarized (light)"
+            }
+            .to_owned(),
+            font_id: egui::FontId::monospace(monospace_font_size(style)),
+        })
     }
 
     /// Store theme to egui memory.
     pub fn store_in_memory(self, ctx: &egui::Context) {
-        ctx.data_mut(|d| d.insert_persisted(egui::Id::new("syntax-theme"), self));
+        CODE_SYNTAX_THEME.set(ctx, self);
     }
 }
 

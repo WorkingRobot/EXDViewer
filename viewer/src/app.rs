@@ -22,9 +22,9 @@ use crate::{
     router::{Router, path::Path},
     schema::provider::SchemaProvider,
     settings::{
-        ALWAYS_HIRES, BACKEND_CONFIG, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SELECTED_SHEET,
-        SHEETS_FILTER, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW_NR, TEMP_SCROLL_TO_COL,
-        TEMP_SCROLL_TO_ROW,
+        ALWAYS_HIRES, BACKEND_CONFIG, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN,
+        SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET, SHEETS_FILTER, SORTED_BY_OFFSET,
+        TEMP_HIGHLIGHTED_ROW_NR, TEMP_SCROLL_TO,
     },
     setup::{self, SetupWindow},
     sheet::{GlobalContext, SheetTable, TableContext},
@@ -379,14 +379,14 @@ impl App {
                     < 0;
 
                 ui.add_enabled_ui(!is_miscellaneous, |ui| {
-                    let mut visible = editor.visible(ui);
+                    let mut visible = SCHEMA_EDITOR_VISIBLE.get(ui.ctx());
                     let resp = ui.horizontal(|ui| {
                         ui.set_min_height(ui.text_style_height(&egui::TextStyle::Heading));
                         ui.toggle_value(&mut visible, "Edit Schema")
                             .on_hover_text("Edit the schema for this sheet")
                     });
                     if resp.inner.changed() {
-                        editor.set_visible(ui, visible);
+                        SCHEMA_EDITOR_VISIBLE.set(ui.ctx(), visible);
                     }
                 });
 
@@ -408,7 +408,8 @@ impl App {
             }
 
             let mut row_nr: Option<u64> = None;
-            if let Some((row, subrow)) = TEMP_SCROLL_TO_ROW.take(ctx) {
+            let mut col_nr: Option<u16> = None;
+            if let Some(((row, subrow), col)) = TEMP_SCROLL_TO.take(ctx) {
                 match table.get_row_nr(row, subrow) {
                     Ok(nr) => {
                         row_nr = Some(nr);
@@ -416,11 +417,7 @@ impl App {
                     Err(e) => {
                         log::error!("Failed to scroll to row: {:?}", e);
                     }
-                }
-            }
-
-            let mut col_nr: Option<u16> = None;
-            if let Some(col) = TEMP_SCROLL_TO_COL.take(&ctx) {
+                };
                 col_nr = Some(col);
             }
 
@@ -499,25 +496,29 @@ impl App {
         }
 
         if let Some(mut fragment) = path.fragment() {
+            let mut col_nr: Option<u16> = None;
             if let Some((rest, col_str)) = fragment.rsplit_once("C") {
-                if let Ok(col) = col_str.parse::<u16>() {
-                    TEMP_SCROLL_TO_COL.set(ui.ctx(), col);
-                }
+                col_nr = col_str.parse::<u16>().ok();
                 fragment = rest;
             }
 
+            let mut row_pos: Option<(u32, Option<u16>)> = None;
             if let Some((_rest, row_str)) = fragment.rsplit_once("R") {
                 if let Some((row_str, subrow_str)) = row_str.split_once(".") {
                     let row = row_str.parse::<u32>().ok();
                     let subrow = subrow_str.parse::<u16>().ok();
                     if let Some(row) = row {
-                        TEMP_SCROLL_TO_ROW.set(ui.ctx(), (row, subrow));
+                        row_pos = Some((row, subrow));
                     }
                 } else {
                     if let Ok(row) = row_str.parse::<u32>() {
-                        TEMP_SCROLL_TO_ROW.set(ui.ctx(), (row, None));
+                        row_pos = Some((row, None));
                     }
                 }
+            }
+
+            if let Some((row, subrow)) = row_pos {
+                TEMP_SCROLL_TO.set(ui.ctx(), ((row, subrow), col_nr.unwrap_or_default()));
             }
         }
         Ok(())

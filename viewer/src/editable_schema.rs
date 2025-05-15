@@ -1,6 +1,6 @@
 use crate::{
     schema::{Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
-    settings::SCHEMA_EDITOR_WORD_WRAP,
+    settings::{SCHEMA_EDITOR_ERRORS_SHOWN, SCHEMA_EDITOR_VISIBLE, SCHEMA_EDITOR_WORD_WRAP},
     utils::{CodeTheme, TrackedPromise, highlight},
 };
 use egui::{
@@ -69,30 +69,6 @@ impl EditableSchema {
         self.schema.as_ref().ok().and_then(|r| r.as_ref().ok())
     }
 
-    pub fn set_visible(&self, ui: &mut egui::Ui, visible: bool) {
-        let id = Id::new("schema-editor-visible");
-        ui.data_mut(|d| {
-            d.insert_persisted(id, visible);
-        });
-    }
-
-    pub fn visible(&self, ui: &mut egui::Ui) -> bool {
-        let id = Id::new("schema-editor-visible");
-        ui.data_mut(|d| d.get_persisted(id).unwrap_or_default())
-    }
-
-    fn set_errors_visible(&self, ui: &mut egui::Ui, visible: bool) {
-        let id = Id::new("schema-editor-errors-shown");
-        ui.data_mut(|d| {
-            d.insert_persisted(id, visible);
-        });
-    }
-
-    fn errors_visible(&self, ui: &mut egui::Ui) -> bool {
-        let id = Id::new("schema-editor-errors-shown");
-        ui.data_mut(|d| d.get_persisted(id).unwrap_or_default())
-    }
-
     pub fn draw(&mut self, ui: &mut egui::Ui, provider: &BoxedSchemaProvider) -> Response {
         let resp = self.draw_internal(ui, provider);
         if resp.changed() {
@@ -105,7 +81,7 @@ impl EditableSchema {
     fn draw_internal(&mut self, ui: &mut egui::Ui, provider: &BoxedSchemaProvider) -> Response {
         let mut response = ui.response();
 
-        let is_shown = self.visible(ui);
+        let is_shown = SCHEMA_EDITOR_VISIBLE.get(ui.ctx());
         let mut is_shown_toggle = is_shown;
 
         let window_margin = ui.style().spacing.window_margin;
@@ -197,17 +173,20 @@ impl EditableSchema {
                             ui.with_layout(
                                 Layout::right_to_left(ui.layout().vertical_align()),
                                 |ui| {
-                                    let mut errors_visible = self.errors_visible(ui);
+                                    let mut errors_visible =
+                                        SCHEMA_EDITOR_ERRORS_SHOWN.get(ui.ctx());
                                     let resp = ui.toggle_value(&mut errors_visible, "Show Errors");
                                     if resp.changed() {
-                                        self.set_errors_visible(ui, errors_visible);
+                                        SCHEMA_EDITOR_ERRORS_SHOWN.set(ui.ctx(), errors_visible);
                                     }
                                 },
                             );
                         });
 
-                        error_panel_state
-                            .set_open(!matches!(self.schema, Ok(Ok(_))) && self.errors_visible(ui));
+                        error_panel_state.set_open(
+                            !matches!(self.schema, Ok(Ok(_)))
+                                && SCHEMA_EDITOR_ERRORS_SHOWN.get(ui.ctx()),
+                        );
                         error_panel_state.show_body_unindented(ui, |ui| {
                             ui.separator();
                             egui::ScrollArea::vertical()
@@ -369,7 +348,7 @@ impl EditableSchema {
             });
 
         if is_shown != is_shown_toggle {
-            self.set_visible(ui, is_shown_toggle);
+            SCHEMA_EDITOR_VISIBLE.set(ui.ctx(), is_shown_toggle);
         }
 
         response

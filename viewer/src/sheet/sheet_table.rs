@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
-    settings::TEMP_HIGHLIGHTED_ROW_NR,
+    settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW_NR},
     utils::{ManagedIcon, TrackedPromise},
 };
 
@@ -71,7 +71,6 @@ impl SheetTable {
 
         if let Some(icon_id) = &self.modal_image {
             let icon_id = *icon_id;
-            let avail_size = ui.available_size();
             let resp = Modal::new(Id::new("icon_modal"))
                 .area(Modal::default_area(Id::new(format!("icon_modal{icon_id}"))))
                 .show(ui.ctx(), |ui| {
@@ -87,7 +86,7 @@ impl SheetTable {
                     });
                     match resp {
                         ManagedIcon::Loaded(icon) => {
-                            ui.add(egui::Image::new(icon).fit_to_exact_size(avail_size))
+                            ui.add(egui::Image::new(icon).fit_to_exact_size(ui.available_size()))
                         }
                         ManagedIcon::Failed(e) => {
                             ui.label("Failed to load icon").on_hover_text(e.to_string())
@@ -187,10 +186,7 @@ impl TableDelegate for SheetTable {
             Some(col_range.start - 1)
         };
 
-        let sorted_by_offset = ui.data_mut(|d| {
-            d.get_persisted::<bool>(Id::new("sorted-by-offset"))
-                .unwrap_or_default()
-        });
+        let sorted_by_offset = SORTED_BY_OFFSET.get(ui.ctx());
 
         let column = column_idx.and_then(|c| {
             Some((
@@ -239,10 +235,7 @@ impl TableDelegate for SheetTable {
             }
         };
 
-        let sorted_by_offset = ui.data_mut(|d| {
-            d.get_persisted::<bool>(Id::new("sorted-by-offset"))
-                .unwrap_or_default()
-        });
+        let sorted_by_offset = SORTED_BY_OFFSET.get(ui.ctx());
 
         if TEMP_HIGHLIGHTED_ROW_NR.try_get(ui.ctx()) == Some(row_nr) {
             ui.painter().rect_filled(

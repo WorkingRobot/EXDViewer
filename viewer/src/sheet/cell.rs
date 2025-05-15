@@ -178,7 +178,7 @@ impl<'a> Cell<'a> {
         };
         let resp = resp.on_hover_text(format!(
             "Id: {icon_id}\nPath: {}",
-            get_icon_path(icon_id, true)
+            get_icon_path(icon_id, hires)
         ));
         resp.context_menu(|ui| {
             if ui.button("Copy").clicked() {
