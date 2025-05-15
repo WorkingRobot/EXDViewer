@@ -31,18 +31,22 @@ use crate::{
     utils::{CodeTheme, ConvertiblePromise, IconManager, TrackedPromise, tick_promises},
 };
 
+type CachedSheetEntry = (
+    Language, // language
+    String,   // sheet name
+);
+
+type CachedSheetPromise =
+    TrackedPromise<anyhow::Result<(BaseSheet, Option<anyhow::Result<String>>)>>;
+type ConvertibleSheetPromise =
+    ConvertiblePromise<CachedSheetPromise, anyhow::Result<(SheetTable, EditableSchema)>>;
+
 pub struct App {
     router: Rc<OnceCell<Router<Self>>>,
     icon_manager: IconManager,
     setup_window: Option<setup::SetupWindow>,
     backend: Option<Backend>,
-    sheet_data: LruCache<
-        (Language, String),
-        ConvertiblePromise<
-            TrackedPromise<anyhow::Result<(BaseSheet, Option<anyhow::Result<String>>)>>,
-            anyhow::Result<(SheetTable, EditableSchema)>,
-        >,
-    >,
+    sheet_data: LruCache<CachedSheetEntry, ConvertibleSheetPromise>,
     sheet_matcher: SkimMatcherV2,
 }
 
@@ -107,25 +111,22 @@ impl App {
                         self.navigate("/");
                         ui.close_menu();
                     }
-                    if !super::IS_WEB {
-                        if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            ui.close_menu();
-                        }
+                    if !super::IS_WEB && ui.button("Quit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        ui.close_menu();
                     }
                 });
 
                 ui.menu_button("Language", |ui| {
                     let mut saved_lang = LANGUAGE.get(ctx);
                     for lang in Language::iter() {
-                        if lang != Language::None {
-                            if ui
+                        if lang != Language::None
+                            && ui
                                 .selectable_value(&mut saved_lang, lang, lang.to_string())
                                 .changed()
-                            {
-                                LANGUAGE.set(ctx, lang);
-                                ui.close_menu();
-                            }
+                        {
+                            LANGUAGE.set(ctx, lang);
+                            ui.close_menu();
                         }
                     }
                 });
@@ -511,10 +512,8 @@ impl App {
                     if let Some(row) = row {
                         row_pos = Some((row, subrow));
                     }
-                } else {
-                    if let Ok(row) = row_str.parse::<u32>() {
-                        row_pos = Some((row, None));
-                    }
+                } else if let Ok(row) = row_str.parse::<u32>() {
+                    row_pos = Some((row, None));
                 }
             }
 

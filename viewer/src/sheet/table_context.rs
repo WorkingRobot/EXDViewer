@@ -17,6 +17,9 @@ use super::{
     sheet_column::SheetColumnDefinition,
 };
 
+type SheetPromise = TrackedPromise<anyhow::Result<(BaseSheet, Option<Schema>)>>;
+type ConvertibleSheetPromise = ConvertiblePromise<SheetPromise, CloneableResult<TableContext>>;
+
 #[derive(Clone)]
 pub struct TableContext(Rc<TableContextImpl>);
 
@@ -30,15 +33,7 @@ pub struct TableContextImpl {
     schema_columns: RefCell<Vec<SchemaColumn>>,
     display_column_idx: std::cell::Cell<Option<u32>>,
 
-    referenced_sheets: RefCell<
-        HashMap<
-            String,
-            ConvertiblePromise<
-                TrackedPromise<anyhow::Result<(BaseSheet, Option<Schema>)>>,
-                CloneableResult<TableContext>,
-            >,
-        >,
-    >,
+    referenced_sheets: RefCell<HashMap<String, ConvertibleSheetPromise>>,
 }
 
 impl TableContext {

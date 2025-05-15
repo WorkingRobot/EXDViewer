@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use egui::{Frame, Layout, Vec2, WidgetText};
 
 use crate::{
@@ -384,12 +385,11 @@ impl SetupPromises {
         mode: web_sys::FileSystemPermissionMode,
         store_folder: impl Fn(web_sys::FileSystemDirectoryHandle) -> F + 'static,
     ) {
-        use anyhow::anyhow;
         use eframe::wasm_bindgen::JsCast;
         use wasm_bindgen_futures::JsFuture;
         use web_sys::{DirectoryPickerOptions, FileSystemDirectoryHandle};
 
-        let ret = crate::utils::TrackedPromise::spawn_local(async move {
+        let ret = TrackedPromise::spawn_local(async move {
             let opts = DirectoryPickerOptions::new();
             opts.set_mode(mode);
             let promise = web_sys::window()

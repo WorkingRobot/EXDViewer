@@ -100,20 +100,16 @@ impl EditableSchema {
                 let schema_editor_id = Id::new("schema-editor");
                 let schema_editor_cursor_position_id = schema_editor_id.with("position");
 
-                if self.is_modified() {
-                    if consume_shortcut(ui, &shortcut_revert) {
-                        self.command_revert();
-                        response.mark_changed();
-                    }
+                if consume_shortcut(ui, &shortcut_revert) && self.is_modified() {
+                    self.command_revert();
+                    response.mark_changed();
                 }
                 if consume_shortcut(ui, &shortcut_clear) {
                     self.command_clear();
                     response.mark_changed();
                 }
-                if provider.can_save_schemas() {
-                    if consume_shortcut(ui, &shortcut_save) {
-                        self.command_save(provider);
-                    }
+                if consume_shortcut(ui, &shortcut_save) && provider.can_save_schemas() {
+                    self.command_save(provider);
                 }
                 if consume_shortcut(ui, &shortcut_save_as) {
                     self.command_save_as(provider);

@@ -1,7 +1,9 @@
 use std::{fmt::Display, ops::Deref};
 
+/// Cloneable wrapper for `anyhow::Result`
 pub type CloneableResult<T> = Result<T, CloneableError>;
 
+/// Cloneable wrapper for `anyhow::Error`
 pub struct CloneableError(anyhow::Error);
 
 impl CloneableError {

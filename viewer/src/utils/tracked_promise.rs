@@ -7,10 +7,13 @@ use poll_promise::Promise;
 
 use super::convertible_promise::PromiseKind;
 
+/// A wrapper around `poll_promise::Promise` that tracks the number of running promises.
+/// Use for notifying the UI when promises are running and redraws are needed.
 pub struct TrackedPromise<T: Send + 'static>(Promise<T>);
 
 static RUNNING_PROMISES: AtomicUsize = AtomicUsize::new(0);
 
+/// Call this inside `App::update()`
 pub fn tick_promises(ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     poll_promise::tick_local();

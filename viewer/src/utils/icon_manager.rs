@@ -7,7 +7,10 @@ use either::Either;
 use image::RgbaImage;
 use url::Url;
 
-use super::{CloneableResult, ConvertiblePromise, TrackedPromise, cloneable_error::CloneableError};
+use super::{
+    CloneableResult, ConvertiblePromise, PromiseKind, TrackedPromise,
+    cloneable_error::CloneableError,
+};
 
 pub enum ManagedIcon {
     Loaded(ImageSource<'static>),
@@ -16,18 +19,22 @@ pub enum ManagedIcon {
     NotLoaded,
 }
 
+type IconEntry = (
+    u32,  // icon_id
+    bool, // hires
+);
+
+type IconPromise = TrackedPromise<anyhow::Result<Either<Url, RgbaImage>>>;
+
+type ConvertibleIconPromise =
+    ConvertiblePromise<IconPromise, CloneableResult<ImageSource<'static>>>;
+
 #[derive(Clone, Default)]
 pub struct IconManager(Arc<Mutex<IconManagerImpl>>);
 
 #[derive(Default)]
 struct IconManagerImpl {
-    cache: HashMap<
-        (u32, bool),
-        ConvertiblePromise<
-            TrackedPromise<anyhow::Result<Either<Url, RgbaImage>>>,
-            CloneableResult<ImageSource<'static>>,
-        >,
-    >,
+    cache: HashMap<IconEntry, ConvertibleIconPromise>,
     loaded_handles: Vec<TextureHandle>,
 }
 
@@ -50,7 +57,7 @@ impl IconManager {
         icon_id: u32,
         hires: bool,
         context: &egui::Context,
-        promise_creator: impl FnOnce() -> TrackedPromise<anyhow::Result<Either<Url, RgbaImage>>>,
+        promise_creator: impl FnOnce() -> IconPromise,
     ) -> ManagedIcon {
         self.0
             .lock()
@@ -69,7 +76,7 @@ impl IconManagerImpl {
         icon_id: u32,
         hires: bool,
         ctx: &egui::Context,
-        result: anyhow::Result<Either<Url, RgbaImage>>,
+        result: <IconPromise as PromiseKind>::Output,
     ) -> CloneableResult<ImageSource<'static>> {
         match result {
             Ok(Either::Left(url)) => Ok(ImageSource::Uri(url.to_string().into())),
@@ -113,7 +120,7 @@ impl IconManagerImpl {
         icon_id: u32,
         hires: bool,
         context: &egui::Context,
-        promise_creator: impl FnOnce() -> TrackedPromise<anyhow::Result<Either<Url, RgbaImage>>>,
+        promise_creator: impl FnOnce() -> IconPromise,
     ) -> ManagedIcon {
         let ret = self
             .cache

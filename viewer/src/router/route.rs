@@ -2,9 +2,12 @@ use matchit::Params;
 
 use super::path::Path;
 
+type RouteStartFn<T> = dyn Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>) -> Result<(), Path>;
+type RouteRenderFn<T> = dyn Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>);
+
 pub struct Route<T> {
-    on_start: Box<dyn Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>) -> Result<(), Path>>,
-    on_render: Box<dyn Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>)>,
+    on_start: Box<RouteStartFn<T>>,
+    on_render: Box<RouteRenderFn<T>>,
 }
 
 impl<T> Route<T> {
