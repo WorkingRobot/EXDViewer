@@ -22,8 +22,8 @@ use crate::{
     router::{Router, path::Path},
     schema::provider::SchemaProvider,
     settings::{
-        ALWAYS_HIRES, BACKEND_CONFIG, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN,
-        SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET, SHEETS_FILTER, SORTED_BY_OFFSET,
+        ALWAYS_HIRES, BACKEND_CONFIG, DISPLAY_FIELD_SHOWN, LANGUAGE, LOGGER_SHOWN,
+        MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET, SHEETS_FILTER, SORTED_BY_OFFSET,
         TEMP_HIGHLIGHTED_ROW_NR, TEMP_SCROLL_TO,
     },
     setup::{self, SetupWindow},
@@ -150,6 +150,17 @@ impl App {
                         let mut always_hires = ALWAYS_HIRES.get(ctx);
                         if ui.checkbox(&mut always_hires, "Use HD Icons").changed() {
                             ALWAYS_HIRES.set(ctx, always_hires);
+                            ui.close_menu();
+                        }
+                    }
+
+                    {
+                        let mut display_field_shown = DISPLAY_FIELD_SHOWN.get(ctx);
+                        if ui
+                            .checkbox(&mut display_field_shown, "Use Link Display Fields")
+                            .changed()
+                        {
+                            DISPLAY_FIELD_SHOWN.set(ctx, display_field_shown);
                             ui.close_menu();
                         }
                     }

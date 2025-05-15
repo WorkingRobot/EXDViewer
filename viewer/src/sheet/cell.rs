@@ -10,7 +10,7 @@ use crate::{
         get_icon_path,
         provider::{ExcelProvider, ExcelRow, ExcelSheet},
     },
-    settings::ALWAYS_HIRES,
+    settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN},
     utils::{ManagedIcon, TrackedPromise},
 };
 
@@ -97,10 +97,14 @@ impl<'a> Cell<'a> {
                     .and_then(|id| self.table_context.resolve_link(sheets.clone(), id))
                 {
                     Some(Some((sheet_name, table))) => {
-                        if let Some(cell) =
-                            table.display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
-                        {
-                            cell?.draw(ui)?;
+                        if DISPLAY_FIELD_SHOWN.get(ui.ctx()) {
+                            if let Some(cell) = table
+                                .display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
+                            {
+                                cell?.draw(ui)?;
+                            } else {
+                                copyable_label(ui, format!("{sheet_name}#{row_id}"));
+                            }
                         } else {
                             copyable_label(ui, format!("{sheet_name}#{row_id}"));
                         }
