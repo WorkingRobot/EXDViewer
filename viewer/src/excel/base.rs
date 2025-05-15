@@ -22,12 +22,20 @@ use super::provider::{ExcelHeader, ExcelPage, ExcelProvider, ExcelRow, ExcelShee
 pub trait FileProvider {
     async fn file<T: File>(&self, path: &str) -> Result<T, ironworks::Error>;
 
-    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error>;
+    async fn get_icon(
+        &self,
+        icon_id: u32,
+        hires: bool,
+    ) -> Result<Either<Url, RgbaImage>, anyhow::Error>;
 }
 
 #[async_trait(?Send)]
 pub trait ExcelFileProvider {
-    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error>;
+    async fn get_icon(
+        &self,
+        icon_id: u32,
+        hires: bool,
+    ) -> Result<Either<Url, RgbaImage>, anyhow::Error>;
 
     async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error>;
 
@@ -46,8 +54,12 @@ pub trait ExcelFileProvider {
 
 #[async_trait(?Send)]
 impl<T: FileProvider> ExcelFileProvider for T {
-    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
-        self.get_icon(icon_id).await
+    async fn get_icon(
+        &self,
+        icon_id: u32,
+        hires: bool,
+    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+        self.get_icon(icon_id, hires).await
     }
 
     async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error> {
@@ -73,8 +85,12 @@ impl<T: FileProvider> ExcelFileProvider for T {
 
 #[async_trait(?Send)]
 impl ExcelFileProvider for Box<dyn ExcelFileProvider> {
-    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
-        self.as_ref().get_icon(icon_id).await
+    async fn get_icon(
+        &self,
+        icon_id: u32,
+        hires: bool,
+    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+        self.as_ref().get_icon(icon_id, hires).await
     }
 
     async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error> {
@@ -165,8 +181,8 @@ impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
         &self.0.entries
     }
 
-    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>> {
-        self.0.provider.get_icon(icon_id).await
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> Result<Either<Url, RgbaImage>> {
+        self.0.provider.get_icon(icon_id, hires).await
     }
 
     async fn get_header(&self, name: &str) -> Result<BaseHeader> {

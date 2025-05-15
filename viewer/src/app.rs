@@ -22,8 +22,9 @@ use crate::{
     router::{Router, path::Path},
     schema::provider::SchemaProvider,
     settings::{
-        BACKEND_CONFIG, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SELECTED_SHEET, SHEETS_FILTER,
-        SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW_NR, TEMP_SCROLL_TO_COL, TEMP_SCROLL_TO_ROW,
+        ALWAYS_HIRES, BACKEND_CONFIG, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SELECTED_SHEET,
+        SHEETS_FILTER, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW_NR, TEMP_SCROLL_TO_COL,
+        TEMP_SCROLL_TO_ROW,
     },
     setup::{self, SetupWindow},
     sheet::{GlobalContext, SheetTable, TableContext},
@@ -143,6 +144,14 @@ impl App {
                             ui.close_menu();
                         }
                     });
+
+                    {
+                        let mut always_hires = ALWAYS_HIRES.get(ctx);
+                        if ui.checkbox(&mut always_hires, "Use HD Icons").changed() {
+                            ALWAYS_HIRES.set(ctx, always_hires);
+                            ui.close_menu();
+                        }
+                    }
 
                     {
                         let mut logger_shown = LOGGER_SHOWN.get(ctx);

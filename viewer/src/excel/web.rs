@@ -43,8 +43,12 @@ impl FileProvider for WebFileProvider {
         T::read(Cursor::new(resp.bytes))
     }
 
-    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
-        let path = get_icon_path(icon_id, true);
+    async fn get_icon(
+        &self,
+        icon_id: u32,
+        hires: bool,
+    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+        let path = get_icon_path(icon_id, hires);
         let url = get_xivapi_asset_url(&path, Some("png"));
         Ok(Either::Left(url))
     }

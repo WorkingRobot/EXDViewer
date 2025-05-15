@@ -61,6 +61,7 @@ impl<K: Send + Sync + Clone + 'static> TempKey<K> {
 
 pub const LOGGER_SHOWN: Key<bool> = Key::new("logger-shown", false);
 pub const SORTED_BY_OFFSET: Key<bool> = Key::new("sorted-by-offset", false);
+pub const ALWAYS_HIRES: Key<bool> = Key::new("always-hires", false);
 pub const BACKEND_CONFIG: Key<Option<BackendConfig>> = Key::new("backend-config", None);
 pub const LANGUAGE: Key<Language> = Key::new("language", Language::English);
 pub const SHEETS_FILTER: Key<String> = Key::new("sheets-filter", String::new());

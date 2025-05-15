@@ -1,12 +1,12 @@
-use egui::{Id, InnerResponse, Margin, Modal, Spinner, UiBuilder};
+use egui::{Id, InnerResponse, Margin, Modal, Spinner, UiBuilder, Vec2};
 use egui_table::TableDelegate;
 use itertools::Itertools;
 use std::cell::RefCell;
 
 use crate::{
-    excel::provider::{ExcelHeader, ExcelRow, ExcelSheet},
+    excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::TEMP_HIGHLIGHTED_ROW_NR,
-    utils::ManagedIcon,
+    utils::{ManagedIcon, TrackedPromise},
 };
 
 use super::{cell::CellResponse, table_context::TableContext};
@@ -70,25 +70,35 @@ impl SheetTable {
         });
 
         if let Some(icon_id) = &self.modal_image {
-            let resp = Modal::new(Id::new("icon_modal")).show(ui.ctx(), |ui| {
-                let resp = self
-                    .context
-                    .global()
-                    .icon_manager()
-                    .get_icon(*icon_id, ui.ctx());
-                match resp {
-                    ManagedIcon::Loaded(icon) => {
-                        ui.add(egui::Image::new(icon).fit_to_exact_size(ui.available_size()))
+            let icon_id = *icon_id;
+            let avail_size = ui.available_size();
+            let resp = Modal::new(Id::new("icon_modal"))
+                .area(Modal::default_area(Id::new(format!("icon_modal{icon_id}"))))
+                .show(ui.ctx(), |ui| {
+                    let (excel, icon_mgr) = (
+                        self.context.global().backend().excel().clone(),
+                        &self.context.global().icon_manager(),
+                    );
+                    let resp = icon_mgr.get_or_insert_icon(icon_id, true, ui.ctx(), move || {
+                        log::debug!("Hires icon not found in cache: {icon_id}");
+                        TrackedPromise::spawn_local(
+                            async move { excel.get_icon(icon_id, true).await },
+                        )
+                    });
+                    match resp {
+                        ManagedIcon::Loaded(icon) => {
+                            ui.add(egui::Image::new(icon).fit_to_exact_size(avail_size))
+                        }
+                        ManagedIcon::Failed(e) => {
+                            ui.label("Failed to load icon").on_hover_text(e.to_string())
+                        }
+                        ManagedIcon::Loading => {
+                            let height = ui.text_style_height(&egui::TextStyle::Heading) * 2.0;
+                            ui.add_sized(Vec2::splat(height), Spinner::new())
+                        }
+                        ManagedIcon::NotLoaded => ui.label("Icon not loaded"),
                     }
-                    ManagedIcon::Failed(e) => {
-                        ui.label("Failed to load icon").on_hover_text(e.to_string())
-                    }
-                    ManagedIcon::Loading => {
-                        ui.add(Spinner::new().size(ui.available_size().min_elem()))
-                    }
-                    ManagedIcon::NotLoaded => ui.label("Icon not loaded"),
-                }
-            });
+                });
             if resp.should_close() {
                 self.modal_image = None;
             }

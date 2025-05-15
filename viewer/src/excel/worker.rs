@@ -78,8 +78,12 @@ impl FileProvider for WorkerFileProvider {
         }
     }
 
-    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
-        let path = get_icon_path(icon_id, true);
+    async fn get_icon(
+        &self,
+        icon_id: u32,
+        hires: bool,
+    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+        let path = get_icon_path(icon_id, hires);
         if let WorkerResponse::Texture(result) =
             worker::transact(WorkerRequest::Texture(path.to_string())).await
         {

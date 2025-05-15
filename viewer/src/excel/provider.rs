@@ -19,7 +19,7 @@ pub trait ExcelProvider {
     type Sheet: ExcelSheet;
 
     fn get_entries(&self) -> &HashMap<String, i32>;
-    async fn get_icon(&self, icon_id: u32) -> Result<Either<Url, RgbaImage>>;
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> Result<Either<Url, RgbaImage>>;
     async fn get_sheet(&self, name: &str, language: Language) -> Result<Self::Sheet>;
     async fn get_header(&self, name: &str) -> Result<Self::Header>;
 }
