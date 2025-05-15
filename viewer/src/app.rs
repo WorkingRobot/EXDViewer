@@ -487,6 +487,7 @@ impl App {
         params: &Params<'_, '_>,
     ) -> Result<(), Path> {
         self.ensure_backend(path)?;
+        TEMP_HIGHLIGHTED_ROW_NR.take(ui.ctx());
 
         if let Some(sheet) = params.get("name") {
             SELECTED_SHEET.set(ui.ctx(), Some(sheet.to_string()));
