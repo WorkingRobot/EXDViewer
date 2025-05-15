@@ -1,9 +1,11 @@
 use egui::{Id, InnerResponse, Margin, Modal, Spinner, UiBuilder};
 use egui_table::TableDelegate;
+use itertools::Itertools;
 use std::cell::RefCell;
 
 use crate::{
     excel::provider::{ExcelHeader, ExcelRow, ExcelSheet},
+    settings::TEMP_HIGHLIGHTED_ROW_NR,
     utils::ManagedIcon,
 };
 
@@ -45,10 +47,14 @@ impl SheetTable {
         }
     }
 
-    pub fn draw(&mut self, ui: &mut egui::Ui) {
+    pub fn draw(
+        &mut self,
+        ui: &mut egui::Ui,
+        mutator: impl FnOnce(egui_table::Table) -> egui_table::Table,
+    ) {
         let id = Id::new(self.context.sheet().name());
         ui.push_id(id, |ui| {
-            egui_table::Table::new()
+            let table = egui_table::Table::new()
                 .num_rows(self.context.sheet().subrow_count().into())
                 .columns(vec![
                     egui_table::Column::new(100.0)
@@ -59,8 +65,8 @@ impl SheetTable {
                 .num_sticky_cols(1)
                 .headers([egui_table::HeaderRow::new(
                     ui.text_style_height(&egui::TextStyle::Heading) + 4.0,
-                )])
-                .show(ui, self)
+                )]);
+            mutator(table).show(ui, self)
         });
 
         if let Some(icon_id) = &self.modal_image {
@@ -91,6 +97,18 @@ impl SheetTable {
 
     pub fn context(&self) -> &TableContext {
         &self.context
+    }
+
+    pub fn get_row_nr(&self, row_id: u32, subrow_id: Option<u16>) -> anyhow::Result<u64> {
+        let max = self.context.sheet().subrow_count() as u64;
+        let result = (0..max).collect_vec().binary_search_by(|i| {
+            let (i_row, i_subrow) = self.get_row_id(*i).unwrap();
+            i_row.cmp(&row_id).then_with(|| i_subrow.cmp(&subrow_id))
+        });
+        match result {
+            Ok(idx) => Ok(idx as u64),
+            Err(idx) => Err(anyhow::anyhow!("Row ID not found: {row_id} => {idx}")),
+        }
     }
 
     fn get_row_id(&self, row_nr: u64) -> anyhow::Result<(u32, Option<u16>)> {
@@ -215,6 +233,14 @@ impl TableDelegate for SheetTable {
             d.get_persisted::<bool>(Id::new("sorted-by-offset"))
                 .unwrap_or_default()
         });
+
+        if TEMP_HIGHLIGHTED_ROW_NR.try_get(ui.ctx()) == Some(row_nr) {
+            ui.painter().rect_filled(
+                ui.max_rect(),
+                0.0,
+                ui.visuals().warn_fg_color.linear_multiply(0.2),
+            );
+        }
 
         if row_nr % 2 == 1 {
             ui.painter()

@@ -23,7 +23,7 @@ use crate::{
     schema::provider::SchemaProvider,
     settings::{
         BACKEND_CONFIG, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SELECTED_SHEET, SHEETS_FILTER,
-        SORTED_BY_OFFSET,
+        SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW_NR, TEMP_SCROLL_TO_COL, TEMP_SCROLL_TO_ROW,
     },
     setup::{self, SetupWindow},
     sheet::{GlobalContext, SheetTable, TableContext},
@@ -398,7 +398,33 @@ impl App {
                 }
             }
 
-            table.draw(ui);
+            let mut row_nr: Option<u64> = None;
+            if let Some((row, subrow)) = TEMP_SCROLL_TO_ROW.take(ctx) {
+                match table.get_row_nr(row, subrow) {
+                    Ok(nr) => {
+                        row_nr = Some(nr);
+                    }
+                    Err(e) => {
+                        log::error!("Failed to scroll to row: {:?}", e);
+                    }
+                }
+            }
+
+            let mut col_nr: Option<u16> = None;
+            if let Some(col) = TEMP_SCROLL_TO_COL.take(&ctx) {
+                col_nr = Some(col);
+            }
+
+            table.draw(ui, move |mut table| {
+                if let Some(row_nr) = row_nr {
+                    TEMP_HIGHLIGHTED_ROW_NR.set(ctx, row_nr);
+                    table = table.scroll_to_row(row_nr, Some(egui::Align::Center));
+                }
+                if let Some(col_nr) = col_nr {
+                    table = table.scroll_to_column(col_nr as usize, Some(egui::Align::Center));
+                }
+                table
+            });
         });
     }
 
@@ -461,6 +487,29 @@ impl App {
         } else {
             SELECTED_SHEET.set(ui.ctx(), None);
             return Err("/sheet".into());
+        }
+
+        if let Some(mut fragment) = path.fragment() {
+            if let Some((rest, col_str)) = fragment.rsplit_once("C") {
+                if let Ok(col) = col_str.parse::<u16>() {
+                    TEMP_SCROLL_TO_COL.set(ui.ctx(), col);
+                }
+                fragment = rest;
+            }
+
+            if let Some((_rest, row_str)) = fragment.rsplit_once("R") {
+                if let Some((row_str, subrow_str)) = row_str.split_once(".") {
+                    let row = row_str.parse::<u32>().ok();
+                    let subrow = subrow_str.parse::<u16>().ok();
+                    if let Some(row) = row {
+                        TEMP_SCROLL_TO_ROW.set(ui.ctx(), (row, subrow));
+                    }
+                } else {
+                    if let Ok(row) = row_str.parse::<u32>() {
+                        TEMP_SCROLL_TO_ROW.set(ui.ctx(), (row, None));
+                    }
+                }
+            }
         }
         Ok(())
     }
