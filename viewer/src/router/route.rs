@@ -2,8 +2,13 @@ use matchit::Params;
 
 use super::path::Path;
 
-type RouteStartFn<T> = dyn Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>) -> Result<(), Path>;
+type RouteStartFn<T> = dyn Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>) -> RouteResponse;
 type RouteRenderFn<T> = dyn Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>);
+
+pub enum RouteResponse {
+    Title(String),
+    Redirect(Path),
+}
 
 pub struct Route<T> {
     on_start: Box<RouteStartFn<T>>,
@@ -12,7 +17,7 @@ pub struct Route<T> {
 
 impl<T> Route<T> {
     pub fn new(
-        on_start: impl Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>) -> Result<(), Path> + 'static,
+        on_start: impl Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>) -> RouteResponse + 'static,
         on_render: impl Fn(&mut T, &mut egui::Ui, &Path, &Params<'_, '_>) + 'static,
     ) -> Self {
         Self {
@@ -23,7 +28,7 @@ impl<T> Route<T> {
 
     pub fn unmatched() -> Self {
         Self::new(
-            |_, _, _, _| Ok(()),
+            |_, _, _, _| RouteResponse::Title("Not Found".to_string()),
             |_, ui, _, _| {
                 ui.vertical_centered_justified(|ui| {
                     ui.heading("Not Found");
@@ -40,7 +45,7 @@ impl<T> Route<T> {
         ui: &mut egui::Ui,
         path: &Path,
         params: &Params<'_, '_>,
-    ) -> Result<(), Path> {
+    ) -> RouteResponse {
         (self.on_start)(state, ui, path, params)
     }
 

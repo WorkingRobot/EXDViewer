@@ -14,6 +14,7 @@ pub trait History {
     fn new(ctx: egui::Context) -> Self;
     fn base_url(&self) -> String;
     fn active_route(&self) -> Path;
+    fn set_title(&mut self, title: String);
     fn push(&mut self, location: Path) -> anyhow::Result<()>;
     fn replace(&mut self, location: Path) -> anyhow::Result<()>;
     fn back(&mut self) -> anyhow::Result<()>;

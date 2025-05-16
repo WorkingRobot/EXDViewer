@@ -64,6 +64,10 @@ impl History for WebHistory {
         Self::new(None, ctx)
     }
 
+    fn set_title(&mut self, title: String) {
+        window().unwrap().document().unwrap().set_title(&title);
+    }
+
     fn base_url(&self) -> String {
         let location = window().unwrap().location();
         format!("{}{}", location.origin().unwrap(), self.base_href)

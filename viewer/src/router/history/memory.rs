@@ -4,22 +4,23 @@ use anyhow::bail;
 use super::History;
 
 pub struct MemoryHistory {
+    ctx: egui::Context,
     history: Vec<Path>,
     position: usize,
 }
 
-impl MemoryHistory {
-    pub fn new() -> Self {
+impl History for MemoryHistory {
+    fn new(ctx: egui::Context) -> Self {
         Self {
+            ctx,
             history: vec!["/".into()],
             position: 0,
         }
     }
-}
 
-impl History for MemoryHistory {
-    fn new(_ctx: egui::Context) -> Self {
-        Self::new()
+    fn set_title(&mut self, title: String) {
+        self.ctx
+            .send_viewport_cmd(egui::ViewportCommand::Title(title));
     }
 
     fn base_url(&self) -> String {
