@@ -1,4 +1,4 @@
-use egui::{Id, InnerResponse, Margin, Modal, Spinner, UiBuilder, Vec2};
+use egui::{Color32, Id, InnerResponse, Margin, Modal, Spinner, UiBuilder, Vec2};
 use egui_table::TableDelegate;
 use itertools::Itertools;
 use std::cell::RefCell;
@@ -179,6 +179,27 @@ impl SheetTable {
         row_sizes.push(last_size);
         Ok(row_sizes[row_nr as usize])
     }
+
+    fn is_display_column(&self, column_idx: Option<usize>, sorted_by_offset: bool) -> bool {
+        let mut is_display_column = false;
+        if let (Some(column_idx), Some(display_idx)) =
+            (column_idx, self.context.display_column_idx())
+        {
+            is_display_column = if sorted_by_offset {
+                column_idx as u32 == display_idx
+            } else {
+                self.context
+                    .convert_column_index_to_offset_index(column_idx as u32)
+                    .map(|idx| idx == display_idx)
+                    .unwrap_or_default()
+            };
+        }
+        is_display_column
+    }
+
+    fn paint_cell_background(ui: &mut egui::Ui, color: Color32) {
+        ui.painter().rect_filled(ui.max_rect(), 0.0, color);
+    }
 }
 
 impl TableDelegate for SheetTable {
@@ -205,31 +226,14 @@ impl TableDelegate for SheetTable {
             ))
         });
 
-        let mut is_display_column = false;
-        if let (Some(column_idx), Some(display_idx)) =
-            (column_idx, self.context.display_column_idx())
-        {
-            is_display_column = if sorted_by_offset {
-                column_idx as u32 == display_idx
-            } else {
-                self.context
-                    .convert_column_index_to_offset_index(column_idx as u32)
-                    .map(|idx| idx == display_idx)
-                    .unwrap_or_default()
-            };
-            if is_display_column {
-                ui.painter().rect_filled(
-                    ui.max_rect(),
-                    0.0,
-                    egui::Color32::LIGHT_BLUE.gamma_multiply(0.05),
-                );
-            }
+        let is_display_column = self.is_display_column(column_idx, sorted_by_offset);
+
+        if is_display_column {
+            Self::paint_cell_background(ui, Color32::LIGHT_BLUE.gamma_multiply(0.05));
         }
 
-        let margin = 4;
-
         egui::Frame::NONE
-            .inner_margin(Margin::symmetric(margin, 2))
+            .inner_margin(Margin::symmetric(4, 2))
             .show(ui, |ui| {
                 if let Some((column_id, (schema_column, sheet_column))) = column {
                     ui.heading(schema_column.name).on_hover_text(format!(
@@ -269,33 +273,15 @@ impl TableDelegate for SheetTable {
         let sorted_by_offset = SORTED_BY_OFFSET.get(ui.ctx());
 
         if row_nr % 2 == 1 {
-            ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
+            Self::paint_cell_background(ui, ui.visuals().faint_bg_color);
         }
 
         if TEMP_HIGHLIGHTED_ROW_NR.try_get(ui.ctx()) == Some(row_nr) {
-            ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, egui::Color32::GOLD.gamma_multiply(0.2));
+            Self::paint_cell_background(ui, Color32::GOLD.gamma_multiply(0.2));
         }
 
-        if let (Some(column_idx), Some(display_idx)) =
-            (column_idx, self.context.display_column_idx())
-        {
-            let is_display_column = if sorted_by_offset {
-                column_idx as u32 == display_idx
-            } else {
-                self.context
-                    .convert_column_index_to_offset_index(column_idx as u32)
-                    .map(|idx| idx == display_idx)
-                    .unwrap_or_default()
-            };
-            if is_display_column {
-                ui.painter().rect_filled(
-                    ui.max_rect(),
-                    0.0,
-                    egui::Color32::LIGHT_BLUE.gamma_multiply(0.05),
-                );
-            }
+        if self.is_display_column(column_idx, sorted_by_offset) {
+            Self::paint_cell_background(ui, Color32::LIGHT_BLUE.gamma_multiply(0.05));
         }
 
         let resp = egui::Frame::NONE
