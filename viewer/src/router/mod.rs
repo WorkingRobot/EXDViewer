@@ -55,6 +55,14 @@ impl<T, H: History> Router<T, H> {
         self.history.borrow_mut().forward()
     }
 
+    pub fn base_url(&self) -> String {
+        self.history.borrow().base_url()
+    }
+
+    pub fn full_url(&self) -> String {
+        format!("{}{}", self.base_url(), self.current_path())
+    }
+
     pub fn current_path(&self) -> Path {
         self.history.borrow().active_route()
     }

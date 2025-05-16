@@ -174,16 +174,16 @@ impl TableContext {
 
     pub fn resolve_link(
         &self,
-        sheets: Vec<String>,
+        sheets: &[String],
         row_id: u32,
     ) -> Option<Option<(String, TableContext)>> {
         sheets
-            .into_iter()
+            .iter()
             .find_map(|s| match self.try_get_sheet(s.clone()) {
                 None => Some(None),
                 Some(Ok(table)) => {
                     if table.sheet().get_row(row_id).is_ok() {
-                        Some(Some((s, table)))
+                        Some(Some((s.clone(), table)))
                     } else {
                         None
                     }

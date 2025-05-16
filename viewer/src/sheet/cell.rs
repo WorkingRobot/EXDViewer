@@ -1,7 +1,7 @@
 use anyhow::bail;
 use egui::{
-    Color32, Direction, InnerResponse, Layout, Sense, Vec2, Widget, color_picker::show_color_at,
-    ecolor::HexColor,
+    Color32, CursorIcon, Direction, InnerResponse, Layout, Sense, Vec2, Widget,
+    color_picker::show_color_at, ecolor::HexColor,
 };
 use ironworks::file::exh::ColumnKind;
 
@@ -26,9 +26,18 @@ pub struct Cell<'a> {
     table_context: &'a TableContext,
 }
 
+pub type SheetRef = (
+    String,             // sheet name
+    (u32, Option<u16>), // row id, subrow id
+);
+
+#[derive(Default)]
 pub enum CellResponse {
+    #[default]
     None,
     Icon(u32),
+    Link(SheetRef),
+    Row(SheetRef),
 }
 
 impl<'a> Cell<'a> {
@@ -46,15 +55,15 @@ impl<'a> Cell<'a> {
         }
     }
 
-    fn draw(self, ui: &mut egui::Ui) -> anyhow::Result<CellResponse> {
-        match &self.schema_column {
+    fn draw(self, ui: &mut egui::Ui) -> anyhow::Result<InnerResponse<CellResponse>> {
+        let resp = match &self.schema_column {
             SchemaColumnMeta::Scalar => {
                 let value = read_string(
                     self.row,
                     self.sheet_column.offset() as u32,
                     self.sheet_column.kind(),
                 )?;
-                self.draw_copyable_text(ui, value);
+                copyable_label(ui, value)
             }
             SchemaColumnMeta::Icon => {
                 let icon_id: u32 = read_integer(
@@ -62,9 +71,13 @@ impl<'a> Cell<'a> {
                     self.sheet_column.offset() as u32,
                     self.sheet_column.kind(),
                 )?;
-                if self.draw_icon(ui, icon_id) {
-                    return Ok(CellResponse::Icon(icon_id));
+                let resp = self
+                    .draw_icon(ui, icon_id)
+                    .on_hover_cursor(CursorIcon::PointingHand);
+                if resp.clicked() {
+                    return Ok(InnerResponse::new(CellResponse::Icon(icon_id), resp));
                 }
+                resp
             }
             SchemaColumnMeta::ModelId => {
                 let model_id: u64 = read_integer(
@@ -72,7 +85,7 @@ impl<'a> Cell<'a> {
                     self.sheet_column.offset() as u32,
                     self.sheet_column.kind(),
                 )?;
-                self.draw_copyable_text(ui, model_id.to_string());
+                copyable_label(ui, model_id)
             }
             SchemaColumnMeta::Color => {
                 let color: u32 = read_integer(
@@ -82,7 +95,7 @@ impl<'a> Cell<'a> {
                 )?;
                 let [a, r, g, b] = color.to_le_bytes();
                 let color = Color32::from_rgba_unmultiplied(r, g, b, a);
-                self.draw_color(ui, color);
+                self.draw_color(ui, color)
             }
             SchemaColumnMeta::Link(sheets) => {
                 let row_id: isize = read_integer(
@@ -94,27 +107,42 @@ impl<'a> Cell<'a> {
                 match row_id
                     .try_into()
                     .ok()
-                    .and_then(|id| self.table_context.resolve_link(sheets.clone(), id))
+                    .and_then(|id| self.table_context.resolve_link(sheets, id))
                 {
                     Some(Some((sheet_name, table))) => {
-                        if DISPLAY_FIELD_SHOWN.get(ui.ctx()) {
-                            if let Some(cell) = table
-                                .display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
-                            {
-                                cell?.draw(ui)?;
-                            } else {
-                                copyable_label(ui, format!("{sheet_name}#{row_id}"));
+                        let display_field_cell = DISPLAY_FIELD_SHOWN
+                            .get(ui.ctx())
+                            .then(|| {
+                                table.display_field_cell(
+                                    table.sheet().get_row(row_id as u32).unwrap(),
+                                )
+                            })
+                            .flatten();
+
+                        let resp = if let Some(cell) = display_field_cell {
+                            let mut resp = cell?.draw(ui)?;
+                            resp.response = resp
+                                .response
+                                .on_hover_text(format!("{sheet_name}#{row_id}"));
+                            if !matches!(resp.inner, CellResponse::None) {
+                                return Ok(resp);
                             }
+                            resp.response
                         } else {
-                            copyable_label(ui, format!("{sheet_name}#{row_id}"));
+                            copyable_label(ui, format!("{sheet_name}#{row_id}"))
                         }
+                        .on_hover_cursor(CursorIcon::Alias);
+
+                        if resp.clicked() {
+                            return Ok(InnerResponse::new(
+                                CellResponse::Link((sheet_name, (row_id as u32, None))),
+                                resp,
+                            ));
+                        }
+                        resp
                     }
-                    Some(None) => {
-                        copyable_label(ui, format!("...#{row_id}"));
-                    }
-                    None => {
-                        copyable_label(ui, format!("???#{row_id}"));
-                    }
+                    Some(None) => copyable_label(ui, format!("...#{row_id}")),
+                    None => copyable_label(ui, format!("???#{row_id}")),
                 }
             }
             SchemaColumnMeta::ConditionalLink { column_idx, links } => {
@@ -125,26 +153,21 @@ impl<'a> Cell<'a> {
                     switch_column.kind(),
                 )?;
                 if let Some(sheets) = links.get(&switch_data) {
-                    Cell {
+                    return Cell {
                         row: self.row,
                         schema_column: SchemaColumnMeta::Link(sheets.clone()),
                         sheet_column: self.sheet_column,
                         table_context: self.table_context,
                     }
-                    .draw(ui)?;
-                } else {
-                    copyable_label(ui, format!("???#{switch_data}"));
+                    .draw(ui);
                 }
+                copyable_label(ui, format!("???#{switch_data}"))
             }
-        }
-        Ok(CellResponse::None)
+        };
+        Ok(InnerResponse::new(CellResponse::None, resp))
     }
 
-    fn draw_copyable_text(&self, ui: &mut egui::Ui, text: String) {
-        copyable_label(ui, text);
-    }
-
-    fn draw_icon(&self, ui: &mut egui::Ui, icon_id: u32) -> bool {
+    fn draw_icon(&self, ui: &mut egui::Ui, icon_id: u32) -> egui::Response {
         let (excel, icon_mgr) = (
             self.table_context.global().backend().excel().clone(),
             &self.table_context.global().icon_manager(),
@@ -195,10 +218,10 @@ impl<'a> Cell<'a> {
             //     }
             // });
         });
-        resp.clicked()
+        resp
     }
 
-    fn draw_color(&self, ui: &mut egui::Ui, color: Color32) {
+    fn draw_color(&self, ui: &mut egui::Ui, color: Color32) -> egui::Response {
         let resp = {
             let (rect, response) =
                 ui.allocate_at_least(ui.available_size_before_wrap(), Sense::click());
@@ -212,12 +235,14 @@ impl<'a> Cell<'a> {
         } else {
             HexColor::Hex8(color)
         };
-        resp.on_hover_text(hex.to_string()).context_menu(|ui| {
+        let resp = resp.on_hover_text(hex.to_string());
+        resp.context_menu(|ui| {
             if ui.button("Copy").clicked() {
                 ui.ctx().copy_text(hex.to_string());
                 ui.close_menu();
             }
         });
+        resp
     }
 
     fn size_text(&self, ui: &mut egui::Ui) -> f32 {
@@ -255,7 +280,7 @@ impl<'a> Cell<'a> {
                 match row_id
                     .try_into()
                     .ok()
-                    .and_then(|id| self.table_context.resolve_link(sheets.clone(), id))
+                    .and_then(|id| self.table_context.resolve_link(sheets, id))
                 {
                     Some(Some((_, table))) => {
                         if let Some(cell) =
@@ -304,9 +329,9 @@ impl<'a> Cell<'a> {
         Ok(size_ui.min_rect().size().y)
     }
 
-    pub fn show(self, ui: &mut egui::Ui) -> egui::InnerResponse<CellResponse> {
+    pub fn show(self, ui: &mut egui::Ui) -> InnerResponse<CellResponse> {
         match self.draw(ui) {
-            Ok(resp) => InnerResponse::new(resp, ui.response()),
+            Ok(resp) => resp,
             Err(err) => {
                 log::error!("Failed to draw cell: {:?}", err);
                 let resp = ui

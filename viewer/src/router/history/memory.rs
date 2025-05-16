@@ -22,6 +22,10 @@ impl History for MemoryHistory {
         Self::new()
     }
 
+    fn base_url(&self) -> String {
+        "".to_string()
+    }
+
     fn active_route(&self) -> Path {
         self.history.get(self.position).unwrap().clone()
     }

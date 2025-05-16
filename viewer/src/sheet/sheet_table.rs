@@ -16,6 +16,8 @@ pub struct SheetTable {
     subrow_lookup: Option<Vec<u32>>,
     row_sizes: RefCell<Vec<f32>>,
     modal_image: Option<u32>,
+
+    clicked_cell: Option<CellResponse>,
 }
 
 impl SheetTable {
@@ -44,6 +46,7 @@ impl SheetTable {
             subrow_lookup,
             row_sizes,
             modal_image: None,
+            clicked_cell: None,
         }
     }
 
@@ -51,7 +54,7 @@ impl SheetTable {
         &mut self,
         ui: &mut egui::Ui,
         mutator: impl FnOnce(egui_table::Table) -> egui_table::Table,
-    ) {
+    ) -> CellResponse {
         let id = Id::new(self.context.sheet().name());
         ui.push_id(id, |ui| {
             let table = egui_table::Table::new()
@@ -102,6 +105,8 @@ impl SheetTable {
                 self.modal_image = None;
             }
         }
+
+        self.clicked_cell.take().unwrap_or_default()
     }
 
     pub fn context(&self) -> &TableContext {
@@ -237,17 +242,17 @@ impl TableDelegate for SheetTable {
 
         let sorted_by_offset = SORTED_BY_OFFSET.get(ui.ctx());
 
+        if row_nr % 2 == 1 {
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
+        }
+
         if TEMP_HIGHLIGHTED_ROW_NR.try_get(ui.ctx()) == Some(row_nr) {
             ui.painter().rect_filled(
                 ui.max_rect(),
                 0.0,
                 ui.visuals().warn_fg_color.linear_multiply(0.2),
             );
-        }
-
-        if row_nr % 2 == 1 {
-            ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, ui.visuals().faint_bg_color);
         }
 
         let resp = egui::Frame::NONE
@@ -263,23 +268,50 @@ impl TableDelegate for SheetTable {
                         Ok(cell) => cell.show(ui),
                         Err(e) => {
                             log::error!("Failed to get column {column_idx}: {e:?}");
-                            InnerResponse::new(crate::sheet::cell::CellResponse::None, ui.label(""))
+                            InnerResponse::new(CellResponse::None, ui.label(""))
                         }
                     }
                 } else {
-                    let resp = if let Some(subrow_id) = subrow_id {
-                        ui.label(format!("{row_id}.{subrow_id}"))
-                            .on_hover_text(format!("Row {row_id}, Subrow {subrow_id}"))
+                    let resp = ui
+                        .with_layout(
+                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight)
+                                .with_main_align(egui::Align::Center),
+                            |ui| {
+                                if let Some(subrow_id) = subrow_id {
+                                    ui.label(format!("{row_id}.{subrow_id}"))
+                                        .on_hover_text(format!("Row {row_id}, Subrow {subrow_id}"))
+                                } else {
+                                    ui.label(row_id.to_string())
+                                        .on_hover_text(format!("Row {row_id}"))
+                                }
+                            },
+                        )
+                        .inner
+                        .on_hover_cursor(egui::CursorIcon::Copy);
+                    let cell_resp = if resp.clicked() {
+                        CellResponse::Row((
+                            self.context.sheet().name().to_string(),
+                            (row_id, subrow_id),
+                        ))
                     } else {
-                        ui.label(row_id.to_string())
-                            .on_hover_text(format!("Row {row_id}"))
+                        CellResponse::None
                     };
-                    InnerResponse::new(crate::sheet::cell::CellResponse::None, resp)
+                    InnerResponse::new(cell_resp, resp)
                 }
             })
+            .inner
             .inner;
-        if let CellResponse::Icon(icon_id) = resp.inner {
-            self.modal_image = Some(icon_id);
+
+        match resp {
+            CellResponse::None => {}
+            CellResponse::Icon(icon_id) => {
+                self.modal_image = Some(icon_id);
+            }
+            CellResponse::Link(_) | CellResponse::Row(_) => {}
+        }
+
+        if !matches!(resp, CellResponse::None) {
+            self.clicked_cell = Some(resp);
         }
     }
 

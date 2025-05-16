@@ -46,8 +46,7 @@ impl WebHistory {
     }
 
     fn prefix_path(&self, url: &Path) -> String {
-        let location = window().unwrap().location();
-        format!("{}{}{}", location.origin().unwrap(), self.base_href, url)
+        format!("{}{url}", self.base_url())
     }
 }
 
@@ -63,6 +62,11 @@ impl Drop for WebHistory {
 impl History for WebHistory {
     fn new(ctx: egui::Context) -> Self {
         Self::new(None, ctx)
+    }
+
+    fn base_url(&self) -> String {
+        let location = window().unwrap().location();
+        format!("{}{}", location.origin().unwrap(), self.base_href)
     }
 
     fn active_route(&self) -> Path {

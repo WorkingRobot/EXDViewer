@@ -27,7 +27,7 @@ use crate::{
         TEMP_HIGHLIGHTED_ROW_NR, TEMP_SCROLL_TO,
     },
     setup::{self, SetupWindow},
-    sheet::{GlobalContext, SheetTable, TableContext},
+    sheet::{CellResponse, GlobalContext, SheetTable, TableContext},
     utils::{CodeTheme, ConvertiblePromise, IconManager, TrackedPromise, tick_promises},
 };
 
@@ -95,11 +95,11 @@ impl App {
         self.router.clone().get().unwrap().ui(self, ui);
     }
 
-    fn navigate(&mut self, path: impl Into<Path>) {
+    fn navigate(&self, path: impl Into<Path>) {
         self.router.get().unwrap().navigate(path).unwrap()
     }
 
-    fn navigate_replace(&mut self, path: impl Into<Path>) {
+    fn navigate_replace(&self, path: impl Into<Path>) {
         self.router.get().unwrap().replace(path).unwrap()
     }
 
@@ -157,7 +157,7 @@ impl App {
                     {
                         let mut display_field_shown = DISPLAY_FIELD_SHOWN.get(ctx);
                         if ui
-                            .checkbox(&mut display_field_shown, "Use Link Display Fields")
+                            .checkbox(&mut display_field_shown, "Use Display Fields")
                             .changed()
                         {
                             DISPLAY_FIELD_SHOWN.set(ctx, display_field_shown);
@@ -433,7 +433,7 @@ impl App {
                 col_nr = Some(col);
             }
 
-            table.draw(ui, move |mut table| {
+            let resp = table.draw(ui, move |mut table| {
                 if let Some(row_nr) = row_nr {
                     TEMP_HIGHLIGHTED_ROW_NR.set(ctx, row_nr);
                     table = table.scroll_to_row(row_nr, Some(egui::Align::Center));
@@ -443,6 +443,31 @@ impl App {
                 }
                 table
             });
+            match resp {
+                CellResponse::None => {}
+                CellResponse::Icon(_) => {}
+                CellResponse::Link((sheet_name, (row_id, subrow_id))) => {
+                    self.navigate(format!(
+                        "/sheet/{sheet_name}#R{row_id}{}",
+                        if let Some(subrow_id) = subrow_id {
+                            format!(".{subrow_id}")
+                        } else {
+                            "".to_string()
+                        }
+                    ));
+                }
+                CellResponse::Row((sheet_name, (row_id, subrow_id))) => {
+                    self.navigate_replace(format!(
+                        "/sheet/{sheet_name}#R{row_id}{}",
+                        if let Some(subrow_id) = subrow_id {
+                            format!(".{subrow_id}")
+                        } else {
+                            "".to_string()
+                        }
+                    ));
+                    ui.ctx().copy_text(self.router.get().unwrap().full_url());
+                }
+            }
         });
     }
 

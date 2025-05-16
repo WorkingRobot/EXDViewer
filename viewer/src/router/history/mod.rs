@@ -12,6 +12,7 @@ pub type DefaultHistory = web::WebHistory;
 
 pub trait History {
     fn new(ctx: egui::Context) -> Self;
+    fn base_url(&self) -> String;
     fn active_route(&self) -> Path;
     fn push(&mut self, location: Path) -> anyhow::Result<()>;
     fn replace(&mut self, location: Path) -> anyhow::Result<()>;
