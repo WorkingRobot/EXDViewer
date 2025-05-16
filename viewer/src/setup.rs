@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use egui::{Frame, Layout, Vec2, WidgetText};
+use egui::{Align2, Area, Frame, Layout, Modal, Order, Sense, UiBuilder, Vec2, WidgetText, Window};
 
 use crate::{
     DEFAULT_API_URL, DEFAULT_SCHEMA_URL,
@@ -73,45 +73,45 @@ impl SetupWindow {
             }
         }
 
-        egui::Modal::new("setup_modal".into())
-            .frame(Frame::window(&ctx.style()))
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading("Setup");
-                });
-                ui.separator();
+        let show_inner = |ui: &mut egui::Ui| {
+            ui.vertical_centered(|ui| {
+                ui.heading("Setup");
+            });
+            ui.separator();
 
-                let enabled: bool;
-                match self.setup_promise.take().map(|p| p.try_take()) {
-                    None => {
-                        enabled = true;
-                    }
-                    Some(Err(promise)) => {
-                        self.setup_promise = Some(promise);
-                        enabled = false;
-                        ui.label("Loading...");
-                    }
-                    Some(Ok(Ok(backend))) => {
-                        return Some(backend);
-                    }
-                    Some(Ok(Err(err))) => {
-                        log::error!("Setup Error: {err}");
-                        self.display_error = Some(err);
-                        enabled = true;
-                    }
+            let enabled: bool;
+            match self.setup_promise.take().map(|p| p.try_take()) {
+                None => {
+                    enabled = true;
                 }
+                Some(Err(promise)) => {
+                    self.setup_promise = Some(promise);
+                    enabled = false;
+                    ui.label("Loading...");
+                }
+                Some(Ok(Ok(backend))) => {
+                    return Some(backend);
+                }
+                Some(Ok(Err(err))) => {
+                    log::error!("Setup Error: {err}");
+                    self.display_error = Some(err);
+                    enabled = true;
+                }
+            }
 
-                if let Some(err) = &self.display_error {
-                    ui.label(err.to_string());
-                }
-                else {
-                    ui.label("Please select the location of the game files and schema.");
-                }
-                let is_go_clicked = ui.add_enabled_ui(enabled, |ui| {
-                    egui::containers::Frame::group(ui.style()).show(ui, |ui| {
+            if let Some(err) = &self.display_error {
+                ui.label(err.to_string());
+            } else {
+                ui.label("Please select the location of the game files and schema.");
+            }
+
+            let is_go_clicked = ui
+                .add_enabled_ui(enabled, |ui| {
+                    Frame::group(ui.style()).show(ui, |ui| {
                         ui.vertical_centered(|ui| {
                             ui.heading("Location");
                         });
+
                         ui.horizontal(|ui| {
                             #[cfg(not(target_arch = "wasm32"))]
                             if radio(
@@ -180,29 +180,29 @@ impl SetupWindow {
                                             .width(ui.available_width())
                                             .show_ui(ui, |ui| {
                                                 match self.location_promises.get_folder_list(
-                                                    crate::excel::worker::WorkerFileProvider::folders,
-                                                ) {
-                                                    None => {
-                                                        ui.label("Retrieving...");
+                                                crate::excel::worker::WorkerFileProvider::folders,
+                                            ) {
+                                                None => {
+                                                    ui.label("Retrieving...");
+                                                }
+                                                Some(Err(e)) => {
+                                                    ui.label(format!("An error occured: {e}"));
+                                                }
+                                                Some(Ok(entries)) => {
+                                                    if entries.is_empty() {
+                                                        ui.label("None");
                                                     }
-                                                    Some(Err(e)) => {
-                                                        ui.label(format!("An error occured: {e}"));
-                                                    }
-                                                    Some(Ok(entries)) => {
-                                                        if entries.is_empty() {
-                                                            ui.label("None");
-                                                        }
-                                                        else {
-                                                            for entry in entries {
-                                                                ui.selectable_value(
-                                                                    name,
-                                                                    entry.to_string(),
-                                                                    entry,
-                                                                );
-                                                            }
+                                                    else {
+                                                        for entry in entries {
+                                                            ui.selectable_value(
+                                                                name,
+                                                                entry.to_string(),
+                                                                entry,
+                                                            );
                                                         }
                                                     }
                                                 }
+                                            }
                                             });
                                     });
                                 });
@@ -217,7 +217,7 @@ impl SetupWindow {
                         }
                     });
 
-                    egui::containers::Frame::group(ui.style()).show(ui, |ui| {
+                    Frame::group(ui.style()).show(ui, |ui| {
                         ui.vertical_centered(|ui| {
                             ui.heading("Schema");
                         });
@@ -333,14 +333,25 @@ impl SetupWindow {
                     let schema = self.schema.clone();
                     self.setup_promise = Some(UnsendPromise::new(async move {
                         let config = BackendConfig { location, schema };
-                        Backend::new(config.clone()).await.map(|backend| {
-                            (backend, config)
-                        })
+                        Backend::new(config.clone())
+                            .await
+                            .map(|backend| (backend, config))
                     }));
                 }
             }
             None
-        }).inner
+        };
+
+        Modal::default_area("setup-modal".into())
+            .show(ctx, |ui| {
+                ui.scope_builder(UiBuilder::new().sense(Sense::CLICK | Sense::DRAG), |ui| {
+                    egui::containers::Frame::window(ui.style())
+                        .show(ui, show_inner)
+                        .inner
+                })
+                .inner
+            })
+            .inner
     }
 }
 

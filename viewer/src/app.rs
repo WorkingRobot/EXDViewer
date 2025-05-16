@@ -2,7 +2,7 @@ use std::{cell::OnceCell, num::NonZero, rc::Rc};
 
 use egui::{
     Button, CentralPanel, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit,
-    Vec2, Widget,
+    ThemePreference, Vec2, Widget,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
 };
 use egui_extras::install_image_loaders;
@@ -126,17 +126,50 @@ impl App {
                 });
 
                 ui.menu_button("View", |ui| {
+                    ui.menu_button("Color Theme", |ui| {
+                        let mut theme_preference = ui.ctx().options(|opt| opt.theme_preference);
+                        let r = ui.selectable_value(
+                            &mut theme_preference,
+                            ThemePreference::System,
+                            "💻 System",
+                        );
+                        let r = r.union(ui.selectable_value(
+                            &mut theme_preference,
+                            ThemePreference::Dark,
+                            "🌙 Dark",
+                        ));
+                        let r = r.union(ui.selectable_value(
+                            &mut theme_preference,
+                            ThemePreference::Light,
+                            "☀ Light",
+                        ));
+                        if r.changed() {
+                            ui.close_menu();
+                            ui.ctx().set_theme(theme_preference);
+                        }
+                    });
+
+                    ui.menu_button("Code Theme", |ui| {
+                        let mut theme = CodeTheme::from_memory(ui.ctx(), ui.style());
+
+                        for (id, name) in CodeTheme::themes() {
+                            if ui
+                                .selectable_value(&mut theme.theme, id.to_string(), name)
+                                .changed()
+                            {
+                                theme.clone().store_in_memory(ui.ctx());
+                                ui.close_menu();
+                            }
+                        }
+                    });
+
                     ui.menu_button("Sort Columns by", |ui| {
                         let mut sorted_by_offset = SORTED_BY_OFFSET.get(ctx);
-                        if ui.toggle_value(&mut sorted_by_offset, "Offset").changed() {
+                        let r = ui.selectable_value(&mut sorted_by_offset, true, "Offset");
+                        let r = r.union(ui.selectable_value(&mut sorted_by_offset, false, "Index"));
+                        if r.changed() {
+                            ui.close_menu();
                             SORTED_BY_OFFSET.set(ctx, sorted_by_offset);
-                            ui.close_menu();
-                        }
-
-                        let mut sort_by_index = !sorted_by_offset;
-                        if ui.toggle_value(&mut sort_by_index, "Index").changed() {
-                            SORTED_BY_OFFSET.set(ctx, !sort_by_index);
-                            ui.close_menu();
                         }
                     });
 
@@ -169,19 +202,30 @@ impl App {
                 });
 
                 ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
-                    egui::widgets::global_theme_preference_buttons(ui);
-
-                    ui.menu_button("Code Theme", |ui| {
-                        let mut theme = CodeTheme::from_memory(ui.ctx(), ui.style());
-
-                        for (id, name) in CodeTheme::themes() {
-                            if ui.selectable_label(theme.theme == id, name).clicked() {
-                                theme.theme = id.to_owned();
-                                ui.close_menu();
-                            }
-                        }
-                        theme.store_in_memory(ui.ctx());
-                    });
+                    ui.add(
+                        egui::Hyperlink::from_label_and_url(
+                            "Support me on Ko-fi!",
+                            "https://ko-fi.com/camora",
+                        )
+                        .open_in_new_tab(true),
+                    );
+                    ui.label("/");
+                    ui.add(
+                        egui::Hyperlink::from_label_and_url(
+                            "Contibute to EXDSchema",
+                            "https://github.com/xivdev/EXDSchema",
+                        )
+                        .open_in_new_tab(true),
+                    );
+                    ui.label("/");
+                    ui.add(
+                        egui::Hyperlink::from_label_and_url(
+                            format!("Star me on {}", egui::special_emojis::GITHUB),
+                            "https://github.com/WorkingRobot/EXDViewer",
+                        )
+                        .open_in_new_tab(true),
+                    );
+                    egui::warn_if_debug_build(ui);
                 });
             });
         });

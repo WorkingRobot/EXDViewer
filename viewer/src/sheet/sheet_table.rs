@@ -74,8 +74,10 @@ impl SheetTable {
 
         if let Some(icon_id) = &self.modal_image {
             let icon_id = *icon_id;
-            let resp = Modal::new(Id::new("icon_modal"))
-                .area(Modal::default_area(Id::new(format!("icon_modal{icon_id}"))))
+            let resp = Modal::new(Id::new("icon-modal"))
+                .area(Modal::default_area(Id::new(format!(
+                    "icon-modal-{icon_id}"
+                ))))
                 .show(ui.ctx(), |ui| {
                     let (excel, icon_mgr) = (
                         self.context.global().backend().excel().clone(),
