@@ -19,7 +19,7 @@ use crate::{
         base::BaseSheet,
         provider::{ExcelHeader, ExcelProvider},
     },
-    router::{Router, path::Path},
+    router::{Router, path::Path, route::RouteResponse},
     schema::provider::SchemaProvider,
     settings::{
         ALWAYS_HIRES, BACKEND_CONFIG, DISPLAY_FIELD_SHOWN, LANGUAGE, LOGGER_SHOWN,
@@ -65,6 +65,7 @@ impl Default for App {
 
 fn create_router(ctx: egui::Context) -> anyhow::Result<Router<App>> {
     let mut builder = Router::<App>::new(ctx);
+    builder.set_title_formatter(|title| format!("EXDViewer - {title}"));
     builder.add_route("/", App::on_setup, App::draw_setup)?;
     builder.add_route("/sheet", App::on_unnamed_sheet, App::draw_unnamed_sheet)?;
     builder.add_route("/sheet/{name}", App::on_named_sheet, App::draw_named_sheet)?;
@@ -75,13 +76,6 @@ impl App {
     fn draw(&mut self, ctx: &egui::Context) {
         self.router
             .get_or_init(|| create_router(ctx.clone()).unwrap());
-
-        if cfg!(debug_assertions) && !super::IS_WEB {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                "EXDViewer - {}",
-                self.router.get().as_ref().unwrap().current_path(),
-            )));
-        }
 
         self.draw_menubar(ctx);
         self.draw_logger(ctx);
@@ -476,12 +470,12 @@ impl App {
         ui: &mut egui::Ui,
         path: &Path,
         _params: &Params<'_, '_>,
-    ) -> Result<(), Path> {
+    ) -> RouteResponse {
         self.setup_window = Some(SetupWindow::from_config(
             ui.ctx(),
             path.query_pairs().contains_key("redirect"),
         ));
-        Ok(())
+        RouteResponse::Title("Setup".to_string())
     }
 
     fn draw_setup(&mut self, ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) {
@@ -496,11 +490,14 @@ impl App {
         }
     }
 
-    fn ensure_backend(&self, path: &Path) -> Result<(), Path> {
+    fn ensure_backend(&self, path: &Path) -> Option<RouteResponse> {
         if self.backend.is_none() {
-            return Err(Path::with_params("/", &[("redirect", path.to_string())]));
+            return Some(RouteResponse::Redirect(Path::with_params(
+                "/",
+                &[("redirect", path.to_string())],
+            )));
         }
-        Ok(())
+        None
     }
 
     fn on_unnamed_sheet(
@@ -508,13 +505,15 @@ impl App {
         ui: &mut egui::Ui,
         path: &Path,
         _params: &Params<'_, '_>,
-    ) -> Result<(), Path> {
-        self.ensure_backend(path)?;
+    ) -> RouteResponse {
+        if let Some(r) = self.ensure_backend(path) {
+            return r;
+        }
 
         if let Some(sheet) = &SELECTED_SHEET.get(ui.ctx()) {
-            return Err(format!("/sheet/{sheet}").into());
+            return RouteResponse::Redirect(format!("/sheet/{sheet}").into());
         }
-        Ok(())
+        RouteResponse::Title("Sheet List".to_string())
     }
 
     fn on_named_sheet(
@@ -522,15 +521,17 @@ impl App {
         ui: &mut egui::Ui,
         path: &Path,
         params: &Params<'_, '_>,
-    ) -> Result<(), Path> {
-        self.ensure_backend(path)?;
+    ) -> RouteResponse {
+        if let Some(r) = self.ensure_backend(path) {
+            return r;
+        }
         TEMP_HIGHLIGHTED_ROW_NR.take(ui.ctx());
 
         if let Some(sheet) = params.get("name") {
             SELECTED_SHEET.set(ui.ctx(), Some(sheet.to_string()));
         } else {
             SELECTED_SHEET.set(ui.ctx(), None);
-            return Err("/sheet".into());
+            return RouteResponse::Redirect("/sheet".into());
         }
 
         if let Some(mut fragment) = path.fragment() {
@@ -557,7 +558,7 @@ impl App {
                 TEMP_SCROLL_TO.set(ui.ctx(), ((row, subrow), col_nr.unwrap_or_default()));
             }
         }
-        Ok(())
+        RouteResponse::Title(params.get("name").unwrap().to_string())
     }
 
     fn draw_unnamed_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
