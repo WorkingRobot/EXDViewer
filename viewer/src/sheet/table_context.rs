@@ -100,22 +100,25 @@ impl TableContext {
         ))
     }
 
-    pub fn get_column_by_index(
-        &self,
-        column_idx: u32,
-    ) -> anyhow::Result<(SchemaColumn, &SheetColumnDefinition)> {
-        let column_idx = self
-            .0
+    pub fn convert_column_index_to_offset_index(&self, column_idx: u32) -> anyhow::Result<u32> {
+        self.0
             .column_ordering
             .get(column_idx as usize)
+            .copied()
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Column index out of bounds: {} >= {}",
                     column_idx,
                     self.0.column_ordering.len()
                 )
-            })?;
-        self.get_column_by_offset(*column_idx)
+            })
+    }
+
+    pub fn get_column_by_index(
+        &self,
+        column_idx: u32,
+    ) -> anyhow::Result<(SchemaColumn, &SheetColumnDefinition)> {
+        self.get_column_by_offset(self.convert_column_index_to_offset_index(column_idx)?)
     }
 
     pub fn set_schema(&self, schema: Option<Schema>) -> anyhow::Result<()> {
@@ -211,6 +214,10 @@ impl TableContext {
     ) -> anyhow::Result<Cell<'a>> {
         let (schema_column, sheet_column) = self.get_column_by_index(column_idx)?;
         Ok(Cell::new(row, schema_column.meta, sheet_column, self))
+    }
+
+    pub fn display_column_idx(&self) -> Option<u32> {
+        self.0.display_column_idx.get()
     }
 
     pub fn display_field_cell<'a>(&'a self, row: ExcelRow<'a>) -> Option<anyhow::Result<Cell<'a>>> {

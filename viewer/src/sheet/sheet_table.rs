@@ -205,6 +205,27 @@ impl TableDelegate for SheetTable {
             ))
         });
 
+        let mut is_display_column = false;
+        if let (Some(column_idx), Some(display_idx)) =
+            (column_idx, self.context.display_column_idx())
+        {
+            is_display_column = if sorted_by_offset {
+                column_idx as u32 == display_idx
+            } else {
+                self.context
+                    .convert_column_index_to_offset_index(column_idx as u32)
+                    .map(|idx| idx == display_idx)
+                    .unwrap_or_default()
+            };
+            if is_display_column {
+                ui.painter().rect_filled(
+                    ui.max_rect(),
+                    0.0,
+                    egui::Color32::LIGHT_BLUE.gamma_multiply(0.05),
+                );
+            }
+        }
+
         let margin = 4;
 
         egui::Frame::NONE
@@ -212,11 +233,16 @@ impl TableDelegate for SheetTable {
             .show(ui, |ui| {
                 if let Some((column_id, (schema_column, sheet_column))) = column {
                     ui.heading(schema_column.name).on_hover_text(format!(
-                        "Id: {}\nIndex: {}\nOffset: {}\nKind: {:?}",
+                        "Id: {}\nIndex: {}\nOffset: {}\nKind: {:?}{}",
                         sheet_column.id,
                         column_id,
                         sheet_column.offset(),
-                        sheet_column.kind()
+                        sheet_column.kind(),
+                        if is_display_column {
+                            "\nDisplay Field"
+                        } else {
+                            ""
+                        }
                     ));
                 } else {
                     ui.heading("Row");
@@ -248,11 +274,28 @@ impl TableDelegate for SheetTable {
         }
 
         if TEMP_HIGHLIGHTED_ROW_NR.try_get(ui.ctx()) == Some(row_nr) {
-            ui.painter().rect_filled(
-                ui.max_rect(),
-                0.0,
-                ui.visuals().warn_fg_color.linear_multiply(0.2),
-            );
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, egui::Color32::GOLD.gamma_multiply(0.2));
+        }
+
+        if let (Some(column_idx), Some(display_idx)) =
+            (column_idx, self.context.display_column_idx())
+        {
+            let is_display_column = if sorted_by_offset {
+                column_idx as u32 == display_idx
+            } else {
+                self.context
+                    .convert_column_index_to_offset_index(column_idx as u32)
+                    .map(|idx| idx == display_idx)
+                    .unwrap_or_default()
+            };
+            if is_display_column {
+                ui.painter().rect_filled(
+                    ui.max_rect(),
+                    0.0,
+                    egui::Color32::LIGHT_BLUE.gamma_multiply(0.05),
+                );
+            }
         }
 
         let resp = egui::Frame::NONE
