@@ -1,4 +1,4 @@
-use egui::{Color32, Id, InnerResponse, Margin, Modal, Spinner, UiBuilder, Vec2};
+use egui::{Color32, Id, InnerResponse, Layout, Margin, Modal, Spinner, UiBuilder};
 use egui_table::TableDelegate;
 use itertools::Itertools;
 use std::cell::RefCell;
@@ -95,8 +95,19 @@ impl SheetTable {
                             ui.label("Failed to load icon").on_hover_text(e.to_string())
                         }
                         ManagedIcon::Loading => {
-                            let height = ui.text_style_height(&egui::TextStyle::Heading) * 2.0;
-                            ui.add_sized(Vec2::splat(height), Spinner::new())
+                            let (rect, _) =
+                                ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+                            ui.allocate_new_ui(
+                                UiBuilder::new()
+                                    .max_rect(rect)
+                                    .layout(Layout::centered_and_justified(ui.layout().main_dir())),
+                                |ui| {
+                                    ui.add(Spinner::new().size(
+                                        ui.text_style_height(&egui::TextStyle::Heading) * 3.0,
+                                    ))
+                                },
+                            )
+                            .inner
                         }
                         ManagedIcon::NotLoaded => ui.label("Icon not loaded"),
                     }
