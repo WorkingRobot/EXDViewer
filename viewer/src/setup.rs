@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use egui::{Align2, Area, Frame, Layout, Modal, Order, Sense, UiBuilder, Vec2, WidgetText, Window};
+use egui::{Frame, Layout, Modal, Sense, UiBuilder, Vec2, WidgetText};
 
 use crate::{
     DEFAULT_API_URL, DEFAULT_SCHEMA_URL,
