@@ -4,8 +4,10 @@ use egui::{
     Button, CentralPanel, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit,
     ThemePreference, Vec2, Widget,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
+    panel::Side,
     style::ScrollStyle,
 };
+use egui_alignments::{Alignable, Aligner};
 use egui_extras::install_image_loaders;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ironworks::excel::Language;
@@ -29,7 +31,10 @@ use crate::{
     },
     setup::{self, SetupWindow},
     sheet::{CellResponse, GlobalContext, SheetTable, TableContext},
-    utils::{CodeTheme, ConvertiblePromise, IconManager, TrackedPromise, tick_promises},
+    utils::{
+        CodeTheme, CollapsibleSidePanel, ConvertiblePromise, IconManager, TrackedPromise,
+        tick_promises,
+    },
 };
 
 type CachedSheetEntry = (
@@ -266,11 +271,17 @@ impl App {
     }
 
     fn draw_sheet_list(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("sheet_list").show(ctx, |ui| {
+        CollapsibleSidePanel::new("sheet_list", Side::Left).show(ctx, |ui, is_open| {
+            if !is_open {
+                return;
+            }
+
             egui::panel::TopBottomPanel::top("header").show_inside(ui, |ui| {
                 ui.add_space(4.0);
-                ui.vertical_centered(|ui| {
-                    ui.heading("Sheets");
+                ui.horizontal(|ui| {
+                    Label::new(RichText::new("Sheets").heading()).top(ui);
+                    Aligner::right()
+                        .show(ui, |ui| CollapsibleSidePanel::draw_arrow(ui, "sheet_list"));
                 });
                 ui.add_space(4.0);
                 ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
@@ -440,7 +451,7 @@ impl App {
                 }
             };
 
-            ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
+            ui.scope(|ui| {
                 let is_miscellaneous = backend
                     .excel()
                     .get_entries()
@@ -449,22 +460,26 @@ impl App {
                     .unwrap_or_default()
                     < 0;
 
-                ui.add_enabled_ui(!is_miscellaneous, |ui| {
-                    let mut visible = SCHEMA_EDITOR_VISIBLE.get(ui.ctx());
-                    let resp = ui.horizontal(|ui| {
-                        ui.set_min_height(ui.text_style_height(&egui::TextStyle::Heading));
-                        ui.toggle_value(&mut visible, "Edit Schema")
-                            .on_hover_text("Edit the schema for this sheet")
-                    });
-                    if resp.inner.changed() {
-                        SCHEMA_EDITOR_VISIBLE.set(ui.ctx(), visible);
+                ui.horizontal(|ui| {
+                    if CollapsibleSidePanel::is_collapsed(ui.ctx(), "sheet_list") {
+                        Aligner::left_top()
+                            .show(ui, |ui| CollapsibleSidePanel::draw_arrow(ui, "sheet_list"));
                     }
-                });
 
-                ui.add_sized(
-                    Vec2::new(ui.available_width(), 0.0),
-                    Label::new(RichText::new(sheet_name).heading()),
-                );
+                    Aligner::center_top().show(ui, |ui| ui.heading(sheet_name));
+
+                    ui.add_enabled_ui(!is_miscellaneous, |ui| {
+                        let mut visible = SCHEMA_EDITOR_VISIBLE.get(ui.ctx());
+                        let resp = Aligner::right_top().show(ui, |ui| {
+                            ui.set_min_height(ui.text_style_height(&egui::TextStyle::Heading));
+                            ui.toggle_value(&mut visible, "Edit Schema")
+                                .on_hover_text("Edit the schema for this sheet")
+                        });
+                        if resp.inner.changed() {
+                            SCHEMA_EDITOR_VISIBLE.set(ui.ctx(), visible);
+                        }
+                    });
+                });
             });
 
             ui.separator();

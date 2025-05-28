@@ -34,6 +34,7 @@ rfd = "0.15"
 egui_table = "0.3"
 # egui_router = "0.4" Terrible library, don't use
 egui_extras = { version = "0.31", features = ["http", "image"] }
+egui_alignments = "0.3"
 syntect = { version = "5.2", default-features = false, features = [
     "default-fancy",
 ] }

@@ -1,5 +1,6 @@
 mod cache;
 mod cloneable_error;
+mod collapsible_side_panel;
 mod convertible_promise;
 mod icon_manager;
 #[cfg(target_arch = "wasm32")]
@@ -13,6 +14,7 @@ mod unsend_promise;
 
 pub use cache::KeyedCache;
 pub use cloneable_error::CloneableResult;
+pub use collapsible_side_panel::CollapsibleSidePanel;
 pub use convertible_promise::{ConvertiblePromise, PromiseKind};
 pub use icon_manager::{IconManager, ManagedIcon};
 #[cfg(target_arch = "wasm32")]
