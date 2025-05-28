@@ -1,4 +1,4 @@
-name: Check (Clippy)
+name: Check & Clippy
 on: push
 
 jobs:
@@ -8,6 +8,10 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - os-name: wasm-32
+            runs-on: ubuntu-latest
+            target: wasm32-unknown-unknown
+
           - os-name: linux-x64
             runs-on: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -42,9 +46,9 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Clippy
+      - name: Check & Clippy
         uses: houseabsolute/actions-rust-cross@v1
         with:
           target: ${{ matrix.platform.target }}
           command: clippy
-          args: "--locked --release --bin exdviewer"
+          args: "--locked --release --bin exdviewer --bin ${{ matrix.platform.os-name == 'wasm-32' && 'worker' || 'exdviewer-web' }}"

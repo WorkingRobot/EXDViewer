@@ -48,21 +48,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Check & Clippy (WASM)
-        if: ${{ matrix.platform.os-name == 'linux-x64' }}
-        uses: houseabsolute/actions-rust-cross@v1
-        with:
-          target: "wasm32-unknown-unknown"
-          command: clippy
-          args: "--locked --release --bin exdviewer --bin worker"
-
-      - name: Check & Clippy
-        uses: houseabsolute/actions-rust-cross@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          command: clippy
-          args: "--locked --release --bin exdviewer --bin exdviewer-web"
-
       - name: Build
         uses: houseabsolute/actions-rust-cross@v1
         with:
