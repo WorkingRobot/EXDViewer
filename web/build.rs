@@ -76,7 +76,7 @@ fn download_downloader() {
         .as_str()
     {
         "windows" => ".exe",
-        "linux" => "",
+        "linux" | "macos" => "",
         _ => panic!("Unsupported OS"),
     };
     copy_executable_to(
@@ -174,7 +174,8 @@ pub fn copy_executable_to(out_path: &Path, data_getter: impl FnOnce() -> Vec<u8>
     if !std::fs::exists(out_path).expect("Could not check if path exists") {
         let data = data_getter();
         let mut file = std::fs::File::create(out_path).expect("Could not open path");
-        if cfg!(unix) {
+        #[cfg(unix)]
+        {
             use std::os::unix::prelude::PermissionsExt;
             let mut perms = file.metadata().unwrap().permissions();
             // Make the file executable for those with read perms
