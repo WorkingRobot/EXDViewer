@@ -1,11 +1,11 @@
 use crate::{
     schema::{Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
     settings::{SCHEMA_EDITOR_ERRORS_SHOWN, SCHEMA_EDITOR_VISIBLE, SCHEMA_EDITOR_WORD_WRAP},
-    utils::{CodeTheme, TrackedPromise, highlight},
+    utils::{CodeTheme, TrackedPromise, highlight, shortcut},
 };
 use egui::{
     CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,
-    Response, RichText, TextBuffer, TopBottomPanel, Widget, collapsing_header::CollapsingState,
+    Response, RichText, TextBuffer, TopBottomPanel, collapsing_header::CollapsingState,
     text::CursorRange,
 };
 use itertools::Itertools;
@@ -100,18 +100,18 @@ impl EditableSchema {
                 let schema_editor_id = Id::new("schema-editor");
                 let schema_editor_cursor_position_id = schema_editor_id.with("position");
 
-                if consume_shortcut(ui, &shortcut_revert) && self.is_modified() {
+                if shortcut::consume(ui, &shortcut_revert) && self.is_modified() {
                     self.command_revert();
                     response.mark_changed();
                 }
-                if consume_shortcut(ui, &shortcut_clear) {
+                if shortcut::consume(ui, &shortcut_clear) {
                     self.command_clear();
                     response.mark_changed();
                 }
-                if consume_shortcut(ui, &shortcut_save) && provider.can_save_schemas() {
+                if shortcut::consume(ui, &shortcut_save) && provider.can_save_schemas() {
                     self.command_save(provider);
                 }
-                if consume_shortcut(ui, &shortcut_save_as) {
+                if shortcut::consume(ui, &shortcut_save_as) {
                     self.command_save_as(provider);
                 }
 
@@ -132,13 +132,13 @@ impl EditableSchema {
                         egui::menu::bar(ui, |ui| {
                             ui.menu_button("File", |ui| {
                                 ui.add_enabled_ui(self.is_modified(), |ui| {
-                                    if shortcut_button(ui, "Revert", &shortcut_revert).clicked() {
+                                    if shortcut::button(ui, "Revert", &shortcut_revert).clicked() {
                                         self.command_revert();
                                         response.mark_changed();
                                         ui.close_menu();
                                     }
                                 });
-                                if shortcut_button(ui, "Clear", &shortcut_clear).clicked() {
+                                if shortcut::button(ui, "Clear", &shortcut_clear).clicked() {
                                     self.command_clear();
                                     response.mark_changed();
                                     ui.close_menu();
@@ -146,13 +146,13 @@ impl EditableSchema {
                                 ui.add_enabled_ui(
                                     self.is_modified() && provider.can_save_schemas(),
                                     |ui| {
-                                        if shortcut_button(ui, "Save", &shortcut_save).clicked() {
+                                        if shortcut::button(ui, "Save", &shortcut_save).clicked() {
                                             self.command_save(provider);
                                             ui.close_menu();
                                         }
                                     },
                                 );
-                                if shortcut_button(ui, "Save As", &shortcut_save_as).clicked() {
+                                if shortcut::button(ui, "Save As", &shortcut_save_as).clicked() {
                                     self.command_save_as(provider);
                                     ui.close_menu();
                                 }
@@ -393,18 +393,4 @@ impl EditableSchema {
             }
         }));
     }
-}
-
-fn shortcut_button(
-    ui: &mut egui::Ui,
-    text: impl Into<egui::WidgetText>,
-    shortcut: &KeyboardShortcut,
-) -> Response {
-    egui::Button::new(text)
-        .shortcut_text(ui.ctx().format_shortcut(shortcut))
-        .ui(ui)
-}
-
-fn consume_shortcut(ui: &mut egui::Ui, shortcut: &KeyboardShortcut) -> bool {
-    ui.input_mut(|i| i.consume_shortcut(shortcut))
 }

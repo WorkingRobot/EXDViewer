@@ -5,6 +5,7 @@ mod icon_manager;
 #[cfg(target_arch = "wasm32")]
 mod jserror;
 mod shared_future;
+pub mod shortcut;
 mod syntax_highlighting;
 pub mod tex_loader;
 mod tracked_promise;
