@@ -25,11 +25,7 @@ fn main() {
 
     // Skip downloading the downloader if we're running in rust-analyzer or anywhere unnecessary
     let is_redundant = cfg!(clippy) || cfg!(miri) || cfg!(doc) || cfg!(test) || cfg!(rustfmt);
-    let is_rust_analyzer = if cfg!(windows) || cfg!(target_os = "linux") {
-        is_under_rust_analyzer()
-    } else {
-        false
-    };
+    let is_rust_analyzer = is_under_rust_analyzer();
 
     if !is_redundant && !is_rust_analyzer {
         download_downloader();
@@ -70,13 +66,19 @@ fn is_under_rust_analyzer() -> bool {
     std::env::var("_NT_SYMBOL_PATH").is_ok_and(|v| v.contains("rust-analyzer"))
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn is_under_rust_analyzer() -> bool {
+    // For macOS and other unsupported OSes, we assume we're not under rust-analyzer
+    false
+}
+
 fn download_downloader() {
     let exe_suffix = match std::env::var("CARGO_CFG_TARGET_OS")
         .expect("Could not get target os")
         .as_str()
     {
         "windows" => ".exe",
-        "linux" => "",
+        "linux" | "macos" => "",
         _ => panic!("Unsupported OS"),
     };
     copy_executable_to(
@@ -174,7 +176,8 @@ pub fn copy_executable_to(out_path: &Path, data_getter: impl FnOnce() -> Vec<u8>
     if !std::fs::exists(out_path).expect("Could not check if path exists") {
         let data = data_getter();
         let mut file = std::fs::File::create(out_path).expect("Could not open path");
-        if cfg!(unix) {
+        #[cfg(unix)]
+        {
             use std::os::unix::prelude::PermissionsExt;
             let mut perms = file.metadata().unwrap().permissions();
             // Make the file executable for those with read perms
