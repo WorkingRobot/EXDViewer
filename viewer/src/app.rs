@@ -4,6 +4,7 @@ use egui::{
     Button, CentralPanel, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit,
     ThemePreference, Vec2, Widget,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
+    style::ScrollStyle,
 };
 use egui_extras::install_image_loaders;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
@@ -174,8 +175,28 @@ impl App {
                     });
 
                     {
+                        let mut thick_scrollbar = ctx.options(|o| {
+                            o.dark_style.spacing.scroll == ScrollStyle::solid()
+                                && o.light_style.spacing.scroll == ScrollStyle::solid()
+                        });
+                        if ui
+                            .checkbox(&mut thick_scrollbar, "Solid Scrollbar")
+                            .changed()
+                        {
+                            ctx.all_styles_mut(|s| {
+                                s.spacing.scroll = if thick_scrollbar {
+                                    ScrollStyle::solid()
+                                } else {
+                                    ScrollStyle::default()
+                                };
+                            });
+                            ui.close_menu();
+                        }
+                    }
+
+                    {
                         let mut always_hires = ALWAYS_HIRES.get(ctx);
-                        if ui.checkbox(&mut always_hires, "Use HD Icons").changed() {
+                        if ui.checkbox(&mut always_hires, "HD Icons").changed() {
                             ALWAYS_HIRES.set(ctx, always_hires);
                             ui.close_menu();
                         }
