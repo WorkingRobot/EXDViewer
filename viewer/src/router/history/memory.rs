@@ -1,21 +1,26 @@
 use crate::router::path::Path;
-use anyhow::bail;
+use anyhow::{anyhow, bail};
+use egui::{Id, util::IdTypeMap};
 
 use super::History;
 
 pub struct MemoryHistory {
     ctx: egui::Context,
-    history: Vec<Path>,
-    position: usize,
+}
+
+impl MemoryHistory {
+    fn history(d: &mut IdTypeMap) -> &mut Vec<Path> {
+        d.get_persisted_mut_or_insert_with(Id::new("memory_history"), || vec!["/".into()])
+    }
+
+    fn position(d: &mut IdTypeMap) -> &mut usize {
+        d.get_persisted_mut_or_insert_with(Id::new("memory_history_position"), || 0)
+    }
 }
 
 impl History for MemoryHistory {
     fn new(ctx: egui::Context) -> Self {
-        Self {
-            ctx,
-            history: vec!["/".into()],
-            position: 0,
-        }
+        Self { ctx }
     }
 
     fn set_title(&mut self, title: String) {
@@ -28,34 +33,55 @@ impl History for MemoryHistory {
     }
 
     fn active_route(&self) -> Path {
-        self.history.get(self.position).unwrap().clone()
+        self.ctx
+            .data_mut(|d| {
+                let position = *Self::position(d);
+                Self::history(d).get(position).cloned()
+            })
+            .unwrap()
     }
 
     fn push(&mut self, location: Path) -> anyhow::Result<()> {
-        self.history.drain(self.position + 1..);
-        self.history.push(location);
-        self.position += 1;
+        self.ctx.data_mut(|d| {
+            let position = *Self::position(d);
+            let history = Self::history(d);
+            history.drain(position + 1..);
+            history.push(location);
+            *Self::position(d) += 1;
+        });
         Ok(())
     }
 
     fn replace(&mut self, location: Path) -> anyhow::Result<()> {
-        *self.history.get_mut(self.position).unwrap() = location;
-        Ok(())
+        self.ctx.data_mut(|d| {
+            let position = *Self::position(d);
+            *Self::history(d)
+                .get_mut(position)
+                .ok_or_else(|| anyhow!("Invalid history position"))? = location;
+            Ok(())
+        })
     }
 
     fn back(&mut self) -> anyhow::Result<()> {
-        if self.position == 0 {
-            bail!("Cannot go before first entry");
-        }
-        self.position -= 1;
-        Ok(())
+        self.ctx.data_mut(|d| {
+            let position = Self::position(d);
+            if *position == 0 {
+                bail!("Cannot go before first entry");
+            }
+            *position -= 1;
+            Ok(())
+        })
     }
 
     fn forward(&mut self) -> anyhow::Result<()> {
-        if self.position == self.history.len() - 1 {
-            bail!("Cannot go past last entry");
-        }
-        self.position += 1;
-        Ok(())
+        self.ctx.data_mut(|d| {
+            let history_len = Self::history(d).len();
+            let position = Self::position(d);
+            if *position >= history_len - 1 {
+                bail!("Cannot go past last entry");
+            }
+            *position += 1;
+            Ok(())
+        })
     }
 }

@@ -5,9 +5,10 @@ use std::{
     str::{FromStr, Split},
 };
 
+use serde::{Deserialize, Serialize};
 use url::form_urlencoded::{self, Parse};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Path {
     path: String,
     query: Option<String>,
