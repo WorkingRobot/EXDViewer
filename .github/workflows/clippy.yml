@@ -1,0 +1,50 @@
+name: Check (Clippy)
+on: push
+
+jobs:
+  check:
+    name: Check - ${{ matrix.platform.os-name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os-name: linux-x64
+            runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+          - os-name: linux-arm64
+            runs-on: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+
+          - os-name: win-x64
+            runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary-ext: .exe
+
+          - os-name: win-arm64
+            runs-on: windows-latest
+            target: aarch64-pc-windows-msvc
+            binary-ext: .exe
+
+          - os-name: osx-x64
+            runs-on: macOS-latest
+            target: x86_64-apple-darwin
+
+          - os-name: osx-arm64
+            runs-on: macOS-latest
+            target: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.platform.runs-on }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clippy
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          command: clippy
+          args: "--locked --release --bin exdviewer"

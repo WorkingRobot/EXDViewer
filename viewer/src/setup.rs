@@ -1,12 +1,16 @@
-use anyhow::anyhow;
 use egui::{Frame, Layout, Modal, Sense, UiBuilder, Vec2, WidgetText};
 
 use crate::{
     DEFAULT_API_URL, DEFAULT_SCHEMA_URL,
     backend::Backend,
     settings::{BACKEND_CONFIG, BackendConfig, InstallLocation, SchemaLocation},
-    utils::{PromiseKind, TrackedPromise, UnsendPromise},
+    utils::{PromiseKind, UnsendPromise},
 };
+
+#[cfg(target_arch = "wasm32")]
+use crate::utils::TrackedPromise;
+#[cfg(target_arch = "wasm32")]
+use anyhow::anyhow;
 
 pub struct SetupWindow {
     location: InstallLocation,
