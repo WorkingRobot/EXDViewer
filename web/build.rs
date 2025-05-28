@@ -25,7 +25,7 @@ fn main() {
 
     // Skip downloading the downloader if we're running in rust-analyzer or anywhere unnecessary
     let is_redundant = cfg!(clippy) || cfg!(miri) || cfg!(doc) || cfg!(test) || cfg!(rustfmt);
-    let is_rust_analyzer = if cfg!(windows) || cfg!(unix) {
+    let is_rust_analyzer = if cfg!(windows) || cfg!(target_os = "linux") {
         is_under_rust_analyzer()
     } else {
         false
@@ -37,7 +37,7 @@ fn main() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn is_under_rust_analyzer() -> bool {
     use procfs::process::Process;
 

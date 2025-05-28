@@ -46,5 +46,5 @@ regex-lite = "0.1"
 [build-dependencies]
 ureq = "3.0"
 
-[target.'cfg(unix)'.build-dependencies]
+[target.'cfg(target_os = "linux")'.build-dependencies]
 procfs = "0.17"
