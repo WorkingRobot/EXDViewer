@@ -31,11 +31,9 @@ impl CollapsibleSidePanel {
         let is_expanded = !Self::is_collapsed(ctx, self.id);
         let openness = Self::openness(ctx, self.id);
 
-        let mut collapsed_panel =
-            egui::SidePanel::new(self.side, self.id.with("collapsed")).resizable(false);
-        if let Some(width) = self.collapsed_width {
-            collapsed_panel = collapsed_panel.max_width(width);
-        }
+        let collapsed_panel = egui::SidePanel::new(self.side, self.id.with("collapsed"))
+            .resizable(false)
+            .exact_width(self.collapsed_width.unwrap_or_default());
 
         if openness != 0.0 || self.collapsed_width.is_some() {
             egui::SidePanel::show_animated_between(
