@@ -35,7 +35,19 @@ impl History for MemoryHistory {
     fn active_route(&self) -> Path {
         self.ctx
             .data_mut(|d| {
-                let position = *Self::position(d);
+                let position = {
+                    let history_len = Self::history(d).len();
+                    let position = Self::position(d);
+                    if *position >= history_len {
+                        log::warn!(
+                            "Position {} is out of bounds for history length {}",
+                            position,
+                            history_len
+                        );
+                        *position = history_len - 1;
+                    }
+                    *position
+                };
                 Self::history(d).get(position).cloned()
             })
             .unwrap()
