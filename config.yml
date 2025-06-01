@@ -1,4 +1,10 @@
+# These are the defaults. This file doesn't need to exist unless you want to override them.
+# You can also set these as environment variables.
+# For example, server_addr can be set with the environment variable SERVER_ADDR.
+
 log_filter: debug,exdviewer_web=debug,tracing::span=warn
+# The default is 0.0.0.0:80 to make docker bind to port 80.
+# vvv Except for this one vvv
 server_addr: 0.0.0.0:3000
 downloader:
   storage_dir: downloads

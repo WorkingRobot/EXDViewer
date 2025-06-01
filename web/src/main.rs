@@ -41,7 +41,7 @@ async fn main() -> Result<(), ServerError> {
     }
 
     let config: config::Config = Config::builder()
-        .add_source(File::new("config", FileFormat::Yaml))
+        .add_source(File::new("config", FileFormat::Yaml).required(false))
         .add_source(Environment::default())
         .build()
         .and_then(Config::try_deserialize)
@@ -75,6 +75,8 @@ async fn main() -> Result<(), ServerError> {
                 .expect("Unknown error from prometheus builder")
         })?;
     let server_config = config.clone();
+
+    log::info!("Binding to {}", config.server_addr);
     let server = HttpServer::new(move || {
         App::new()
             .wrap(
