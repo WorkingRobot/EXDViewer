@@ -1,5 +1,5 @@
-use exdviewer::worker::{PreservingCodec, SqpackWorker};
 use gloo_worker::Registrable;
+use viewer::worker::{PreservingCodec, SqpackWorker};
 
 fn main() {
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();

@@ -2,5 +2,11 @@
 members = ["viewer", "web"]
 resolver = "3"
 
+[workspace.package]
+version = "1.0.0"
+authors = ["Asriel Camora <asriel@camora.dev>"]
+repository = "https://github.com/WorkingRobot/EXDViewer"
+edition = "2024"
+
 [patch.crates-io]
 ironworks = { path = "deps/ironworks/ironworks" }

@@ -14,12 +14,12 @@ ARG DOTNET_CLI_TELEMETRY_OPTOUT=1
 RUN dotnet publish --nologo -c Release -o downloader-build -p:PublishSingleFile=true --self-contained false ffxiv-downloader/FFXIVDownloader.Command
 
 COPY . .
-RUN cargo build --bin exdviewer-web --release
+RUN cargo build --bin web --release
 
 FROM alpine AS runtime
 WORKDIR /app
 RUN apk add dotnet9-runtime
-COPY --from=builder /app/target/release/exdviewer-web exdviewer-web
+COPY --from=builder /app/target/release/web web
 COPY --from=builder /app/downloader-build/FFXIVDownloader.Command downloader
 COPY --from=builder /app/target/release/static static
-CMD ["./exdviewer-web"]
+CMD ["./web"]

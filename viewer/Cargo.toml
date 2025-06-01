@@ -1,9 +1,10 @@
 [package]
-name = "exdviewer"
-authors = ["Asriel Camora <asriel@camora.dev>"]
+name = "viewer"
 description = "Cross-platform FFXIV game data viewer"
-version = "0.1.0"
-edition = "2024"
+authors.workspace = true
+repository.workspace = true
+version.workspace = true
+edition.workspace = true
 
 [[bin]]
 name = "worker"

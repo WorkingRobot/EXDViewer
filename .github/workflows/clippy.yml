@@ -51,4 +51,4 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           command: clippy
-          args: "--locked --release --bin exdviewer --bin ${{ matrix.platform.os-name == 'wasm-32' && 'worker' || 'exdviewer-web' }}"
+          args: "--locked --release --bin viewer --bin ${{ matrix.platform.os-name == 'wasm-32' && 'worker' || 'web' }}"

@@ -2042,86 +2042,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "exdviewer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "binrw",
- "eframe",
- "egui",
- "egui_alignments",
- "egui_extras",
- "egui_logger",
- "egui_table",
- "ehttp",
- "either",
- "env_logger",
- "futures-util",
- "fuzzy-matcher",
- "getrandom 0.2.15",
- "gloo-worker",
- "image",
- "image_dds",
- "indexed-db",
- "intmap",
- "ironworks",
- "itertools",
- "jsonschema",
- "log",
- "lru",
- "matchit",
- "num-traits",
- "pinned",
- "poll-promise",
- "replace_with",
- "rfd",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "serde_yml",
- "syntect",
- "url",
- "wasm-bindgen-futures",
- "web-sys",
- "web-time",
-]
-
-[[package]]
-name = "exdviewer-web"
-version = "0.1.0"
-dependencies = [
- "actix-cors",
- "actix-files",
- "actix-web",
- "actix-web-helmet",
- "actix-web-lab",
- "actix-web-prom",
- "anyhow",
- "config",
- "dotenvy",
- "env_logger",
- "fs_extra",
- "futures-util",
- "hex",
- "ironworks",
- "itertools",
- "konst",
- "log",
- "mini-moka",
- "procfs 0.17.0",
- "prometheus",
- "regex-lite",
- "serde",
- "serde_json",
- "thiserror 2.0.12",
- "tokio",
- "tokio-util",
- "ureq 3.0.10",
- "url",
-]
-
-[[package]]
 name = "fancy-regex"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5497,6 +5417,52 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "viewer"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "binrw",
+ "eframe",
+ "egui",
+ "egui_alignments",
+ "egui_extras",
+ "egui_logger",
+ "egui_table",
+ "ehttp",
+ "either",
+ "env_logger",
+ "futures-util",
+ "fuzzy-matcher",
+ "getrandom 0.2.15",
+ "gloo-worker",
+ "image",
+ "image_dds",
+ "indexed-db",
+ "intmap",
+ "ironworks",
+ "itertools",
+ "jsonschema",
+ "log",
+ "lru",
+ "matchit",
+ "num-traits",
+ "pinned",
+ "poll-promise",
+ "replace_with",
+ "rfd",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "serde_yml",
+ "syntect",
+ "url",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
 name = "vsimd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5725,6 +5691,40 @@ dependencies = [
  "log",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "web"
+version = "1.0.0"
+dependencies = [
+ "actix-cors",
+ "actix-files",
+ "actix-web",
+ "actix-web-helmet",
+ "actix-web-lab",
+ "actix-web-prom",
+ "anyhow",
+ "config",
+ "dotenvy",
+ "env_logger",
+ "fs_extra",
+ "futures-util",
+ "hex",
+ "ironworks",
+ "itertools",
+ "konst",
+ "log",
+ "mini-moka",
+ "procfs 0.17.0",
+ "prometheus",
+ "regex-lite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-util",
+ "ureq 3.0.10",
+ "url",
 ]
 
 [[package]]

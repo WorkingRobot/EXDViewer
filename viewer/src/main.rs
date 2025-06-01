@@ -10,6 +10,7 @@
 mod combined_log;
 
 use combined_log::CombinedLogger;
+use viewer::App;
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
@@ -34,7 +35,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "EXDViewer",
         native_options,
-        Box::new(|cc| Ok(Box::new(exdviewer::App::new(cc)))),
+        Box::new(|cc| Ok(Box::new(App::new(cc)))),
     )
 }
 
@@ -68,7 +69,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(exdviewer::App::new(cc)))),
+                Box::new(|cc| Ok(Box::new(App::new(cc)))),
             )
             .await;
 

@@ -1,10 +1,10 @@
 [package]
-name = "exdviewer-web"
-authors = ["Asriel Camora <asriel@camora.dev>"]
+name = "web"
 description = "Backend web server for EXDViewer"
-repository = "https://github.com/WorkingRobot/EXDViewer"
-version = "0.1.0"
-edition = "2024"
+authors.workspace = true
+repository.workspace = true
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 actix-cors = "0.7.0"
