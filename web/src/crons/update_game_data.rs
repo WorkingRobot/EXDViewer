@@ -2,12 +2,7 @@ use super::CronJob;
 use crate::{await_cancellable, config::DownloaderConfig};
 use anyhow::bail;
 use fs_extra::dir::CopyOptions;
-use std::{
-    ffi::OsStr,
-    path::{Path, PathBuf},
-    process::Stdio,
-    time::Duration,
-};
+use std::{ffi::OsStr, path::PathBuf, process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
     process::Command,
@@ -23,15 +18,16 @@ pub struct UpdateGameData {
 impl UpdateGameData {
     pub fn new(config: DownloaderConfig) -> std::io::Result<Self> {
         let downloader_path = std::env::current_exe()?
-            .with_file_name(format!("downloader{}", std::env::consts::EXE_SUFFIX,));
+            .with_file_name(format!("downloader{}", std::env::consts::EXE_SUFFIX));
         if !downloader_path.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("Downloader not found: {downloader_path:?}"),
             ));
         }
-        let output_path = Path::new(&config.storage_dir).to_path_buf();
-        std::fs::create_dir_all(&output_path)?;
+        let output_path = &config.storage_dir;
+        std::fs::create_dir_all(output_path)?;
+        let output_path = std::path::absolute(output_path)?;
         Ok(Self {
             downloader_path,
             output_path,
