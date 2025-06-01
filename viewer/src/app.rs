@@ -227,32 +227,7 @@ impl App {
                     }
                 });
 
-                ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
-                    ui.add(
-                        egui::Hyperlink::from_label_and_url(
-                            "Support me on Ko-fi!",
-                            "https://ko-fi.com/camora",
-                        )
-                        .open_in_new_tab(true),
-                    );
-                    ui.label("/");
-                    ui.add(
-                        egui::Hyperlink::from_label_and_url(
-                            "Contibute to EXDSchema",
-                            "https://github.com/xivdev/EXDSchema",
-                        )
-                        .open_in_new_tab(true),
-                    );
-                    ui.label("/");
-                    ui.add(
-                        egui::Hyperlink::from_label_and_url(
-                            format!("Star me on {}", egui::special_emojis::GITHUB),
-                            "https://github.com/WorkingRobot/EXDViewer",
-                        )
-                        .open_in_new_tab(true),
-                    );
-                    egui::warn_if_debug_build(ui);
-                });
+                add_links(ui);
             });
         });
     }
@@ -693,6 +668,32 @@ impl eframe::App for App {
         self.draw(ctx);
         tick_promises(ctx);
     }
+}
+
+fn add_links(ui: &mut egui::Ui) {
+    ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
+        ui.add(
+            egui::Hyperlink::from_label_and_url("Support me on Ko-fi!", "https://ko-fi.com/camora")
+                .open_in_new_tab(true),
+        );
+        ui.label("/");
+        ui.add(
+            egui::Hyperlink::from_label_and_url(
+                "Contibute to EXDSchema",
+                "https://github.com/xivdev/EXDSchema",
+            )
+            .open_in_new_tab(true),
+        );
+        ui.label("/");
+        ui.add(
+            egui::Hyperlink::from_label_and_url(
+                format!("Star me on {}", egui::special_emojis::GITHUB),
+                "https://github.com/WorkingRobot/EXDViewer",
+            )
+            .open_in_new_tab(true),
+        );
+        egui::warn_if_debug_build(ui);
+    });
 }
 
 fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
