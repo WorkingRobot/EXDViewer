@@ -2,12 +2,16 @@ use egui::{Align, Color32, Id, InnerResponse, Layout, Margin, Modal, Spinner, Ui
 use egui_table::TableDelegate;
 use itertools::Itertools;
 use lru::LruCache;
-use std::{cell::RefCell, num::NonZero, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    num::NonZero,
+    rc::Rc,
+};
 
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
-    utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_now},
+    utils::{ManagedIcon, PromiseKind, TrackedPromise, time, yield_to_ui},
 };
 
 use super::{cell::CellResponse, table_context::TableContext};
@@ -48,6 +52,7 @@ pub struct SheetTable {
     last_filter: Option<FilterKey>,
     current_filter: Option<FilterKey>,
     current_filter_promise: Option<FilterPromise>,
+    current_filter_cancel_token: Option<Rc<Cell<bool>>>,
 }
 
 impl SheetTable {
@@ -86,6 +91,7 @@ impl SheetTable {
             last_filter: None,
             current_filter: None,
             current_filter_promise: None,
+            current_filter_cancel_token: None,
         }
     }
 
@@ -308,6 +314,12 @@ impl SheetTable {
         }
 
         self.current_filter = filter.clone();
+        if let Some(token) = &self.current_filter_cancel_token {
+            token.set(true);
+        }
+        self.current_filter_cancel_token.take();
+        self.current_filter_promise.take();
+
         let filter = match filter {
             Some(f) => f,
             None => return,
@@ -316,11 +328,13 @@ impl SheetTable {
             return;
         }
 
+        let token = Rc::new(Cell::new(false));
         let ctx = self.context().clone();
+        let promise_token = token.clone();
         let promise = TrackedPromise::spawn_local(async move {
             let columns = ctx.columns()?;
 
-            let batch_count = 0x10_000usize.div_euclid(columns.len());
+            let batch_count = 0x4000usize.div_euclid(columns.len().max(1)).max(1);
 
             let iter: Box<dyn Iterator<Item = anyhow::Result<ExcelRow<'_>>>> =
                 if ctx.sheet().has_subrows() {
@@ -347,8 +361,9 @@ impl SheetTable {
             let mut filtered_rows = Vec::new();
             let mut is_in_progress = false;
 
+            let mut last_now = time::now();
+            let mut iters = 0;
             for chunk in &iter.enumerate().chunks(batch_count) {
-                yield_now().await;
                 for (row_nr, row) in chunk {
                     let (matches, in_progress) =
                         ctx.filter_row(&columns, &row?, &filter, resolve_display_field)?;
@@ -359,12 +374,28 @@ impl SheetTable {
                         filtered_rows.push(row_nr as u32);
                     }
                 }
+
+                if promise_token.get() {
+                    log::info!("Filter cancelled");
+                    return Err(anyhow::anyhow!("Filter cancelled"));
+                }
+
+                let now = time::now();
+                if now - last_now > 250.0 {
+                    iters += 1;
+                    last_now = now;
+                    yield_to_ui().await;
+                }
+            }
+            if iters > 0 {
+                log::info!("Filter yielded {iters} times");
             }
             Ok(FilterOutput {
                 filtered_rows,
                 is_in_progress,
             })
         });
+        self.current_filter_cancel_token = Some(token);
         self.current_filter_promise = Some(promise);
     }
 

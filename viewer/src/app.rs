@@ -479,14 +479,14 @@ impl App {
                             )
                             .changed()
                         {
-                            if filter.is_empty() {
-                                table.set_filter(None);
+                            table.set_filter(if filter.is_empty() {
+                                None
                             } else {
-                                table.set_filter(Some(FilterKey {
+                                Some(FilterKey {
                                     text: filter.clone(),
                                     resolve_display_field: DISPLAY_FIELD_SHOWN.get(ui.ctx()),
-                                }));
-                            }
+                                })
+                            });
                             TEMP_SHEET_FILTER.use_with(ui.ctx(), HashMap::new, |map| {
                                 map.entry(sheet_name.clone()).insert_entry(filter);
                             });
