@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use anyhow::bail;
 use itertools::Itertools;
@@ -6,12 +6,23 @@ use itertools::Itertools;
 use crate::schema::{Field, FieldType, Schema};
 
 #[derive(Debug, Clone)]
-pub struct SchemaColumn {
-    pub name: String,
-    pub meta: SchemaColumnMeta,
+pub struct SchemaColumn(Rc<SchemaColumnImpl>);
+
+#[derive(Debug)]
+struct SchemaColumnImpl {
+    name: String,
+    meta: SchemaColumnMeta,
 }
 
 impl SchemaColumn {
+    pub fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    pub fn meta(&self) -> &SchemaColumnMeta {
+        &self.0.meta
+    }
+
     fn get_columns_inner(
         ret: &mut Vec<Self>,
         column_placeholder: &mut u32,
@@ -75,7 +86,7 @@ impl SchemaColumn {
                     FieldType::Array => unreachable!(),
                 };
 
-                ret.push(Self { name, meta });
+                ret.push(Self::new(name, meta));
             }
         }
 
@@ -85,20 +96,20 @@ impl SchemaColumn {
     fn resolve_placeholders(ret: &mut [Self], column_lookups: &[String]) -> anyhow::Result<()> {
         for i in 0..ret.len() {
             let column = &ret[i];
-            if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = &column.meta {
+            if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = column.meta() {
                 let switch_name = match column_lookups.get(*column_idx as usize) {
                     Some(name) => name,
                     None => {
                         bail!(
                             "Failed to find column lookup name for {}'s conditional link: {}",
-                            column.name,
+                            column.name(),
                             *column_idx
                         );
                     }
                 };
 
                 let resolved_column_idx = match ret.iter().enumerate().find_map(|(i, c)| {
-                    if c.name == *switch_name {
+                    if c.name() == *switch_name {
                         Some(i as u32)
                     } else {
                         None
@@ -108,14 +119,21 @@ impl SchemaColumn {
                     None => {
                         bail!(
                             "Failed to find column index for {}'s conditional link: {}",
-                            column.name,
+                            column.name(),
                             switch_name
                         );
                     }
                 };
 
-                if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = &mut ret[i].meta {
-                    *column_idx = resolved_column_idx;
+                if matches!(ret[i].meta(), SchemaColumnMeta::ConditionalLink { .. }) {
+                    let name = ret[i].0.name.clone();
+                    let mut meta = ret[i].0.meta.clone();
+                    if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = &mut meta {
+                        *column_idx = resolved_column_idx;
+                    } else {
+                        unreachable!();
+                    }
+                    ret[i] = Self::new(name, meta);
                 } else {
                     unreachable!();
                 }
@@ -150,7 +168,7 @@ impl SchemaColumn {
 
         let display_idx = if let Some(display_field) = &schema.display_field {
             ret.iter()
-                .find_position(|c| c.name == *display_field)
+                .find_position(|c| c.name() == *display_field)
                 .map(|f| f.0 as u32)
         } else {
             None
@@ -161,15 +179,12 @@ impl SchemaColumn {
 
     pub fn from_blank(column_count: u32) -> Vec<Self> {
         (0..column_count)
-            .map(|i| Self {
-                name: format!("Column{}", i),
-                meta: SchemaColumnMeta::Scalar,
-            })
+            .map(|i| Self::new(format!("Column{}", i), SchemaColumnMeta::Scalar))
             .collect()
     }
 
     pub fn new(name: String, meta: SchemaColumnMeta) -> Self {
-        Self { name, meta }
+        Self(Rc::new(SchemaColumnImpl { name, meta }))
     }
 }
 

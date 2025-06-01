@@ -475,7 +475,7 @@ impl TableDelegate for SheetTable {
             .inner_margin(Margin::symmetric(4, 2))
             .show(ui, |ui| {
                 if let Some((column_id, (schema_column, sheet_column))) = column {
-                    ui.heading(schema_column.name).on_hover_text(format!(
+                    ui.heading(schema_column.name()).on_hover_text(format!(
                         "Id: {}\nIndex: {}\nOffset: {}\nKind: {:?}{}",
                         sheet_column.id,
                         column_id,

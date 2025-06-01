@@ -3,6 +3,7 @@ use egui::{
     Color32, CursorIcon, Direction, InnerResponse, Layout, Sense, Vec2, Widget,
     color_picker::show_color_at, ecolor::HexColor,
 };
+use either::Either;
 use ironworks::file::exh::ColumnKind;
 
 use crate::{
@@ -15,13 +16,16 @@ use crate::{
 };
 
 use super::{
-    GlobalContext, copyable_label, schema_column::SchemaColumnMeta,
-    sheet_column::SheetColumnDefinition, table_context::TableContext,
+    GlobalContext, copyable_label,
+    schema_column::{SchemaColumn, SchemaColumnMeta},
+    sheet_column::SheetColumnDefinition,
+    table_context::TableContext,
 };
 
 pub struct Cell<'a> {
     row: ExcelRow<'a>,
-    schema_column: SchemaColumnMeta,
+    // This can be either a SchemaColumn or a SchemaColumnMeta::Link to a vector of strings (as a reference)
+    schema_column: Either<SchemaColumn, &'a Vec<String>>,
     sheet_column: &'a SheetColumnDefinition,
     table_context: &'a TableContext,
 }
@@ -60,13 +64,13 @@ pub enum CellValue {
 impl<'a> Cell<'a> {
     pub fn new(
         row: ExcelRow<'a>,
-        schema_column: SchemaColumnMeta,
+        schema_column: SchemaColumn,
         sheet_column: &'a SheetColumnDefinition,
         table_context: &'a TableContext,
     ) -> Self {
         Self {
             row,
-            schema_column,
+            schema_column: Either::Left(schema_column),
             sheet_column,
             table_context,
         }
@@ -85,66 +89,74 @@ impl<'a> Cell<'a> {
         self.size_text(ui) * text.split('\n').count() as f32
     }
 
+    fn size_internal_link(&self, ui: &mut egui::Ui, sheets: &[String]) -> anyhow::Result<f32> {
+        let row_id: isize = read_integer(
+            self.row,
+            self.sheet_column.offset() as u32,
+            self.sheet_column.kind(),
+        )?;
+
+        Ok(
+            match row_id
+                .try_into()
+                .ok()
+                .and_then(|id| self.table_context.resolve_link(sheets, id))
+            {
+                Some(Some((_, table))) => {
+                    if let Some(cell) =
+                        table.display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
+                    {
+                        cell?.size_internal(ui)?
+                    } else {
+                        self.size_text(ui)
+                    }
+                }
+                _ => self.size_text(ui),
+            },
+        )
+    }
+
     fn size_internal(&self, ui: &mut egui::Ui) -> anyhow::Result<f32> {
         Ok(match &self.schema_column {
-            SchemaColumnMeta::Scalar => {
-                if self.sheet_column.kind() == ColumnKind::String {
-                    let text = read_string(
+            Either::Left(schema_column) => match schema_column.meta() {
+                SchemaColumnMeta::Scalar => {
+                    if self.sheet_column.kind() == ColumnKind::String {
+                        let text = read_string(
+                            self.row,
+                            self.sheet_column.offset() as u32,
+                            self.sheet_column.kind(),
+                        )?;
+                        self.size_text_multiline(ui, text)
+                    } else {
+                        self.size_text(ui)
+                    }
+                }
+                SchemaColumnMeta::Icon => 32.0,
+                SchemaColumnMeta::ModelId => self.size_text(ui),
+                SchemaColumnMeta::Color => self.size_text(ui),
+                SchemaColumnMeta::Link(sheets) => self.size_internal_link(ui, sheets)?,
+                SchemaColumnMeta::ConditionalLink { column_idx, links } => {
+                    let (_, switch_column) =
+                        self.table_context.get_column_by_offset(*column_idx)?;
+                    let switch_data: i32 = read_integer(
                         self.row,
-                        self.sheet_column.offset() as u32,
-                        self.sheet_column.kind(),
+                        switch_column.offset() as u32,
+                        switch_column.kind(),
                     )?;
-                    self.size_text_multiline(ui, text)
-                } else {
-                    self.size_text(ui)
-                }
-            }
-            SchemaColumnMeta::Icon => 32.0,
-            SchemaColumnMeta::ModelId => self.size_text(ui),
-            SchemaColumnMeta::Color => self.size_text(ui),
-            SchemaColumnMeta::Link(sheets) => {
-                let row_id: isize = read_integer(
-                    self.row,
-                    self.sheet_column.offset() as u32,
-                    self.sheet_column.kind(),
-                )?;
-
-                match row_id
-                    .try_into()
-                    .ok()
-                    .and_then(|id| self.table_context.resolve_link(sheets, id))
-                {
-                    Some(Some((_, table))) => {
-                        if let Some(cell) =
-                            table.display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
-                        {
-                            cell?.size_internal(ui)?
-                        } else {
-                            self.size_text(ui)
+                    if let Some(sheets) = links.get(&switch_data) {
+                        Cell {
+                            row: self.row,
+                            schema_column: Either::Right(sheets),
+                            sheet_column: self.sheet_column,
+                            table_context: self.table_context,
                         }
+                        .size_internal(ui)?
+                    } else {
+                        self.size_text(ui)
                     }
-                    _ => self.size_text(ui),
                 }
-            }
-            SchemaColumnMeta::ConditionalLink { column_idx, links } => {
-                let (_, switch_column) = self.table_context.get_column_by_offset(*column_idx)?;
-                let switch_data: i32 = read_integer(
-                    self.row,
-                    switch_column.offset() as u32,
-                    switch_column.kind(),
-                )?;
-                if let Some(sheets) = links.get(&switch_data) {
-                    Cell {
-                        row: self.row,
-                        schema_column: SchemaColumnMeta::Link(sheets.clone()),
-                        sheet_column: self.sheet_column,
-                        table_context: self.table_context,
-                    }
-                    .size_internal(ui)?
-                } else {
-                    self.size_text(ui)
-                }
-            }
+            },
+            Either::Right(sheets) => self.size_internal_link(ui, sheets)?,
         })
     }
 
@@ -174,90 +186,105 @@ impl<'a> Cell<'a> {
         }
     }
 
-    pub fn read(&self, resolve_display_field: bool) -> anyhow::Result<CellValue> {
-        let resp = match &self.schema_column {
-            SchemaColumnMeta::Scalar => read_scalar(
-                self.row,
-                self.sheet_column.offset() as u32,
-                self.sheet_column.kind(),
-            )?,
-            SchemaColumnMeta::Icon => {
-                let icon_id: u32 = read_integer(
-                    self.row,
-                    self.sheet_column.offset() as u32,
-                    self.sheet_column.kind(),
-                )?;
-                CellValue::Icon(icon_id)
-            }
-            SchemaColumnMeta::ModelId => {
-                let model_id: u64 = read_integer(
-                    self.row,
-                    self.sheet_column.offset() as u32,
-                    self.sheet_column.kind(),
-                )?;
-                CellValue::ModelId(model_id)
-            }
-            SchemaColumnMeta::Color => {
-                let color: u32 = read_integer(
-                    self.row,
-                    self.sheet_column.offset() as u32,
-                    self.sheet_column.kind(),
-                )?;
-                let [a, r, g, b] = color.to_le_bytes();
-                let color = Color32::from_rgba_unmultiplied(r, g, b, a);
-                CellValue::Color(color)
-            }
-            SchemaColumnMeta::Link(sheets) => {
-                let row_id: i128 = read_integer(
-                    self.row,
-                    self.sheet_column.offset() as u32,
-                    self.sheet_column.kind(),
-                )?;
+    fn read_internal_link(
+        &self,
+        resolve_display_field: bool,
+        sheets: &[String],
+    ) -> anyhow::Result<CellValue> {
+        let row_id: i128 = read_integer(
+            self.row,
+            self.sheet_column.offset() as u32,
+            self.sheet_column.kind(),
+        )?;
 
-                match row_id.try_into().ok().and_then(|id| {
-                    self.table_context
-                        .resolve_link(sheets, id)
-                        .map(|r| r.map(|(s, t)| (s, t, id)))
-                }) {
-                    Some(Some((sheet_name, table, row_id))) => {
-                        let display_field_cell = resolve_display_field
-                            .then(|| {
-                                table.display_field_cell(table.sheet().get_row(row_id).unwrap())
+        Ok(
+            match row_id.try_into().ok().and_then(|id| {
+                self.table_context
+                    .resolve_link(sheets, id)
+                    .map(|r| r.map(|(s, t)| (s, t, id)))
+            }) {
+                Some(Some((sheet_name, table, row_id))) => {
+                    let display_field_cell = resolve_display_field
+                        .then(|| table.display_field_cell(table.sheet().get_row(row_id).unwrap()))
+                        .flatten();
+
+                    CellValue::ValidLink {
+                        sheet_name,
+                        row_id,
+                        value: display_field_cell
+                            .map(|cell| -> anyhow::Result<Box<CellValue>> {
+                                Ok(Box::new(cell?.read(resolve_display_field)?))
                             })
-                            .flatten();
-
-                        CellValue::ValidLink {
-                            sheet_name: sheet_name,
-                            row_id,
-                            value: display_field_cell
-                                .map(|cell| -> anyhow::Result<Box<CellValue>> {
-                                    Ok(Box::new(cell?.read(resolve_display_field)?))
-                                })
-                                .transpose()?,
-                        }
+                            .transpose()?,
                     }
-                    Some(None) => CellValue::InProgressLink(row_id),
-                    None => CellValue::InvalidLink(row_id),
                 }
-            }
-            SchemaColumnMeta::ConditionalLink { column_idx, links } => {
-                let (_, switch_column) = self.table_context.get_column_by_offset(*column_idx)?;
-                let switch_data: i32 = read_integer(
+                Some(None) => CellValue::InProgressLink(row_id),
+                None => CellValue::InvalidLink(row_id),
+            },
+        )
+    }
+
+    pub fn read(&self, resolve_display_field: bool) -> anyhow::Result<CellValue> {
+        Ok(match &self.schema_column {
+            Either::Left(schema_column) => match schema_column.meta() {
+                SchemaColumnMeta::Scalar => read_scalar(
                     self.row,
-                    switch_column.offset() as u32,
-                    switch_column.kind(),
-                )?;
-                let sheets = links.get(&switch_data).cloned().unwrap_or_default();
-                return Cell {
-                    row: self.row,
-                    schema_column: SchemaColumnMeta::Link(sheets),
-                    sheet_column: self.sheet_column,
-                    table_context: self.table_context,
+                    self.sheet_column.offset() as u32,
+                    self.sheet_column.kind(),
+                )?,
+                SchemaColumnMeta::Icon => {
+                    let icon_id: u32 = read_integer(
+                        self.row,
+                        self.sheet_column.offset() as u32,
+                        self.sheet_column.kind(),
+                    )?;
+                    CellValue::Icon(icon_id)
                 }
-                .read(resolve_display_field);
-            }
-        };
-        Ok(resp)
+                SchemaColumnMeta::ModelId => {
+                    let model_id: u64 = read_integer(
+                        self.row,
+                        self.sheet_column.offset() as u32,
+                        self.sheet_column.kind(),
+                    )?;
+                    CellValue::ModelId(model_id)
+                }
+                SchemaColumnMeta::Color => {
+                    let color: u32 = read_integer(
+                        self.row,
+                        self.sheet_column.offset() as u32,
+                        self.sheet_column.kind(),
+                    )?;
+                    let [a, r, g, b] = color.to_le_bytes();
+                    let color = Color32::from_rgba_unmultiplied(r, g, b, a);
+                    CellValue::Color(color)
+                }
+                SchemaColumnMeta::Link(sheets) => {
+                    self.read_internal_link(resolve_display_field, sheets)?
+                }
+                SchemaColumnMeta::ConditionalLink { column_idx, links } => {
+                    let (_, switch_column) =
+                        self.table_context.get_column_by_offset(*column_idx)?;
+                    let switch_data: i32 = read_integer(
+                        self.row,
+                        switch_column.offset() as u32,
+                        switch_column.kind(),
+                    )?;
+                    let sheets = links.get(&switch_data);
+                    let sheets = match sheets {
+                        Some(sheets) => sheets,
+                        None => &vec![],
+                    };
+                    return Cell {
+                        row: self.row,
+                        schema_column: Either::Right(sheets),
+                        sheet_column: self.sheet_column,
+                        table_context: self.table_context,
+                    }
+                    .read(resolve_display_field);
+                }
+            },
+            Either::Right(sheets) => self.read_internal_link(resolve_display_field, sheets)?,
+        })
     }
 }
 

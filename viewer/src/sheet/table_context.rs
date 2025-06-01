@@ -214,7 +214,7 @@ impl TableContext {
         column_idx: u32,
     ) -> anyhow::Result<Cell<'a>> {
         let (schema_column, sheet_column) = self.get_column_by_offset(column_idx)?;
-        Ok(Cell::new(row, schema_column.meta, sheet_column, self))
+        Ok(Cell::new(row, schema_column, sheet_column, self))
     }
 
     pub fn cell_by_index<'a>(
@@ -223,7 +223,7 @@ impl TableContext {
         column_idx: u32,
     ) -> anyhow::Result<Cell<'a>> {
         let (schema_column, sheet_column) = self.get_column_by_index(column_idx)?;
-        Ok(Cell::new(row, schema_column.meta, sheet_column, self))
+        Ok(Cell::new(row, schema_column, sheet_column, self))
     }
 
     pub fn display_column_idx(&self) -> Option<u32> {
@@ -248,9 +248,9 @@ impl TableContext {
         let mut is_in_progress = false;
         for column in columns {
             let (schema_column, sheet_column) = column;
-            let cell = Cell::new(*row, schema_column.meta.clone(), sheet_column, self);
+            let cell = Cell::new(*row, schema_column.clone(), sheet_column, self);
             let value = cell.read(resolve_display_field)?;
-            let (matches, in_progress) = Self::filter_value(&value, filter, resolve_display_field);
+            let (matches, in_progress) = Self::filter_value(&value, filter);
             if in_progress {
                 is_in_progress = true;
             }
@@ -261,7 +261,7 @@ impl TableContext {
         Ok((false, is_in_progress))
     }
 
-    fn filter_value(value: &CellValue, filter: &str, resolve_display_field: bool) -> (bool, bool) {
+    fn filter_value(value: &CellValue, filter: &str) -> (bool, bool) {
         let resp = match value {
             CellValue::String(s) => s.to_lowercase().contains(&filter.to_lowercase()),
             CellValue::Integer(i) => i.to_string().contains(&filter.to_lowercase()),
@@ -279,7 +279,7 @@ impl TableContext {
                 if !ret {
                     return value
                         .as_ref()
-                        .map(|v| Self::filter_value(v.as_ref(), filter, resolve_display_field))
+                        .map(|v| Self::filter_value(v.as_ref(), filter))
                         .unwrap_or_default();
                 }
                 ret
