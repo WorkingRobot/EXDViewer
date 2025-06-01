@@ -281,7 +281,10 @@ struct BaseSheetImpl {
     header: BaseHeader,
     pages: Vec<ExcelPage>,
     subrow_count: u32,
+    // Row ID -> RowLocation (offset, page index, subrow count)
     row_lookup: IntMap<u32, RowLocation>,
+    // First row index in range -> Range of row IDs
+    // This is used to map a row index to its corresponding row ID range.
     row_id_lookup: Vec<(u32, Range<u32>)>,
 }
 
@@ -402,6 +405,13 @@ impl ExcelSheet for BaseSheet {
 
     fn subrow_count(&self) -> u32 {
         self.imp.subrow_count
+    }
+
+    fn get_row_ids(&self) -> impl Iterator<Item = u32> {
+        self.imp
+            .row_id_lookup
+            .iter()
+            .flat_map(|(_, range)| range.clone())
     }
 
     fn get_row_id_at(&self, index: u32) -> Result<u32> {
