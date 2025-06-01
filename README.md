@@ -5,7 +5,7 @@
 )](https://github.com/WorkingRobot/EXDViewer/releases)
 [![Web Build](https://img.shields.io/github/actions/workflow/status/WorkingRobot/EXDViewer/build-web.yml?style=for-the-badge&label=Web%20Build
 )](https://github.com/WorkingRobot/EXDViewer/pkgs/container/exdviewer-web)
-[![License](https://img.shields.io/github/license/WorkingRobot/EXDViewer?style=for-the-badge)](/LICENSE)
+[![License](https://img.shields.io/github/license/WorkingRobot/EXDViewer?style=for-the-badge&)](/LICENSE)
 [![FFXIV Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fexd.camora.dev%2Fapi%2Fversions&query=latest&style=for-the-badge&label=Latest%20XIV%20Version
 )](https://thaliak.xiv.dev/repository/4e9a232b)
 
@@ -64,7 +64,7 @@ More info is available [here](https://github.com/xivdev/EXDSchema?tab=readme-ov-
 
 2. Build the project:
     ```bash
-    cargo build --bin exdviewer --release
+    cargo build --bin viewer --release
     ```
 
 ### Web
@@ -78,7 +78,7 @@ More info is available [here](https://github.com/xivdev/EXDSchema?tab=readme-ov-
 
 3. Build the web version:
     ```bash
-    cargo run --bin exdviewer-web --release
+    cargo run --bin web --release
     ```
 
 ## Contributing
