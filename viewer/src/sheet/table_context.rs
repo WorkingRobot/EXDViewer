@@ -13,7 +13,9 @@ use crate::{
 };
 
 use super::{
-    cell::Cell, global_context::GlobalContext, schema_column::SchemaColumn,
+    cell::{Cell, CellValue},
+    global_context::GlobalContext,
+    schema_column::SchemaColumn,
     sheet_column::SheetColumnDefinition,
 };
 
@@ -28,9 +30,11 @@ pub struct TableContextImpl {
 
     sheet: BaseSheet,
 
+    // ID -> Index when ordered by offset (offset index)
     column_ordering: Vec<u32>,
     sheet_columns: Vec<SheetColumnDefinition>,
     schema_columns: RefCell<Vec<SchemaColumn>>,
+    // Offset index of the displayField column
     display_column_idx: std::cell::Cell<Option<u32>>,
 
     referenced_sheets: RefCell<HashMap<String, ConvertibleSheetPromise>>,
@@ -198,6 +202,12 @@ impl TableContext {
             })
     }
 
+    pub fn columns(&self) -> anyhow::Result<Vec<(SchemaColumn, &SheetColumnDefinition)>> {
+        (0..self.0.sheet_columns.len() as u32)
+            .map(|i| self.get_column_by_offset(i))
+            .collect::<anyhow::Result<Vec<_>>>()
+    }
+
     pub fn cell_by_offset<'a>(
         &'a self,
         row: ExcelRow<'a>,
@@ -222,5 +232,59 @@ impl TableContext {
 
     pub fn display_field_cell<'a>(&'a self, row: ExcelRow<'a>) -> Option<anyhow::Result<Cell<'a>>> {
         Some(self.cell_by_offset(row, self.0.display_column_idx.get()?))
+    }
+
+    pub fn filter_row(
+        &self,
+        columns: &[(SchemaColumn, &SheetColumnDefinition)],
+        row: &ExcelRow<'_>,
+        filter: &str,
+        resolve_display_field: bool,
+    ) -> anyhow::Result<(bool, bool)> {
+        if filter.is_empty() {
+            return Ok((true, false));
+        }
+
+        let mut is_in_progress = false;
+        for column in columns {
+            let (schema_column, sheet_column) = column;
+            let cell = Cell::new(*row, schema_column.meta.clone(), sheet_column, self);
+            let value = cell.read(resolve_display_field)?;
+            let (matches, in_progress) = Self::filter_value(&value, filter, resolve_display_field);
+            if in_progress {
+                is_in_progress = true;
+            }
+            if matches {
+                return Ok((true, is_in_progress));
+            }
+        }
+        Ok((false, is_in_progress))
+    }
+
+    fn filter_value(value: &CellValue, filter: &str, resolve_display_field: bool) -> (bool, bool) {
+        let resp = match value {
+            CellValue::String(s) => s.to_lowercase().contains(&filter.to_lowercase()),
+            CellValue::Integer(i) => i.to_string().contains(&filter.to_lowercase()),
+            CellValue::Float(f) => f.to_string().contains(&filter.to_lowercase()),
+            CellValue::Boolean(b) => b.to_string().contains(&filter.to_lowercase()),
+            CellValue::Icon(id) => id.to_string().contains(&filter.to_lowercase()),
+            CellValue::ModelId(id) => id.to_string().contains(&filter.to_lowercase()),
+            CellValue::Color(color) => color.to_hex().contains(&filter.to_lowercase()),
+            CellValue::InvalidLink(id) => id.to_string().contains(&filter.to_lowercase()),
+            CellValue::InProgressLink(id) => {
+                return (id.to_string().contains(&filter.to_lowercase()), true);
+            }
+            CellValue::ValidLink { row_id, value, .. } => {
+                let ret = row_id.to_string().contains(&filter.to_lowercase());
+                if !ret {
+                    return value
+                        .as_ref()
+                        .map(|v| Self::filter_value(v.as_ref(), filter, resolve_display_field))
+                        .unwrap_or_default();
+                }
+                ret
+            }
+        };
+        (resp, false)
     }
 }

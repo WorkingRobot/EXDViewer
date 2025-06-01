@@ -1,29 +1,63 @@
-use egui::{Color32, Id, InnerResponse, Layout, Margin, Modal, Spinner, UiBuilder};
+use egui::{Align, Color32, Id, InnerResponse, Layout, Margin, Modal, Spinner, UiBuilder};
 use egui_table::TableDelegate;
 use itertools::Itertools;
-use std::cell::RefCell;
+use lru::LruCache;
+use std::{cell::RefCell, num::NonZero, rc::Rc};
 
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
-    settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW_NR},
-    utils::{ManagedIcon, TrackedPromise},
+    settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
+    utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_now},
 };
 
 use super::{cell::CellResponse, table_context::TableContext};
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct FilterKey {
+    pub text: String,
+    pub resolve_display_field: bool,
+}
+
+type FilterPromise = TrackedPromise<anyhow::Result<FilterOutput>>;
+struct FilterOutput {
+    // Filtered rows (by row_nr)
+    filtered_rows: Vec<u32>,
+    is_in_progress: bool,
+}
+struct FilterValue {
+    filter_result: anyhow::Result<FilterOutput>,
+    // Cached row offsets, indexed by row_nr
+    row_offsets: Rc<RefCell<Vec<f32>>>,
+}
+
 pub struct SheetTable {
     context: TableContext,
+    // Row index (not ID) to accumulated subrow count (row_nr)
+    // This is used to map row_nr to row_id and subrow_id
     subrow_lookup: Option<Vec<u32>>,
+
+    // Cached row sizes, indexed by row_nr
     row_sizes: RefCell<Vec<f32>>,
+
     modal_image: Option<u32>,
 
     clicked_cell: Option<CellResponse>,
+
+    filtered_rows: RefCell<LruCache<FilterKey, FilterValue>>,
+    unfiltered_row_offsets: Rc<RefCell<Vec<f32>>>,
+    last_filter: Option<FilterKey>,
+    current_filter: Option<FilterKey>,
+    current_filter_promise: Option<FilterPromise>,
 }
 
 impl SheetTable {
     pub fn new(context: TableContext) -> Self {
         let sheet = context.sheet();
-        let row_sizes = RefCell::new(Vec::with_capacity(sheet.row_count() as usize));
+        let row_sizes = RefCell::new(Vec::with_capacity(sheet.subrow_count() as usize));
+        let unfiltered_row_offsets = Rc::new(RefCell::new(Vec::with_capacity(
+            sheet.subrow_count() as usize,
+        )));
+        let filtered_rows = RefCell::new(LruCache::new(NonZero::new(8).unwrap()));
 
         let subrow_lookup = if sheet.has_subrows() {
             let mut subrow_lookup = Vec::with_capacity(sheet.row_count() as usize);
@@ -47,18 +81,25 @@ impl SheetTable {
             row_sizes,
             modal_image: None,
             clicked_cell: None,
+            filtered_rows,
+            unfiltered_row_offsets,
+            last_filter: None,
+            current_filter: None,
+            current_filter_promise: None,
         }
     }
 
     pub fn draw(
         &mut self,
         ui: &mut egui::Ui,
-        mutator: impl FnOnce(egui_table::Table) -> egui_table::Table,
+        scroll_to: Option<((u32, Option<u16>), u16)>,
     ) -> CellResponse {
+        self.tick_filter();
+
         let id = Id::new(self.context.sheet().name());
         ui.push_id(id, |ui| {
-            let table = egui_table::Table::new()
-                .num_rows(self.context.sheet().subrow_count().into())
+            let mut table = egui_table::Table::new()
+                .num_rows(self.get_filtered_row_count() as u64)
                 .columns(vec![
                     egui_table::Column::new(100.0)
                         .range(50.0..=10000.0)
@@ -69,7 +110,23 @@ impl SheetTable {
                 .headers([egui_table::HeaderRow::new(
                     ui.text_style_height(&egui::TextStyle::Heading) + 4.0,
                 )]);
-            mutator(table).show(ui, self)
+            if let Some(((row_id, subrow_id), column_id)) = scroll_to {
+                if let Some(row_nr) = self.search_filtered_row_nr(row_id, subrow_id) {
+                    table = table.scroll_to_row(row_nr, Some(Align::Center));
+                }
+                let sorted_by_offset = SORTED_BY_OFFSET.get(ui.ctx());
+                let column_nr = if sorted_by_offset {
+                    self.context
+                        .convert_column_index_to_offset_index(column_id.into())
+                        .ok()
+                } else {
+                    Some(column_id.into())
+                };
+                if let Some(col_nr) = column_nr {
+                    table = table.scroll_to_column(col_nr as usize, Some(Align::Center));
+                }
+            }
+            table.show(ui, self)
         });
 
         if let Some(icon_id) = &self.modal_image {
@@ -126,16 +183,13 @@ impl SheetTable {
         &self.context
     }
 
-    pub fn get_row_nr(&self, row_id: u32, subrow_id: Option<u16>) -> anyhow::Result<u64> {
-        let max = self.context.sheet().subrow_count() as u64;
+    fn search_filtered_row_nr(&mut self, row_id: u32, subrow_id: Option<u16>) -> Option<u64> {
+        let max = self.get_filtered_row_count() as u64;
         let result = (0..max).collect_vec().binary_search_by(|i| {
-            let (i_row, i_subrow) = self.get_row_id(*i).unwrap();
+            let (i_row, i_subrow) = self.get_row_id(self.get_filtered_row_nr(*i)).unwrap();
             i_row.cmp(&row_id).then_with(|| i_subrow.cmp(&subrow_id))
         });
-        match result {
-            Ok(idx) => Ok(idx as u64),
-            Err(idx) => Err(anyhow::anyhow!("Row ID not found: {row_id} => {idx}")),
-        }
+        result.ok().map(|i| i as u64)
     }
 
     fn get_row_id(&self, row_nr: u64) -> anyhow::Result<(u32, Option<u16>)> {
@@ -169,28 +223,53 @@ impl SheetTable {
         Ok(size.unwrap_or_default() + 4.0)
     }
 
-    fn size_row(&self, ctx: &egui::Context, row_nr: u64) -> anyhow::Result<f32> {
+    fn size_row_single(&self, ui: &mut egui::Ui, row_nr: u64) -> anyhow::Result<f32> {
         let mut row_sizes = self.row_sizes.borrow_mut();
         if let Some(size) = row_sizes.get(row_nr as usize) {
             return Ok(*size);
         }
+
+        let len = row_sizes.len() as u64;
+        row_sizes.reserve((row_nr - len + 1) as usize);
+        for i in len..=row_nr {
+            row_sizes.push(self.size_row_single_uncached(ui, i)?);
+        }
+        Ok(row_sizes[row_nr as usize])
+    }
+
+    fn get_filtered_row_offset(
+        &self,
+        ctx: &egui::Context,
+        filtered_row_nr: u64,
+    ) -> anyhow::Result<f32> {
+        let row_offsets = self.get_row_offsets();
+        let mut row_offsets = row_offsets.borrow_mut();
+        if let Some(offset) = row_offsets.get(filtered_row_nr as usize) {
+            return Ok(*offset);
+        }
         let mut ui = egui::Ui::new(
             ctx.clone(),
-            Id::new("size_row").with(row_nr),
+            Id::new("size_row").with(filtered_row_nr),
             UiBuilder::new().sizing_pass(),
         );
 
         let (len, mut last_size) = (
-            row_sizes.len() as u64,
-            row_sizes.last().copied().unwrap_or_default(),
+            row_offsets.len() as u64,
+            row_offsets.last().copied().unwrap_or_default(),
         );
-        row_sizes.reserve((row_nr - len + 1) as usize);
-        for i in len..row_nr {
-            row_sizes.push(last_size);
-            last_size += self.size_row_single_uncached(&mut ui, i)?;
+
+        // Pre-calculate
+        if let Some(row_nr) = filtered_row_nr.checked_sub(1) {
+            _ = self.size_row_single(&mut ui, self.get_filtered_row_nr(row_nr))?;
         }
-        row_sizes.push(last_size);
-        Ok(row_sizes[row_nr as usize])
+
+        row_offsets.reserve((filtered_row_nr - len) as usize);
+        for i in len..filtered_row_nr {
+            row_offsets.push(last_size);
+            last_size += self.size_row_single(&mut ui, self.get_filtered_row_nr(i))?;
+        }
+        row_offsets.push(last_size);
+        Ok(row_offsets[filtered_row_nr as usize])
     }
 
     fn is_display_column(&self, column_idx: Option<usize>, sorted_by_offset: bool) -> bool {
@@ -212,6 +291,153 @@ impl SheetTable {
 
     fn paint_cell_background(ui: &mut egui::Ui, color: Color32) {
         ui.painter().rect_filled(ui.max_rect(), 0.0, color);
+    }
+
+    pub fn set_filter(&mut self, filter: Option<FilterKey>) {
+        if self.current_filter == filter {
+            return;
+        }
+
+        if self
+            .current_filter
+            .as_ref()
+            .map(|f| self.filtered_rows.get_mut().get(f).is_some())
+            .unwrap_or(true)
+        {
+            self.last_filter = self.current_filter.clone();
+        }
+
+        self.current_filter = filter.clone();
+        let filter = match filter {
+            Some(f) => f,
+            None => return,
+        };
+        if self.filtered_rows.get_mut().get(&filter).is_some() {
+            return;
+        }
+
+        let ctx = self.context().clone();
+        let promise = TrackedPromise::spawn_local(async move {
+            let columns = ctx.columns()?;
+
+            let batch_count = 0x10_000usize.div_euclid(columns.len());
+
+            let iter: Box<dyn Iterator<Item = anyhow::Result<ExcelRow<'_>>>> =
+                if ctx.sheet().has_subrows() {
+                    Box::new(ctx.sheet().get_row_ids().flat_map(|row_id| {
+                        let subrow_count = ctx
+                            .sheet()
+                            .get_row_subrow_count(row_id)
+                            .expect("Row should exist");
+                        let sheet = ctx.sheet();
+                        (0..subrow_count).map(move |subrow_id| sheet.get_subrow(row_id, subrow_id))
+                    }))
+                } else {
+                    Box::new(
+                        ctx.sheet()
+                            .get_row_ids()
+                            .map(|row_id| ctx.sheet().get_row(row_id)),
+                    )
+                };
+
+            let FilterKey {
+                text: filter,
+                resolve_display_field,
+            } = filter;
+            let mut filtered_rows = Vec::new();
+            let mut is_in_progress = false;
+
+            for chunk in &iter.enumerate().chunks(batch_count) {
+                yield_now().await;
+                for (row_nr, row) in chunk {
+                    let (matches, in_progress) =
+                        ctx.filter_row(&columns, &row?, &filter, resolve_display_field)?;
+                    if in_progress {
+                        is_in_progress = true;
+                    }
+                    if matches {
+                        filtered_rows.push(row_nr as u32);
+                    }
+                }
+            }
+            Ok(FilterOutput {
+                filtered_rows,
+                is_in_progress,
+            })
+        });
+        self.current_filter_promise = Some(promise);
+    }
+
+    fn get_filtered_row_count(&mut self) -> usize {
+        if let Some(current_filter) = &self.current_filter {
+            if let Some(filter_value) = self.filtered_rows.get_mut().get(current_filter) {
+                if let Ok(filter_output) = &filter_value.filter_result {
+                    return filter_output.filtered_rows.len();
+                }
+            }
+            if let Some(last_filter) = &self.last_filter {
+                if let Some(filter_value) = self.filtered_rows.get_mut().get(last_filter) {
+                    if let Ok(filter_output) = &filter_value.filter_result {
+                        return filter_output.filtered_rows.len();
+                    }
+                }
+            }
+        }
+        self.context.sheet().subrow_count() as usize
+    }
+
+    fn get_filtered_row_nr(&self, filtered_row_nr: u64) -> u64 {
+        if let Some(current_filter) = &self.current_filter {
+            if let Some(filter_value) = self.filtered_rows.borrow_mut().get(current_filter) {
+                if let Ok(filter_output) = &filter_value.filter_result {
+                    if let Some(&filtered_row_nr) =
+                        filter_output.filtered_rows.get(filtered_row_nr as usize)
+                    {
+                        return filtered_row_nr.into();
+                    }
+                }
+            }
+            if let Some(last_filter) = &self.last_filter {
+                if let Some(filter_value) = self.filtered_rows.borrow_mut().get(last_filter) {
+                    if let Ok(filter_output) = &filter_value.filter_result {
+                        if let Some(&filtered_row_nr) =
+                            filter_output.filtered_rows.get(filtered_row_nr as usize)
+                        {
+                            return filtered_row_nr.into();
+                        }
+                    }
+                }
+            }
+        }
+
+        filtered_row_nr
+    }
+
+    fn get_row_offsets(&self) -> Rc<RefCell<Vec<f32>>> {
+        self.current_filter
+            .as_ref()
+            .and_then(|f| {
+                let mut rows = self.filtered_rows.borrow_mut();
+                rows.get(f).map(|v| v.row_offsets.clone()).or_else(|| {
+                    self.last_filter
+                        .as_ref()
+                        .and_then(|f| rows.get(f).map(|v| v.row_offsets.clone()))
+                })
+            })
+            .unwrap_or_else(|| self.unfiltered_row_offsets.clone())
+    }
+
+    fn tick_filter(&mut self) {
+        if let Some(promise) = self.current_filter_promise.take_if(|p| p.ready()) {
+            let result = promise.block_and_take();
+            self.filtered_rows.get_mut().push(
+                self.current_filter.clone().unwrap(),
+                FilterValue {
+                    filter_result: result,
+                    row_offsets: Rc::new(RefCell::new(Vec::new())),
+                },
+            );
+        }
     }
 }
 
@@ -273,7 +499,7 @@ impl TableDelegate for SheetTable {
         let column_idx = if col_nr == 0 { None } else { Some(col_nr - 1) };
 
         let row_data = self
-            .get_row_id(row_nr)
+            .get_row_id(self.get_filtered_row_nr(row_nr))
             .and_then(|(r, s)| Ok((r, s, self.get_row_data(r, s)?)));
         let (row_id, subrow_id, row_data) = match row_data {
             Ok(row_data) => row_data,
@@ -289,7 +515,7 @@ impl TableDelegate for SheetTable {
             Self::paint_cell_background(ui, ui.visuals().faint_bg_color);
         }
 
-        if TEMP_HIGHLIGHTED_ROW_NR.try_get(ui.ctx()) == Some(row_nr) {
+        if TEMP_HIGHLIGHTED_ROW.try_get(ui.ctx()) == Some((row_id, subrow_id)) {
             Self::paint_cell_background(ui, Color32::GOLD.gamma_multiply(0.2));
         }
 
@@ -358,7 +584,7 @@ impl TableDelegate for SheetTable {
     }
 
     fn row_top_offset(&self, ctx: &egui::Context, _table_id: Id, row_nr: u64) -> f32 {
-        match self.size_row(ctx, row_nr) {
+        match self.get_filtered_row_offset(ctx, row_nr) {
             Ok(size) => size,
             Err(error) => {
                 log::error!("Failed to size row {}: {:?}", row_nr, error);

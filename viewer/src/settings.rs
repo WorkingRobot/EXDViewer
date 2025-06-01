@@ -1,3 +1,4 @@
+use egui::ahash::HashMap;
 use ironworks::excel::Language;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -89,6 +90,15 @@ impl<K: Send + Sync + Clone + 'static> TempKey<K> {
         }
         ret
     }
+
+    pub fn use_with<T>(
+        &self,
+        ctx: &egui::Context,
+        insert_with: impl FnOnce() -> K,
+        func: impl FnOnce(&mut K) -> T,
+    ) -> T {
+        ctx.data_mut(|d| func(d.get_temp_mut_or_insert_with(self.id.into(), insert_with)))
+    }
 }
 
 type DKey<K> = DefaultedKey<K>;
@@ -108,7 +118,8 @@ pub const SCHEMA_EDITOR_ERRORS_SHOWN: DKey<bool> = DKey::new("schema-editor-erro
 pub const CODE_SYNTAX_THEME: Key<CodeTheme> = Key::new("syntax-theme");
 
 pub const TEMP_SCROLL_TO: TempKey<((u32, Option<u16>), u16)> = TempKey::new("temp-scroll-to");
-pub const TEMP_HIGHLIGHTED_ROW_NR: TempKey<u64> = TempKey::new("temp-highlighted-row");
+pub const TEMP_HIGHLIGHTED_ROW: TempKey<(u32, Option<u16>)> = TempKey::new("temp-highlighted-row");
+pub const TEMP_SHEET_FILTER: TempKey<HashMap<String, String>> = TempKey::new("temp-sheet-filter");
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum InstallLocation {

@@ -8,7 +8,7 @@ mod table_context;
 pub use cell::CellResponse;
 use egui::{Align, Direction, Label, Layout, Response, Sense};
 pub use global_context::GlobalContext;
-pub use sheet_table::SheetTable;
+pub use sheet_table::{FilterKey, SheetTable};
 pub use table_context::TableContext;
 
 fn copyable_label(ui: &mut egui::Ui, text: impl ToString) -> Response {

@@ -3,6 +3,7 @@ use std::{cell::OnceCell, num::NonZero, rc::Rc};
 use egui::{
     Button, CentralPanel, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit,
     ThemePreference, Vec2, Widget,
+    ahash::{HashMap, HashMapExt},
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
     panel::Side,
     style::ScrollStyle,
@@ -27,10 +28,10 @@ use crate::{
     settings::{
         ALWAYS_HIRES, BACKEND_CONFIG, DISPLAY_FIELD_SHOWN, LANGUAGE, LOGGER_SHOWN,
         MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET, SHEETS_FILTER, SORTED_BY_OFFSET,
-        TEMP_HIGHLIGHTED_ROW_NR, TEMP_SCROLL_TO,
+        TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEMP_SHEET_FILTER,
     },
     setup::{self, SetupWindow},
-    sheet::{CellResponse, GlobalContext, SheetTable, TableContext},
+    sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
     utils::{
         CodeTheme, CollapsibleSidePanel, ConvertiblePromise, IconManager, TrackedPromise,
         tick_promises,
@@ -251,7 +252,7 @@ impl App {
                 return;
             }
 
-            egui::panel::TopBottomPanel::top("header").show_inside(ui, |ui| {
+            egui::TopBottomPanel::top("sheet_list_header").show_inside(ui, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     Label::new(RichText::new("Sheets").heading()).top(ui);
@@ -354,170 +355,187 @@ impl App {
     }
 
     fn draw_sheet_data(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let backend = self.backend.as_ref().unwrap();
-            let sheet_name = SELECTED_SHEET.get(ctx).unwrap();
-            let language = LANGUAGE.get(ctx);
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin {
+                    left: 8,
+                    right: 8,
+                    top: 2,
+                    bottom: 8,
+                }),
+            )
+            .show(ctx, |ui| {
+                let backend = self.backend.as_ref().unwrap();
+                let sheet_name = SELECTED_SHEET.get(ctx).unwrap();
+                let language = LANGUAGE.get(ctx);
 
-            let sheet_data =
-                self.sheet_data
-                    .get_or_insert_mut_ref(&(language, sheet_name.clone()), || {
-                        let sheet_name = sheet_name.clone();
-                        let is_sheet_miscellaneous = backend
+                let sheet_data =
+                    self.sheet_data
+                        .get_or_insert_mut_ref(&(language, sheet_name.clone()), || {
+                            let sheet_name = sheet_name.clone();
+                            let is_sheet_miscellaneous = backend
+                                .excel()
+                                .get_entries()
+                                .get(&sheet_name)
+                                .cloned()
+                                .unwrap_or_default()
+                                < 0;
+                            let excel = backend.excel().clone();
+                            let schema = backend.schema().clone();
+
+                            ConvertiblePromise::new_promise(TrackedPromise::spawn_local(
+                                async move {
+                                    Ok(futures_util::try_join!(
+                                        excel.get_sheet(&sheet_name, language),
+                                        async {
+                                            if !is_sheet_miscellaneous {
+                                                Ok(Some(schema.get_schema_text(&sheet_name).await))
+                                            } else {
+                                                Ok(None)
+                                            }
+                                        },
+                                    )?)
+                                },
+                            ))
+                        });
+
+                let sheet_data = sheet_data.get(|result| {
+                    result.and_then(|(sheet, schema)| {
+                        let sheet_name = sheet.name().to_owned();
+                        let editor = match schema {
+                            Some(Ok(schema)) => EditableSchema::new(sheet_name, schema),
+                            Some(Err(error)) => {
+                                // Soft-fail on schema retrieval/parsing errors
+                                log::error!("Failed to get schema: {:?}", error);
+                                EditableSchema::from_blank(sheet_name, sheet.columns().len())?
+                            }
+                            None => EditableSchema::from_miscellaneous(sheet_name)?,
+                        };
+                        let table = SheetTable::new(TableContext::new(
+                            GlobalContext::new(
+                                ui.ctx().clone(),
+                                backend.clone(),
+                                language,
+                                self.icon_manager.clone(),
+                            ),
+                            sheet.clone(),
+                            editor.get_schema().cloned(),
+                        ));
+                        Ok((table, editor))
+                    })
+                });
+
+                let (table, editor) = match sheet_data {
+                    Some(Ok(data)) => data,
+                    Some(Err(err)) => {
+                        ui.label("Failed to load sheet");
+                        ui.label(err.to_string());
+                        return;
+                    }
+                    None => {
+                        ui.label("Loading...");
+                        return;
+                    }
+                };
+
+                egui::TopBottomPanel::top("sheet_data_header").show_inside(ui, |ui| {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if CollapsibleSidePanel::is_collapsed(ui.ctx(), "sheet_list") {
+                            Aligner::left_top()
+                                .show(ui, |ui| CollapsibleSidePanel::draw_arrow(ui, "sheet_list"));
+                        }
+
+                        Aligner::center_top().show(ui, |ui| ui.heading(sheet_name.clone()));
+                    });
+                    ui.add_space(4.0);
+                    ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
+                        let mut filter =
+                            TEMP_SHEET_FILTER.use_with(ui.ctx(), HashMap::new, |map| {
+                                map.entry(sheet_name.clone()).or_default().clone()
+                            });
+                        let is_miscellaneous = backend
                             .excel()
                             .get_entries()
                             .get(&sheet_name)
                             .cloned()
                             .unwrap_or_default()
                             < 0;
-                        let excel = backend.excel().clone();
-                        let schema = backend.schema().clone();
 
-                        ConvertiblePromise::new_promise(TrackedPromise::spawn_local(async move {
-                            Ok(futures_util::try_join!(
-                                excel.get_sheet(&sheet_name, language),
-                                async {
-                                    if !is_sheet_miscellaneous {
-                                        Ok(Some(schema.get_schema_text(&sheet_name).await))
-                                    } else {
-                                        Ok(None)
-                                    }
-                                },
-                            )?)
-                        }))
-                    });
-
-            let sheet_data = sheet_data.get(|result| {
-                result.and_then(|(sheet, schema)| {
-                    let sheet_name = sheet.name().to_owned();
-                    let editor = match schema {
-                        Some(Ok(schema)) => EditableSchema::new(sheet_name, schema),
-                        Some(Err(error)) => {
-                            // Soft-fail on schema retrieval/parsing errors
-                            log::error!("Failed to get schema: {:?}", error);
-                            EditableSchema::from_blank(sheet_name, sheet.columns().len())?
-                        }
-                        None => EditableSchema::from_miscellaneous(sheet_name)?,
-                    };
-                    let table = SheetTable::new(TableContext::new(
-                        GlobalContext::new(
-                            ui.ctx().clone(),
-                            backend.clone(),
-                            language,
-                            self.icon_manager.clone(),
-                        ),
-                        sheet.clone(),
-                        editor.get_schema().cloned(),
-                    ));
-                    Ok((table, editor))
-                })
-            });
-
-            let (table, editor) = match sheet_data {
-                Some(Ok(data)) => data,
-                Some(Err(err)) => {
-                    ui.label("Failed to load sheet");
-                    ui.label(err.to_string());
-                    return;
-                }
-                None => {
-                    ui.label("Loading...");
-                    return;
-                }
-            };
-
-            ui.scope(|ui| {
-                let is_miscellaneous = backend
-                    .excel()
-                    .get_entries()
-                    .get(&sheet_name)
-                    .cloned()
-                    .unwrap_or_default()
-                    < 0;
-
-                ui.horizontal(|ui| {
-                    if CollapsibleSidePanel::is_collapsed(ui.ctx(), "sheet_list") {
-                        Aligner::left_top()
-                            .show(ui, |ui| CollapsibleSidePanel::draw_arrow(ui, "sheet_list"));
-                    }
-
-                    Aligner::center_top().show(ui, |ui| ui.heading(sheet_name));
-
-                    ui.add_enabled_ui(!is_miscellaneous, |ui| {
-                        let mut visible = SCHEMA_EDITOR_VISIBLE.get(ui.ctx());
-                        let resp = Aligner::right_top().show(ui, |ui| {
-                            ui.set_min_height(ui.text_style_height(&egui::TextStyle::Heading));
-                            ui.toggle_value(&mut visible, "Edit Schema")
-                                .on_hover_text("Edit the schema for this sheet")
+                        ui.add_enabled_ui(!is_miscellaneous, |ui| {
+                            let mut visible = SCHEMA_EDITOR_VISIBLE.get(ui.ctx());
+                            let resp = ui
+                                .toggle_value(&mut visible, "Edit Schema")
+                                .on_hover_text("Edit the schema for this sheet");
+                            if resp.changed() {
+                                SCHEMA_EDITOR_VISIBLE.set(ui.ctx(), visible);
+                            }
                         });
-                        if resp.inner.changed() {
-                            SCHEMA_EDITOR_VISIBLE.set(ui.ctx(), visible);
+
+                        if ui
+                            .add_sized(
+                                Vec2::new(ui.available_width(), 0.0),
+                                TextEdit::singleline(&mut filter).hint_text("Filter"),
+                            )
+                            .changed()
+                        {
+                            if filter.is_empty() {
+                                table.set_filter(None);
+                            } else {
+                                table.set_filter(Some(FilterKey {
+                                    text: filter.clone(),
+                                    resolve_display_field: DISPLAY_FIELD_SHOWN.get(ui.ctx()),
+                                }));
+                            }
+                            TEMP_SHEET_FILTER.use_with(ui.ctx(), HashMap::new, |map| {
+                                map.entry(sheet_name.clone()).insert_entry(filter);
+                            });
                         }
                     });
+                    ui.add_space(4.0);
                 });
-            });
 
-            ui.separator();
-
-            let resp = editor.draw(ui, backend.schema());
-            if resp.changed() {
-                if let Some(schema) = editor.get_schema() {
-                    if let Err(e) = table.context().set_schema(Some(schema.clone())) {
-                        log::error!("Failed to set schema: {:?}", e);
-                    }
-                }
-            }
-
-            let mut row_nr: Option<u64> = None;
-            let mut col_nr: Option<u16> = None;
-            if let Some(((row, subrow), col)) = TEMP_SCROLL_TO.take(ctx) {
-                match table.get_row_nr(row, subrow) {
-                    Ok(nr) => {
-                        row_nr = Some(nr);
-                    }
-                    Err(e) => {
-                        log::error!("Failed to scroll to row: {:?}", e);
-                    }
-                };
-                col_nr = Some(col);
-            }
-
-            let resp = table.draw(ui, move |mut table| {
-                if let Some(row_nr) = row_nr {
-                    TEMP_HIGHLIGHTED_ROW_NR.set(ctx, row_nr);
-                    table = table.scroll_to_row(row_nr, Some(egui::Align::Center));
-                }
-                if let Some(col_nr) = col_nr {
-                    table = table.scroll_to_column(col_nr as usize, Some(egui::Align::Center));
-                }
-                table
-            });
-            match resp {
-                CellResponse::None => {}
-                CellResponse::Icon(_) => {}
-                CellResponse::Link((sheet_name, (row_id, subrow_id))) => {
-                    self.navigate(format!(
-                        "/sheet/{sheet_name}#R{row_id}{}",
-                        if let Some(subrow_id) = subrow_id {
-                            format!(".{subrow_id}")
-                        } else {
-                            "".to_string()
+                let resp = editor.draw(ui, backend.schema());
+                if resp.changed() {
+                    if let Some(schema) = editor.get_schema() {
+                        if let Err(e) = table.context().set_schema(Some(schema.clone())) {
+                            log::error!("Failed to set schema: {:?}", e);
                         }
-                    ));
+                    }
                 }
-                CellResponse::Row((sheet_name, (row_id, subrow_id))) => {
-                    self.navigate_replace(format!(
-                        "/sheet/{sheet_name}#R{row_id}{}",
-                        if let Some(subrow_id) = subrow_id {
-                            format!(".{subrow_id}")
-                        } else {
-                            "".to_string()
-                        }
-                    ));
-                    ui.ctx().copy_text(self.router.get().unwrap().full_url());
+
+                let scroll_to = TEMP_SCROLL_TO.take(ctx);
+                if let Some((row_pos, _)) = &scroll_to {
+                    TEMP_HIGHLIGHTED_ROW.set(ctx, *row_pos);
                 }
-            }
-        });
+
+                let resp = table.draw(ui, scroll_to);
+                match resp {
+                    CellResponse::None => {}
+                    CellResponse::Icon(_) => {}
+                    CellResponse::Link((sheet_name, (row_id, subrow_id))) => {
+                        self.navigate(format!(
+                            "/sheet/{sheet_name}#R{row_id}{}",
+                            if let Some(subrow_id) = subrow_id {
+                                format!(".{subrow_id}")
+                            } else {
+                                "".to_string()
+                            }
+                        ));
+                    }
+                    CellResponse::Row((sheet_name, (row_id, subrow_id))) => {
+                        self.navigate_replace(format!(
+                            "/sheet/{sheet_name}#R{row_id}{}",
+                            if let Some(subrow_id) = subrow_id {
+                                format!(".{subrow_id}")
+                            } else {
+                                "".to_string()
+                            }
+                        ));
+                        ui.ctx().copy_text(self.router.get().unwrap().full_url());
+                    }
+                }
+            });
     }
 
     fn on_setup(
@@ -580,7 +598,7 @@ impl App {
         if let Some(r) = self.ensure_backend(path) {
             return r;
         }
-        TEMP_HIGHLIGHTED_ROW_NR.take(ui.ctx());
+        TEMP_HIGHLIGHTED_ROW.take(ui.ctx());
 
         if let Some(sheet) = params.get("name") {
             SELECTED_SHEET.set(ui.ctx(), Some(sheet.to_string()));
