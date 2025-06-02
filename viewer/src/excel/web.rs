@@ -19,7 +19,7 @@ impl FromStr for WebFileProvider {
 
 #[async_trait(?Send)]
 impl FileProvider for WebFileProvider {
-    async fn file<T: File>(&self, path: &str) -> Result<T, ironworks::Error> {
+    async fn file<T: File>(&self, path: &str) -> anyhow::Result<T> {
         let mut url = self.0.clone();
         {
             let mut path_segments = url.path_segments_mut().map_err(|_| {
@@ -34,20 +34,19 @@ impl FileProvider for WebFileProvider {
 
         let resp = ehttp::fetch_async(Request::get(url))
             .await
-            .map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))?;
+            .map_err(|msg| anyhow::anyhow!("{msg}"))?;
         if !resp.ok {
-            return Err(ironworks::Error::NotFound(ironworks::ErrorValue::Other(
-                String::from_utf8_lossy(&resp.bytes).to_string(),
-            )));
+            anyhow::bail!(
+                "Response not OK ({} {}): {}",
+                resp.status,
+                resp.status_text,
+                String::from_utf8_lossy(&resp.bytes)
+            );
         }
-        T::read(Cursor::new(resp.bytes))
+        Ok(T::read(Cursor::new(resp.bytes))?)
     }
 
-    async fn get_icon(
-        &self,
-        icon_id: u32,
-        hires: bool,
-    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
         let path = get_icon_path(icon_id, hires);
         let url = get_xivapi_asset_url(&path, Some("png"));
         Ok(Either::Left(url))

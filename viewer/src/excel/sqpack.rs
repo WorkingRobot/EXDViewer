@@ -25,15 +25,11 @@ impl SqpackFileProvider {
 
 #[async_trait(?Send)]
 impl FileProvider for SqpackFileProvider {
-    async fn file<T: File>(&self, path: &str) -> Result<T, ironworks::Error> {
-        self.0.file(path)
+    async fn file<T: File>(&self, path: &str) -> anyhow::Result<T> {
+        Ok(self.0.file(path)?)
     }
 
-    async fn get_icon(
-        &self,
-        icon_id: u32,
-        hires: bool,
-    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
         let path = get_icon_path(icon_id, hires);
         let data = tex_loader::read(&self.0, &path)?;
         Ok(Either::Right(data.into_rgba8()))

@@ -20,56 +20,38 @@ use super::provider::{ExcelHeader, ExcelPage, ExcelProvider, ExcelRow, ExcelShee
 
 #[async_trait(?Send)]
 pub trait FileProvider {
-    async fn file<T: File>(&self, path: &str) -> Result<T, ironworks::Error>;
+    async fn file<T: File>(&self, path: &str) -> anyhow::Result<T>;
 
-    async fn get_icon(
-        &self,
-        icon_id: u32,
-        hires: bool,
-    ) -> Result<Either<Url, RgbaImage>, anyhow::Error>;
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>>;
 }
 
 #[async_trait(?Send)]
 pub trait ExcelFileProvider {
-    async fn get_icon(
-        &self,
-        icon_id: u32,
-        hires: bool,
-    ) -> Result<Either<Url, RgbaImage>, anyhow::Error>;
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>>;
 
-    async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error>;
+    async fn list(&self) -> anyhow::Result<ironworks::file::exl::ExcelList>;
 
-    async fn header(
-        &self,
-        name: &str,
-    ) -> Result<ironworks::file::exh::ExcelHeader, ironworks::Error>;
+    async fn header(&self, name: &str) -> anyhow::Result<ironworks::file::exh::ExcelHeader>;
 
     async fn data(
         &self,
         name: &str,
         start_id: u32,
         language: Language,
-    ) -> Result<ExcelData, ironworks::Error>;
+    ) -> anyhow::Result<ExcelData>;
 }
 
 #[async_trait(?Send)]
 impl<T: FileProvider> ExcelFileProvider for T {
-    async fn get_icon(
-        &self,
-        icon_id: u32,
-        hires: bool,
-    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
         self.get_icon(icon_id, hires).await
     }
 
-    async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error> {
+    async fn list(&self) -> anyhow::Result<ironworks::file::exl::ExcelList> {
         self.file(path::exl()).await
     }
 
-    async fn header(
-        &self,
-        name: &str,
-    ) -> Result<ironworks::file::exh::ExcelHeader, ironworks::Error> {
+    async fn header(&self, name: &str) -> anyhow::Result<ironworks::file::exh::ExcelHeader> {
         self.file(&path::exh(name)).await
     }
 
@@ -78,29 +60,22 @@ impl<T: FileProvider> ExcelFileProvider for T {
         name: &str,
         start_id: u32,
         language: Language,
-    ) -> Result<ExcelData, ironworks::Error> {
+    ) -> anyhow::Result<ExcelData> {
         self.file(&path::exd(name, start_id, language)).await
     }
 }
 
 #[async_trait(?Send)]
 impl ExcelFileProvider for Box<dyn ExcelFileProvider> {
-    async fn get_icon(
-        &self,
-        icon_id: u32,
-        hires: bool,
-    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
         self.as_ref().get_icon(icon_id, hires).await
     }
 
-    async fn list(&self) -> Result<ironworks::file::exl::ExcelList, ironworks::Error> {
+    async fn list(&self) -> anyhow::Result<ironworks::file::exl::ExcelList> {
         self.as_ref().list().await
     }
 
-    async fn header(
-        &self,
-        name: &str,
-    ) -> Result<ironworks::file::exh::ExcelHeader, ironworks::Error> {
+    async fn header(&self, name: &str) -> anyhow::Result<ironworks::file::exh::ExcelHeader> {
         self.as_ref().header(name).await
     }
 
@@ -109,7 +84,7 @@ impl ExcelFileProvider for Box<dyn ExcelFileProvider> {
         name: &str,
         start_id: u32,
         language: Language,
-    ) -> Result<ExcelData, ironworks::Error> {
+    ) -> anyhow::Result<ExcelData> {
         self.as_ref().data(name, start_id, language).await
     }
 }
@@ -134,7 +109,7 @@ struct CacheEntry {
 }
 
 impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
-    pub async fn new(provider: T, size: NonZeroUsize) -> Result<Self, ironworks::Error> {
+    pub async fn new(provider: T, size: NonZeroUsize) -> anyhow::Result<Self> {
         Ok(Self(Arc::new(CachedProviderImpl {
             entries: provider.list().await?.0,
             provider,

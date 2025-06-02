@@ -132,7 +132,6 @@ impl App {
                                 {
                                     color_theme.apply(ui.ctx());
                                     COLOR_THEME.set(ui.ctx(), color_theme);
-                                    // ui.close_menu();
                                 }
                             }
                         });
@@ -204,7 +203,6 @@ impl App {
                             let mut logger_shown = LOGGER_SHOWN.get(ctx);
                             if ui.checkbox(&mut logger_shown, "Show Log Window").changed() {
                                 LOGGER_SHOWN.set(ctx, logger_shown);
-                                // ui.close_menu();
                             }
                         }
                     });
