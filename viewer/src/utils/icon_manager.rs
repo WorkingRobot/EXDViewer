@@ -126,7 +126,9 @@ impl IconManagerImpl {
             .cache
             .entry((icon_id, hires))
             .or_insert_with(|| ConvertiblePromise::new_promise(promise_creator()))
-            .get(|r| Self::convert_promise(&mut self.loaded_handles, icon_id, hires, context, r))
+            .get_mut(|r| {
+                Self::convert_promise(&mut self.loaded_handles, icon_id, hires, context, r)
+            })
             .cloned();
         match ret {
             Some(Ok(image)) => ManagedIcon::Loaded(image),

@@ -42,7 +42,7 @@ impl<P: PromiseKind, T> ConvertiblePromise<P, T> {
         Self(Either::Left(promise))
     }
 
-    pub fn get(&mut self, converter: impl FnOnce(P::Output) -> T) -> Option<&mut T> {
+    fn convert(&mut self, converter: impl FnOnce(P::Output) -> T) {
         let should_swap = if let Left(promise) = &self.0 {
             promise.ready()
         } else {
@@ -59,7 +59,15 @@ impl<P: PromiseKind, T> ConvertiblePromise<P, T> {
                 Right(converter(result))
             });
         }
+    }
 
+    pub fn get_mut(&mut self, converter: impl FnOnce(P::Output) -> T) -> Option<&mut T> {
+        self.convert(converter);
         self.0.as_mut().right()
+    }
+
+    pub fn get(&mut self, converter: impl FnOnce(P::Output) -> T) -> Option<&T> {
+        self.convert(converter);
+        self.0.as_ref().right()
     }
 }

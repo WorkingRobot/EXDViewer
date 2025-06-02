@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use web_sys::FileSystemDirectoryHandle;
 
 use crate::{
     backend::worker,
@@ -11,22 +10,10 @@ use super::provider::SchemaProvider;
 pub struct WorkerProvider(());
 
 impl WorkerProvider {
-    pub async fn new(name: String) -> anyhow::Result<Self> {
-        match worker::transact(WorkerRequest::GetStoredSchemaFolder(name)).await {
-            WorkerResponse::GetStoredSchemaFolder(Ok(Some(f))) => {
-                match worker::transact(WorkerRequest::SetupSchemaFolder(f)).await {
-                    WorkerResponse::SetupSchemaFolder(Ok(())) => Ok(Self(())),
-                    WorkerResponse::SetupSchemaFolder(Err(e)) => Err(anyhow::anyhow!(
-                        "WorkerProvider: failed to setup schema folder: {}",
-                        e
-                    )),
-                    _ => Err(anyhow::anyhow!("WorkerProvider: invalid schema response")),
-                }
-            }
-            WorkerResponse::GetStoredSchemaFolder(Ok(None)) => {
-                Err(anyhow::anyhow!("WorkerProvider: schema folder not found"))
-            }
-            WorkerResponse::GetStoredSchemaFolder(Err(e)) => Err(anyhow::anyhow!(
+    pub async fn new(handle: WorkerDirectory) -> anyhow::Result<Self> {
+        match worker::transact(WorkerRequest::SchemaSetup(handle)).await {
+            WorkerResponse::SchemaSetup(Ok(())) => Ok(Self(())),
+            WorkerResponse::SchemaSetup(Err(e)) => Err(anyhow::anyhow!(
                 "WorkerProvider: failed to setup schema folder: {}",
                 e
             )),
@@ -34,10 +21,10 @@ impl WorkerProvider {
         }
     }
 
-    pub async fn folders() -> anyhow::Result<Vec<String>> {
-        match worker::transact(WorkerRequest::GetStoredSchemas()).await {
-            WorkerResponse::GetStoredSchemas(Ok(folders)) => Ok(folders),
-            WorkerResponse::GetStoredSchemas(Err(e)) => Err(anyhow::anyhow!(
+    pub async fn folders() -> anyhow::Result<Vec<WorkerDirectory>> {
+        match worker::transact(WorkerRequest::SchemaGet()).await {
+            WorkerResponse::SchemaGet(Ok(folders)) => Ok(folders),
+            WorkerResponse::SchemaGet(Err(e)) => Err(anyhow::anyhow!(
                 "WorkerProvider: failed to get schema folders: {}",
                 e
             )),
@@ -45,15 +32,22 @@ impl WorkerProvider {
         }
     }
 
-    pub async fn add_folder(handle: FileSystemDirectoryHandle) -> anyhow::Result<String> {
-        match worker::transact(WorkerRequest::StoreSchemaFolder(WorkerDirectory(
-            handle.clone(),
-        )))
-        .await
-        {
-            WorkerResponse::StoreSchemaFolder(Ok(())) => Ok(handle.name()),
-            WorkerResponse::StoreSchemaFolder(Err(e)) => Err(anyhow::anyhow!(
+    pub async fn add_folder(handle: WorkerDirectory) -> anyhow::Result<()> {
+        match worker::transact(WorkerRequest::SchemaStore(handle)).await {
+            WorkerResponse::SchemaStore(Ok(())) => Ok(()),
+            WorkerResponse::SchemaStore(Err(e)) => Err(anyhow::anyhow!(
                 "WorkerProvider: failed to add schema folder: {}",
+                e
+            )),
+            _ => Err(anyhow::anyhow!("WorkerProvider: invalid schema response")),
+        }
+    }
+
+    pub async fn verify_folder(handle: WorkerDirectory) -> anyhow::Result<()> {
+        match worker::transact(WorkerRequest::VerifyFolder((handle, true))).await {
+            WorkerResponse::VerifyFolder(Ok(())) => Ok(()),
+            WorkerResponse::VerifyFolder(Err(e)) => Err(anyhow::anyhow!(
+                "WorkerProvider: failed to verify schema folder: {}",
                 e
             )),
             _ => Err(anyhow::anyhow!("WorkerProvider: invalid schema response")),
@@ -64,8 +58,8 @@ impl WorkerProvider {
 #[async_trait(?Send)]
 impl SchemaProvider for WorkerProvider {
     async fn get_schema_text(&self, name: &str) -> anyhow::Result<String> {
-        if let WorkerResponse::GetSchema(result) =
-            worker::transact(WorkerRequest::GetSchema(format!("{name}.yml"))).await
+        if let WorkerResponse::SchemaRequestGet(result) =
+            worker::transact(WorkerRequest::SchemaRequestGet(format!("{name}.yml"))).await
         {
             result.map_err(|e| anyhow::anyhow!("WorkerProvider: failed to get schema: {}", e))
         } else {
@@ -82,10 +76,9 @@ impl SchemaProvider for WorkerProvider {
     }
 
     async fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()> {
-        if let WorkerResponse::StoreSchema(result) = worker::transact(WorkerRequest::StoreSchema((
-            format!("{name}.yml"),
-            text.to_string(),
-        )))
+        if let WorkerResponse::SchemaRequestStore(result) = worker::transact(
+            WorkerRequest::SchemaRequestStore((format!("{name}.yml"), text.to_string())),
+        )
         .await
         {
             result.map_err(|e| anyhow::anyhow!("WorkerProvider: failed to save schema: {}", e))

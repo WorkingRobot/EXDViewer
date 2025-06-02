@@ -378,7 +378,7 @@ impl App {
                             ))
                         });
 
-                let sheet_data = sheet_data.get(|result| {
+                let sheet_data = sheet_data.get_mut(|result| {
                     result.and_then(|(sheet, schema)| {
                         let sheet_name = sheet.name().to_owned();
                         let editor = match schema {

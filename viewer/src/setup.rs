@@ -8,9 +8,7 @@ use crate::{
 };
 
 #[cfg(target_arch = "wasm32")]
-use crate::utils::TrackedPromise;
-#[cfg(target_arch = "wasm32")]
-use anyhow::anyhow;
+use crate::{utils::ConvertiblePromise, worker::WorkerDirectory};
 
 pub struct SetupWindow {
     location: InstallLocation,
@@ -68,12 +66,12 @@ impl SetupWindow {
     pub fn draw(&mut self, ctx: &egui::Context) -> Option<(Backend, BackendConfig)> {
         #[cfg(target_arch = "wasm32")]
         {
-            if let Some(path) = self.location_promises.take_folder() {
-                self.location = InstallLocation::Worker(path);
+            if let Some(handle) = self.location_promises.take_folder() {
+                self.location = InstallLocation::Worker(handle.0.name());
             }
 
-            if let Some(path) = self.schema_promises.take_folder() {
-                self.schema = SchemaLocation::Worker(path);
+            if let Some(handle) = self.schema_promises.take_folder() {
+                self.schema = SchemaLocation::Worker(handle.0.name());
             }
         }
 
@@ -200,8 +198,8 @@ impl SetupWindow {
                                                         for entry in entries {
                                                             ui.selectable_value(
                                                                 name,
-                                                                entry.to_string(),
-                                                                entry,
+                                                                entry.0.name(),
+                                                                entry.0.name(),
                                                             );
                                                         }
                                                     }
@@ -301,8 +299,8 @@ impl SetupWindow {
                                                             for entry in entries {
                                                                 ui.selectable_value(
                                                                     name,
-                                                                    entry.to_string(),
-                                                                    entry,
+                                                                    entry.0.name(),
+                                                                    entry.0.name(),
                                                                 );
                                                             }
                                                         }
@@ -372,19 +370,24 @@ fn radio(ui: &mut egui::Ui, selected: bool, text: impl Into<WidgetText>) -> bool
 #[cfg(target_arch = "wasm32")]
 #[derive(Default)]
 struct SetupPromises {
-    selected: Option<TrackedPromise<anyhow::Result<String>>>,
-    list: Option<TrackedPromise<anyhow::Result<Vec<String>>>>,
+    selected: Option<UnsendPromise<anyhow::Result<WorkerDirectory>>>,
+    list: Option<
+        ConvertiblePromise<
+            UnsendPromise<anyhow::Result<Vec<WorkerDirectory>>>,
+            anyhow::Result<Vec<WorkerDirectory>>,
+        >,
+    >,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl SetupPromises {
-    fn take_folder(&mut self) -> Option<String> {
+    fn take_folder(&mut self) -> Option<WorkerDirectory> {
         if let Some(result) = self.selected.take_if(|p| p.ready()) {
             let result = result.block_and_take();
 
             self.list.take();
             match result {
-                Ok(path) => Some(path),
+                Ok(handle) => Some(handle),
                 Err(e) => {
                     log::error!("Error picking folder: {e}");
                     None
@@ -395,43 +398,48 @@ impl SetupPromises {
         }
     }
 
-    fn open_folder_picker<F: Future<Output = anyhow::Result<String>>>(
+    fn open_folder_picker<F: Future<Output = anyhow::Result<()>>>(
         &mut self,
         mode: web_sys::FileSystemPermissionMode,
-        store_folder: impl Fn(web_sys::FileSystemDirectoryHandle) -> F + 'static,
+        store_folder: impl Fn(WorkerDirectory) -> F + 'static,
     ) {
         use eframe::wasm_bindgen::JsCast;
         use wasm_bindgen_futures::JsFuture;
         use web_sys::{DirectoryPickerOptions, FileSystemDirectoryHandle};
 
-        let ret = TrackedPromise::spawn_local(async move {
+        let ret = UnsendPromise::new(async move {
             let opts = DirectoryPickerOptions::new();
             opts.set_mode(mode);
             let promise = web_sys::window()
                 .expect("no window")
                 .show_directory_picker_with_options(&opts);
-            let promise = promise.map_err(|e| anyhow!("Error picking folder: {e:?}"))?;
+            let promise = promise.map_err(|e| anyhow::anyhow!("Error picking folder: {e:?}"))?;
             let result = JsFuture::from(promise).await;
             match result {
                 Ok(handle) => {
                     let handle = handle
                         .dyn_into::<FileSystemDirectoryHandle>()
-                        .map_err(|_| anyhow!("Error casting to FileSystemDirectoryHandle"))?;
-                    store_folder(handle).await
+                        .map_err(|_| {
+                            anyhow::anyhow!("Error casting to FileSystemDirectoryHandle")
+                        })?;
+                    let handle = WorkerDirectory(handle);
+                    store_folder(handle.clone()).await.map(|_| handle)
                 }
-                Err(e) => Err(anyhow!("Error picking folder: {e:?}")),
+                Err(e) => Err(anyhow::anyhow!("Error picking folder: {e:?}")),
             }
         });
         self.selected = Some(ret);
     }
 
-    fn get_folder_list<F: Future<Output = anyhow::Result<Vec<String>>> + 'static>(
+    fn get_folder_list<F: Future<Output = anyhow::Result<Vec<WorkerDirectory>>> + 'static>(
         &mut self,
         future: impl FnOnce() -> F,
-    ) -> Option<&anyhow::Result<Vec<String>>> {
+    ) -> Option<&anyhow::Result<Vec<WorkerDirectory>>> {
         if self.list.is_none() {
-            self.list = Some(TrackedPromise::spawn_local(future()));
+            self.list = Some(ConvertiblePromise::new_promise(
+                UnsendPromise::new(future()),
+            ));
         }
-        self.list.as_ref().unwrap().try_get()
+        self.list.as_mut().unwrap().get(|r| r)
     }
 }

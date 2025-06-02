@@ -7,14 +7,14 @@ use ironworks::{
     Ironworks,
     sqpack::{SqPack, VInstall},
 };
-use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, js_sys::JsString};
 
 use crate::utils::{JsErr, tex_loader};
 
 use super::{
-    directory::{Directory, get_file_blob, get_file_writer},
+    WorkerDirectory, WorkerRequest, WorkerResponse,
+    directory::{Directory, get_file_blob, get_file_writer, verify_permission},
     file::SyncAccessFile,
     stopwatch::Stopwatch,
     vfs::DirectoryVfs,
@@ -25,48 +25,8 @@ pub struct SqpackWorker {
     schema_instance: Rc<RefCell<Option<Directory<FileSystemFileHandle>>>>,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct WorkerDirectory(
-    #[serde(with = "serde_wasm_bindgen::preserve")] pub FileSystemDirectoryHandle,
-);
-
-#[derive(Serialize, Deserialize)]
-pub enum WorkerRequest {
-    GetStoredNames(),
-    GetStoredFolder(String),
-    StoreFolder(WorkerDirectory),
-
-    SetupFolder(WorkerDirectory),
-    File(String),
-    Texture(String),
-
-    GetStoredSchemas(),
-    GetStoredSchemaFolder(String),
-    StoreSchemaFolder(WorkerDirectory),
-
-    SetupSchemaFolder(WorkerDirectory),
-    GetSchema(String),
-    StoreSchema((String, String)),
-}
-
-#[derive(Serialize, Deserialize)]
-pub enum WorkerResponse {
-    GetStoredNames(Result<Vec<String>, String>),
-    GetStoredFolder(Result<Option<WorkerDirectory>, String>),
-    StoreFolder(Result<(), String>),
-
-    SetupFolder(Result<(), String>),
-    File(Result<Vec<u8>, String>),
-    Texture(Result<(u32, u32, Vec<u8>), String>),
-
-    GetStoredSchemas(Result<Vec<String>, String>),
-    GetStoredSchemaFolder(Result<Option<WorkerDirectory>, String>),
-    StoreSchemaFolder(Result<(), String>),
-
-    SetupSchemaFolder(Result<(), String>),
-    GetSchema(Result<String, String>),
-    StoreSchema(Result<(), String>),
-}
+const STORE_DATA: &str = "folders";
+const STORE_SCHEMA: &str = "schema_folders";
 
 impl SqpackWorker {
     async fn get_db() -> Result<Database<String>, String> {
@@ -75,11 +35,11 @@ impl SqpackWorker {
         factory
             .open("sqpack", 4, |evt| async move {
                 let db = evt.database();
-                let _ = db.delete_object_store("folders");
-                let _ = db.delete_object_store("schema_folders");
+                let _ = db.delete_object_store(STORE_DATA);
+                let _ = db.delete_object_store(STORE_SCHEMA);
 
-                db.build_object_store("folders").create()?;
-                db.build_object_store("schema_folders").create()?;
+                db.build_object_store(STORE_DATA).create()?;
+                db.build_object_store(STORE_SCHEMA).create()?;
 
                 Ok(())
             })
@@ -87,68 +47,28 @@ impl SqpackWorker {
             .map_err(|e| format!("Failed to open IndexedDB database: {e}"))
     }
 
-    async fn get_db_folders_impl(store: &'static str) -> Result<Vec<String>, String> {
+    async fn get_db_folders_impl(store: &'static str) -> Result<Vec<WorkerDirectory>, String> {
         let db = Self::get_db().await?;
         db.transaction(&[store])
             .run(move |t| async move {
                 let data = t
                     .object_store(store)
                     .map_err(|e| format!("Failed to get object store: {e}"))?
-                    .get_all_keys(None)
+                    .get_all(None)
                     .await
-                    .map_err(|e| format!("Failed to get all keys: {e}"))?;
+                    .map_err(|e| format!("Failed to get all values: {e}"))?;
                 let data = data
                     .into_iter()
-                    .filter_map(|v| v.as_string())
-                    .collect::<Vec<_>>();
-                Ok(data)
+                    .map(|v| {
+                        v.dyn_into::<FileSystemDirectoryHandle>()
+                            .map(WorkerDirectory)
+                            .map_err(|_| indexed_db::Error::InvalidKey)
+                    })
+                    .collect::<Result<Vec<_>, _>>();
+                data
             })
             .await
             .map_err(|e| format!("Failed to get folders: {e}"))
-    }
-
-    async fn get_db_folders() -> Result<Vec<String>, String> {
-        Self::get_db_folders_impl("folders").await
-    }
-
-    async fn get_db_schema_folders() -> Result<Vec<String>, String> {
-        Self::get_db_folders_impl("schema_folders").await
-    }
-
-    async fn get_db_folder_impl(
-        store: &'static str,
-        name: String,
-    ) -> Result<Option<FileSystemDirectoryHandle>, String> {
-        let db = Self::get_db().await?;
-        db.transaction(&[store])
-            .run(move |t| async move {
-                let data = t
-                    .object_store(store)
-                    .map_err(|e| format!("Failed to get object store: {e}"))?
-                    .get(&JsString::from(name))
-                    .await
-                    .map_err(|e| format!("Failed to get folder: {e}"))?;
-                Ok(if let Some(data) = data {
-                    let data = data
-                        .dyn_into::<FileSystemDirectoryHandle>()
-                        .map_err(|_| "Failed to cast to FileSystemDirectoryHandle".to_string())?;
-                    Some(data)
-                } else {
-                    None
-                })
-            })
-            .await
-            .map_err(|e| format!("Failed to get folder: {e}"))
-    }
-
-    async fn get_db_folder(name: String) -> Result<Option<FileSystemDirectoryHandle>, String> {
-        Self::get_db_folder_impl("folders", name).await
-    }
-
-    async fn get_db_schema_folder(
-        name: String,
-    ) -> Result<Option<FileSystemDirectoryHandle>, String> {
-        Self::get_db_folder_impl("schema_folders", name).await
     }
 
     async fn add_db_folder_impl(
@@ -168,14 +88,6 @@ impl SqpackWorker {
             })
             .await
             .map_err(|e| format!("Failed to add folder: {e}"))
-    }
-
-    async fn add_db_folder(handle: FileSystemDirectoryHandle) -> Result<(), String> {
-        Self::add_db_folder_impl("folders", handle).await
-    }
-
-    async fn add_db_schema_folder(handle: FileSystemDirectoryHandle) -> Result<(), String> {
-        Self::add_db_folder_impl("schema_folders", handle).await
     }
 }
 
@@ -199,72 +111,54 @@ impl Worker for SqpackWorker {
 
     fn received(&mut self, scope: &WorkerScope<Self>, msg: Self::Input, id: HandlerId) {
         match msg {
-            WorkerRequest::GetStoredNames() => {
-                let _stop = Stopwatch::new("SqpackWorker::GetStoredNames");
+            WorkerRequest::DataGet() => {
+                let _stop = Stopwatch::new("SqpackWorker::DataGet");
                 let scope = scope.clone();
                 spawn_local(async move {
                     let _stop = _stop;
-                    let ret = match SqpackWorker::get_db_folders().await {
-                        Ok(folders) => Ok(folders),
-                        Err(e) => Err(e.to_string()),
-                    };
-                    scope.respond(id, WorkerResponse::GetStoredNames(ret));
+                    let ret = SqpackWorker::get_db_folders_impl(STORE_DATA).await;
+                    scope.respond(id, WorkerResponse::DataGet(ret));
                 });
             }
-            WorkerRequest::GetStoredFolder(name) => {
-                let _stop = Stopwatch::new("SqpackWorker::GetStoredFolder");
+            WorkerRequest::DataStore(handle) => {
+                let _stop = Stopwatch::new("SqpackWorker::DataStore");
                 let scope = scope.clone();
                 spawn_local(async move {
                     let _stop = _stop;
-                    let ret = match SqpackWorker::get_db_folder(name).await {
-                        Ok(folder) => Ok(folder.map(WorkerDirectory)),
-                        Err(e) => Err(e.to_string()),
-                    };
-                    scope.respond(id, WorkerResponse::GetStoredFolder(ret));
+                    let ret = Self::add_db_folder_impl(STORE_DATA, handle.0).await;
+                    scope.respond(id, WorkerResponse::DataStore(ret));
                 });
             }
-            WorkerRequest::StoreFolder(handle) => {
-                let _stop = Stopwatch::new("SqpackWorker::StoreFolder");
-                let scope = scope.clone();
-                spawn_local(async move {
-                    let _stop = _stop;
-                    let ret = Self::add_db_folder(handle.0).await;
-                    scope.respond(id, WorkerResponse::StoreFolder(ret));
-                });
-            }
-            WorkerRequest::SetupFolder(handle) => {
-                let _stop = Stopwatch::new("SqpackWorker::SetupFolder");
+            WorkerRequest::DataSetup(handle) => {
+                let _stop = Stopwatch::new("SqpackWorker::DataSetup");
                 let install_instance = self.install_instance.clone();
 
                 let scope = scope.clone();
                 spawn_local(async move {
                     let _stop = _stop;
-                    let ret = InstallInstance::new(handle.0.clone()).await;
-                    let ret = match ret {
-                        Ok(ret) => {
-                            if let Err(e) = Self::add_db_folder(handle.0).await {
-                                Err(e)
-                            } else {
-                                Ok(ret)
-                            }
-                        }
-                        Err(e) => Err(e.to_string()),
-                    };
+                    let mut ret = InstallInstance::new(handle.0.clone())
+                        .await
+                        .map_err(|e| e.to_string());
+                    if ret.is_ok() {
+                        ret = Self::add_db_folder_impl(STORE_DATA, handle.0)
+                            .await
+                            .and(ret);
+                    }
                     let ret = ret.map(|instance| {
                         install_instance.borrow_mut().replace(instance);
                     });
-                    scope.respond(id, WorkerResponse::SetupFolder(ret));
+                    scope.respond(id, WorkerResponse::DataSetup(ret));
                 });
             }
-            WorkerRequest::File(path) => {
-                let _stop = Stopwatch::new("SqpackWorker::File");
+            WorkerRequest::DataRequestFile(path) => {
+                let _stop = Stopwatch::new("SqpackWorker::DataRequestFile");
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
                     let file = inst.0.file::<Vec<u8>>(&path).map_err(|e| e.to_string());
-                    scope.respond(id, WorkerResponse::File(file));
+                    scope.respond(id, WorkerResponse::DataRequestFile(file));
                 }
             }
-            WorkerRequest::Texture(path) => {
-                let _stop = Stopwatch::new("SqpackWorker::Texture");
+            WorkerRequest::DataRequestTexture(path) => {
+                let _stop = Stopwatch::new("SqpackWorker::DataRequestTexture");
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
                     let data = tex_loader::read(&inst.0, &path)
                         .map(|data| {
@@ -272,76 +166,57 @@ impl Worker for SqpackWorker {
                             (data.width(), data.height(), data.into_vec())
                         })
                         .map_err(|e| e.to_string());
-                    scope.respond(id, WorkerResponse::Texture(data));
+                    scope.respond(id, WorkerResponse::DataRequestTexture(data));
                 }
             }
-            WorkerRequest::GetStoredSchemas() => {
-                let _stop = Stopwatch::new("SqpackWorker::GetStoredSchemas");
+            WorkerRequest::SchemaGet() => {
+                let _stop = Stopwatch::new("SqpackWorker::SchemaGet");
                 let scope = scope.clone();
                 spawn_local(async move {
                     let _stop = _stop;
-                    let ret = match SqpackWorker::get_db_schema_folders().await {
-                        Ok(folders) => Ok(folders),
-                        Err(e) => Err(e.to_string()),
-                    };
-                    scope.respond(id, WorkerResponse::GetStoredSchemas(ret));
+                    let ret = SqpackWorker::get_db_folders_impl(STORE_SCHEMA).await;
+                    scope.respond(id, WorkerResponse::SchemaGet(ret));
                 });
             }
-            WorkerRequest::GetStoredSchemaFolder(name) => {
-                let _stop = Stopwatch::new("SqpackWorker::GetStoredSchemaFolder");
+            WorkerRequest::SchemaStore(handle) => {
+                let _stop = Stopwatch::new("SqpackWorker::SchemaStore");
                 let scope = scope.clone();
                 spawn_local(async move {
                     let _stop = _stop;
-                    let ret = match SqpackWorker::get_db_schema_folder(name).await {
-                        Ok(folder) => Ok(folder.map(WorkerDirectory)),
-                        Err(e) => Err(e.to_string()),
-                    };
-                    scope.respond(id, WorkerResponse::GetStoredSchemaFolder(ret));
+                    let ret = Self::add_db_folder_impl(STORE_SCHEMA, handle.0).await;
+                    scope.respond(id, WorkerResponse::SchemaStore(ret));
                 });
             }
-            WorkerRequest::StoreSchemaFolder(handle) => {
-                let _stop = Stopwatch::new("SqpackWorker::StoreSchemaFolder");
-                let scope = scope.clone();
-                spawn_local(async move {
-                    let _stop = _stop;
-                    let ret = Self::add_db_schema_folder(handle.0).await;
-                    scope.respond(id, WorkerResponse::StoreSchemaFolder(ret));
-                });
-            }
-            WorkerRequest::SetupSchemaFolder(handle) => {
-                let _stop = Stopwatch::new("SqpackWorker::SetupSchemaFolder");
+            WorkerRequest::SchemaSetup(handle) => {
+                let _stop = Stopwatch::new("SqpackWorker::SchemaSetup");
                 let schema_instance = self.schema_instance.clone();
 
                 let scope = scope.clone();
                 spawn_local(async move {
                     let _stop = _stop;
-                    let ret = Directory::new(
+                    let mut ret = Directory::new(
                         handle.0.clone(),
                         web_sys::FileSystemPermissionMode::Readwrite,
                         Box::new(|handle| Box::pin(ready(Ok(handle)))),
                         false,
                     )
-                    .await;
-                    let ret = match ret {
-                        Ok(ret) => {
-                            if let Err(e) = Self::add_db_schema_folder(handle.0).await {
-                                Err(e)
-                            } else {
-                                Ok(ret)
-                            }
-                        }
-                        Err(e) => Err(e.to_string()),
-                    };
+                    .await
+                    .map_err(|e| e.to_string());
+                    if ret.is_ok() {
+                        ret = Self::add_db_folder_impl(STORE_SCHEMA, handle.0)
+                            .await
+                            .and(ret);
+                    }
                     let ret = ret.map(|instance| {
                         schema_instance.borrow_mut().replace(instance);
                     });
-                    scope.respond(id, WorkerResponse::SetupSchemaFolder(ret));
+                    scope.respond(id, WorkerResponse::SchemaSetup(ret));
                 });
             }
-            WorkerRequest::GetSchema(name) => {
-                let _stop = Stopwatch::new("SqpackWorker::GetSchema");
+            WorkerRequest::SchemaRequestGet(name) => {
+                let _stop = Stopwatch::new("SqpackWorker::SchemaRequestGet");
                 if let Some(inst) = self.schema_instance.borrow().as_ref() {
-                    match inst.get_file_handle(name) {
+                    match inst.get_file_handle(name).map_err(|e| e.to_string()) {
                         Ok(handle) => {
                             let scope = scope.clone();
                             spawn_local(async move {
@@ -349,28 +224,25 @@ impl Worker for SqpackWorker {
                                 let ret = get_file_blob(handle)
                                     .await
                                     .and_then(SyncAccessFile::new)
-                                    .map_err(|jserr| {
-                                        std::io::Error::new(std::io::ErrorKind::Other, jserr)
-                                    })
+                                    .map_err(|e| e.to_string())
                                     .and_then(|mut f| {
                                         let mut s = String::new();
-                                        f.read_to_string(&mut s)?;
+                                        f.read_to_string(&mut s).map_err(|e| e.to_string())?;
                                         Ok(s)
-                                    })
-                                    .map_err(|e| e.to_string());
-                                scope.respond(id, WorkerResponse::GetSchema(ret));
+                                    });
+                                scope.respond(id, WorkerResponse::SchemaRequestGet(ret));
                             });
                         }
                         Err(e) => {
-                            scope.respond(id, WorkerResponse::GetSchema(Err(e.to_string())));
+                            scope.respond(id, WorkerResponse::SchemaRequestGet(Err(e)));
                         }
                     };
                 }
             }
-            WorkerRequest::StoreSchema((name, data)) => {
-                let _stop = Stopwatch::new("SqpackWorker::StoreSchema");
+            WorkerRequest::SchemaRequestStore((name, data)) => {
+                let _stop = Stopwatch::new("SqpackWorker::SchemaRequestStore");
                 if let Some(inst) = self.schema_instance.borrow().as_ref() {
-                    match inst.get_file_handle(name) {
+                    match inst.get_file_handle(name).map_err(|e| e.to_string()) {
                         Ok(handle) => {
                             let scope = scope.clone();
                             spawn_local(async move {
@@ -396,14 +268,32 @@ impl Worker for SqpackWorker {
                                     Err(e) => Err(e),
                                 }
                                 .map_err(|e| e.to_string());
-                                scope.respond(id, WorkerResponse::StoreSchema(ret));
+                                scope.respond(id, WorkerResponse::SchemaRequestStore(ret));
                             });
                         }
                         Err(e) => {
-                            scope.respond(id, WorkerResponse::StoreSchema(Err(e.to_string())));
+                            scope.respond(id, WorkerResponse::SchemaRequestStore(Err(e)));
                         }
                     };
                 }
+            }
+            WorkerRequest::VerifyFolder((handle, is_readwrite)) => {
+                let _stop = Stopwatch::new("SqpackWorker::VerifyFolder");
+                let scope = scope.clone();
+                spawn_local(async move {
+                    let _stop = _stop;
+                    let ret = verify_permission(
+                        if is_readwrite {
+                            web_sys::FileSystemPermissionMode::Readwrite
+                        } else {
+                            web_sys::FileSystemPermissionMode::Read
+                        },
+                        &handle.0,
+                    )
+                    .await
+                    .map_err(|e| e.to_string());
+                    scope.respond(id, WorkerResponse::VerifyFolder(ret));
+                });
             }
         }
     }

@@ -41,36 +41,13 @@ impl<T> Directory<T> {
         ret.fill_map(ret.handle.clone(), PathBuf::new()).await?;
         Ok(ret)
     }
-    async fn verify_permission(&self, file: &FileSystemFileHandle) -> JsResult<()> {
-        Self::verify_permission_mode(self.mode, file).await
-    }
-
-    async fn verify_permission_mode(
-        mode: FileSystemPermissionMode,
-        file: &FileSystemFileHandle,
-    ) -> JsResult<()> {
-        let perms = FileSystemHandlePermissionDescriptor::new();
-        perms.set_mode(mode);
-        let perm = JsFuture::from(file.query_permission_with_descriptor(&perms)).await?;
-        let perm = PermissionState::from_js_value(&perm)
-            .ok_or_else(|| JsErr::msg("permission is not a PermissionState"))?;
-        if perm == PermissionState::Granted {
-            return Ok(());
-        }
-        let perm = JsFuture::from(file.query_permission_with_descriptor(&perms)).await?;
-        let perm = PermissionState::from_js_value(&perm)
-            .ok_or_else(|| JsErr::msg("permission is not a PermissionState"))?;
-        if perm == PermissionState::Granted {
-            return Ok(());
-        }
-        Err(JsErr::msg("permission denied access to file"))
-    }
 
     async fn fill_map(
         &mut self,
         directory: FileSystemDirectoryHandle,
         path: PathBuf,
     ) -> JsResult<()> {
+        verify_permission(self.mode, &directory).await?;
         let mut entries = JsStream::from(directory.values());
         while let Some(entry) = entries.next().await {
             let entry = entry?
@@ -83,7 +60,7 @@ impl<T> Directory<T> {
                         .map_err(|_| JsErr::msg("entry is not a FileSystemFileHandle"))?;
                     let key = path.join(file_handle.name());
                     if let Entry::Vacant(e) = self.files.entry(key) {
-                        Self::verify_permission_mode(self.mode, &file_handle).await?;
+                        verify_permission(self.mode, &file_handle).await?;
                         e.insert((*self.mapper)(file_handle).await?);
                     }
                 }
@@ -149,4 +126,28 @@ pub async fn get_file_writer(
         .await?
         .dyn_into::<FileSystemWritableFileStream>()
         .map_err(|_| JsErr::msg("entry is not a FileSystemWritableFileStream"))
+}
+
+pub async fn verify_permission(
+    mode: FileSystemPermissionMode,
+    handle: &FileSystemHandle,
+) -> JsResult<()> {
+    let perms = FileSystemHandlePermissionDescriptor::new();
+    perms.set_mode(mode);
+    let perm = JsFuture::from(handle.query_permission_with_descriptor(&perms)).await?;
+    let perm = PermissionState::from_js_value(&perm)
+        .ok_or_else(|| JsErr::msg("permission is not a PermissionState"))?;
+    if perm == PermissionState::Granted {
+        return Ok(());
+    }
+    let perm = JsFuture::from(handle.request_permission_with_descriptor(&perms)).await?;
+    let perm = PermissionState::from_js_value(&perm)
+        .ok_or_else(|| JsErr::msg("permission is not a PermissionState"))?;
+    if perm == PermissionState::Granted {
+        return Ok(());
+    }
+    Err(JsErr::msg(format!(
+        "permission denied access to file (request for {} was {perm:?})",
+        handle.name()
+    )))
 }

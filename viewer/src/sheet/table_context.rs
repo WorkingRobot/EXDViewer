@@ -171,7 +171,7 @@ impl TableContext {
         });
 
         entry
-            .get(|result| {
+            .get_mut(|result| {
                 result
                     .map(|(sheet, schema)| TableContext::new(self.0.global.clone(), sheet, schema))
                     .map_err(|e| e.into())

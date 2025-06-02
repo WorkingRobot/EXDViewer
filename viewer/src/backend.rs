@@ -17,8 +17,8 @@ struct BackendImpl {
 
 impl Backend {
     pub async fn new(config: BackendConfig) -> Result<Self> {
-        Ok(Self(Rc::new(BackendImpl {
-            excel_provider: match config.location {
+        let excel = async {
+            anyhow::Result::<_>::Ok(match config.location {
                 #[cfg(not(target_arch = "wasm32"))]
                 InstallLocation::Sqpack(path) => {
                     BoxedExcelProvider::new_sqpack(crate::excel::sqpack::SqpackFileProvider::new(
@@ -28,30 +28,48 @@ impl Backend {
                 }
                 #[cfg(target_arch = "wasm32")]
                 InstallLocation::Worker(path) => {
-                    BoxedExcelProvider::new_worker(
-                        crate::excel::worker::WorkerFileProvider::new(path).await?,
-                    )
-                    .await?
+                    use crate::excel::worker::WorkerFileProvider;
+                    let handle = WorkerFileProvider::folders()
+                        .await?
+                        .into_iter()
+                        .find(|f| f.0.name() == path)
+                        .ok_or_else(|| anyhow::anyhow!("WorkerFileProvider: Entry not found"))?;
+                    WorkerFileProvider::verify_folder(handle.clone()).await?;
+                    BoxedExcelProvider::new_worker(WorkerFileProvider::new(handle).await?).await?
                 }
 
                 InstallLocation::Web(base_url) => {
                     BoxedExcelProvider::new_web(WebFileProvider::from_str(&base_url)?).await?
                 }
-            },
-            schema_provider: match config.schema {
+            })
+        };
+        let schema = async {
+            anyhow::Result::<_>::Ok(match config.schema {
                 #[cfg(not(target_arch = "wasm32"))]
                 SchemaLocation::Local(path) => {
                     BoxedSchemaProvider::new_local(crate::schema::local::LocalProvider::new(&path))
                 }
                 #[cfg(target_arch = "wasm32")]
-                SchemaLocation::Worker(path) => BoxedSchemaProvider::new_worker(
-                    crate::schema::worker::WorkerProvider::new(path).await?,
-                ),
+                SchemaLocation::Worker(path) => {
+                    use crate::schema::worker::WorkerProvider;
+                    let handle = WorkerProvider::folders()
+                        .await?
+                        .into_iter()
+                        .find(|f| f.0.name() == path)
+                        .ok_or_else(|| anyhow::anyhow!("WorkerProvider: Entry not found"))?;
+                    WorkerProvider::verify_folder(handle.clone()).await?;
+                    BoxedSchemaProvider::new_worker(WorkerProvider::new(handle).await?)
+                }
 
                 SchemaLocation::Web(base_url) => {
                     BoxedSchemaProvider::new_web(WebProvider::new(base_url))
                 }
-            },
+            })
+        };
+        let (excel, schema) = futures_util::try_join!(excel, schema)?;
+        Ok(Self(Rc::new(BackendImpl {
+            excel_provider: excel,
+            schema_provider: schema,
         })))
     }
 

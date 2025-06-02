@@ -10,27 +10,14 @@ use image::RgbaImage;
 use ironworks::file::File;
 use std::io::Cursor;
 use url::Url;
-use web_sys::FileSystemDirectoryHandle;
 
 pub struct WorkerFileProvider(());
 
 impl WorkerFileProvider {
-    pub async fn new(name: String) -> anyhow::Result<Self> {
-        match worker::transact(WorkerRequest::GetStoredFolder(name)).await {
-            WorkerResponse::GetStoredFolder(Ok(Some(f))) => {
-                match worker::transact(WorkerRequest::SetupFolder(f)).await {
-                    WorkerResponse::SetupFolder(Ok(())) => Ok(Self(())),
-                    WorkerResponse::SetupFolder(Err(e)) => Err(anyhow::anyhow!(
-                        "WorkerFileProvider: failed to setup folder: {}",
-                        e
-                    )),
-                    _ => Err(anyhow::anyhow!("WorkerFileProvider: invalid response")),
-                }
-            }
-            WorkerResponse::GetStoredFolder(Ok(None)) => {
-                Err(anyhow::anyhow!("WorkerFileProvider: folder not found"))
-            }
-            WorkerResponse::GetStoredFolder(Err(e)) => Err(anyhow::anyhow!(
+    pub async fn new(handle: WorkerDirectory) -> anyhow::Result<Self> {
+        match worker::transact(WorkerRequest::DataSetup(handle)).await {
+            WorkerResponse::DataSetup(Ok(())) => Ok(Self(())),
+            WorkerResponse::DataSetup(Err(e)) => Err(anyhow::anyhow!(
                 "WorkerFileProvider: failed to setup folder: {}",
                 e
             )),
@@ -38,10 +25,10 @@ impl WorkerFileProvider {
         }
     }
 
-    pub async fn folders() -> anyhow::Result<Vec<String>> {
-        match worker::transact(WorkerRequest::GetStoredNames()).await {
-            WorkerResponse::GetStoredNames(Ok(folders)) => Ok(folders),
-            WorkerResponse::GetStoredNames(Err(e)) => Err(anyhow::anyhow!(
+    pub async fn folders() -> anyhow::Result<Vec<WorkerDirectory>> {
+        match worker::transact(WorkerRequest::DataGet()).await {
+            WorkerResponse::DataGet(Ok(folders)) => Ok(folders),
+            WorkerResponse::DataGet(Err(e)) => Err(anyhow::anyhow!(
                 "WorkerFileProvider: failed to get folders: {}",
                 e
             )),
@@ -49,11 +36,22 @@ impl WorkerFileProvider {
         }
     }
 
-    pub async fn add_folder(handle: FileSystemDirectoryHandle) -> anyhow::Result<String> {
-        match worker::transact(WorkerRequest::StoreFolder(WorkerDirectory(handle.clone()))).await {
-            WorkerResponse::StoreFolder(Ok(())) => Ok(handle.name()),
-            WorkerResponse::StoreFolder(Err(e)) => Err(anyhow::anyhow!(
+    pub async fn add_folder(handle: WorkerDirectory) -> anyhow::Result<()> {
+        match worker::transact(WorkerRequest::DataStore(handle)).await {
+            WorkerResponse::DataStore(Ok(())) => Ok(()),
+            WorkerResponse::DataStore(Err(e)) => Err(anyhow::anyhow!(
                 "WorkerFileProvider: failed to add folder: {}",
+                e
+            )),
+            _ => Err(anyhow::anyhow!("WorkerFileProvider: invalid response")),
+        }
+    }
+
+    pub async fn verify_folder(handle: WorkerDirectory) -> anyhow::Result<()> {
+        match worker::transact(WorkerRequest::VerifyFolder((handle, false))).await {
+            WorkerResponse::VerifyFolder(Ok(())) => Ok(()),
+            WorkerResponse::VerifyFolder(Err(e)) => Err(anyhow::anyhow!(
+                "WorkerFileProvider: failed to verify folder: {}",
                 e
             )),
             _ => Err(anyhow::anyhow!("WorkerFileProvider: invalid response")),
@@ -63,47 +61,37 @@ impl WorkerFileProvider {
 
 #[async_trait(?Send)]
 impl FileProvider for WorkerFileProvider {
-    async fn file<T: File>(&self, path: &str) -> Result<T, ironworks::Error> {
-        if let WorkerResponse::File(result) =
-            worker::transact(WorkerRequest::File(path.to_string())).await
+    async fn file<T: File>(&self, path: &str) -> anyhow::Result<T> {
+        if let WorkerResponse::DataRequestFile(result) =
+            worker::transact(WorkerRequest::DataRequestFile(path.to_string())).await
         {
             let file =
                 result.map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))?;
-            T::read(Cursor::new(file))
+            Ok(T::read(Cursor::new(file))?)
         } else {
-            return Err(ironworks::Error::Invalid(
-                ironworks::ErrorValue::Other("WorkerFileProvider".to_string()),
-                "invalid response from worker".to_string(),
-            ));
+            Err(anyhow::anyhow!(
+                "WorkerFileProvider: invalid response from worker"
+            ))
         }
     }
 
-    async fn get_icon(
-        &self,
-        icon_id: u32,
-        hires: bool,
-    ) -> Result<Either<Url, RgbaImage>, anyhow::Error> {
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
         let path = get_icon_path(icon_id, hires);
-        if let WorkerResponse::Texture(result) =
-            worker::transact(WorkerRequest::Texture(path.to_string())).await
+        if let WorkerResponse::DataRequestTexture(result) =
+            worker::transact(WorkerRequest::DataRequestTexture(path.to_string())).await
         {
             let file = result
-                .map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))
+                .map_err(|e| anyhow::anyhow!("WorkerFileProvider: failed to get texture: {}", e))
                 .and_then(|(width, height, data)| {
                     RgbaImage::from_vec(width, height, data).ok_or_else(|| {
-                        ironworks::Error::Invalid(
-                            ironworks::ErrorValue::Other("WorkerFileProvider".to_string()),
-                            "invalid image data".to_string(),
-                        )
+                        anyhow::anyhow!("WorkerFileProvider: failed to create image from data")
                     })
                 })?;
             Ok(Either::Right(file))
         } else {
-            return Err(ironworks::Error::Invalid(
-                ironworks::ErrorValue::Other("WorkerFileProvider".to_string()),
-                "invalid response from worker".to_string(),
-            )
-            .into());
+            Err(anyhow::anyhow!(
+                "WorkerFileProvider: invalid response from worker"
+            ))
         }
     }
 }
