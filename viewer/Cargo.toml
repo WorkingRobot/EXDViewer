@@ -19,6 +19,9 @@ eframe = { version = "0.31", default-features = false, features = [
     "persistence",   # Enable restoring app state when restarting the app.
     "wayland",       # To support Linux (and CI)
 ] }
+catppuccin-egui = { version = "5.5.0", default-features = false, features = [
+    "egui31",
+] }
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 ironworks = { version = "0.4.1", features = ["excel", "sqpack", "tex"] }

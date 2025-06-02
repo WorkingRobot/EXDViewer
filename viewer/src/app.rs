@@ -2,8 +2,7 @@ use std::{cell::OnceCell, num::NonZero, rc::Rc};
 
 use egui::{
     Button, CentralPanel, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit,
-    ThemePreference, Vec2, Widget,
-    ahash::{HashMap, HashMapExt},
+    Vec2, Widget,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
     panel::Side,
     style::ScrollStyle,
@@ -26,15 +25,15 @@ use crate::{
     router::{Router, path::Path, route::RouteResponse},
     schema::provider::SchemaProvider,
     settings::{
-        ALWAYS_HIRES, BACKEND_CONFIG, DISPLAY_FIELD_SHOWN, LANGUAGE, LOGGER_SHOWN,
-        MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET, SHEETS_FILTER, SORTED_BY_OFFSET,
-        TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEMP_SHEET_FILTER,
+        ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, DISPLAY_FIELD_SHOWN,
+        LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET,
+        SHEET_FILTERS, SHEETS_FILTER, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO,
     },
     setup::{self, SetupWindow},
     sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
     utils::{
-        CodeTheme, CollapsibleSidePanel, ConvertiblePromise, IconManager, TrackedPromise,
-        tick_promises,
+        CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, IconManager,
+        TrackedPromise, tick_promises,
     },
 };
 
@@ -55,19 +54,6 @@ pub struct App {
     backend: Option<Backend>,
     sheet_data: LruCache<CachedSheetEntry, ConvertibleSheetPromise>,
     sheet_matcher: SkimMatcherV2,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        Self {
-            router: Rc::new(OnceCell::new()),
-            icon_manager: IconManager::new(),
-            setup_window: None,
-            backend: None,
-            sheet_data: LruCache::new(NonZero::new(32).unwrap()),
-            sheet_matcher: SkimMatcherV2::default(),
-        }
-    }
 }
 
 fn create_router(ctx: egui::Context) -> anyhow::Result<Router<App>> {
@@ -105,132 +91,127 @@ impl App {
     }
 
     fn draw_menubar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                ui.menu_button("App", |ui| {
-                    if ui.button("Configure").clicked() {
-                        self.navigate("/");
-                        ui.close_menu();
-                    }
-                    if !super::IS_WEB && ui.button("Quit").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        ui.close_menu();
-                    }
-                });
-
-                ui.menu_button("Language", |ui| {
-                    let mut saved_lang = LANGUAGE.get(ctx);
-                    for lang in Language::iter() {
-                        if lang != Language::None
-                            && ui
-                                .selectable_value(&mut saved_lang, lang, lang.to_string())
-                                .changed()
-                        {
-                            LANGUAGE.set(ctx, lang);
+        egui::TopBottomPanel::top("top_panel")
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style()).fill(ctx.style().visuals.code_bg_color),
+            )
+            .show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button("App", |ui| {
+                        if ui.button("Configure").clicked() {
+                            self.navigate("/");
                             ui.close_menu();
                         }
-                    }
-                });
-
-                ui.menu_button("View", |ui| {
-                    ui.menu_button("Color Theme", |ui| {
-                        let mut theme_preference = ui.ctx().options(|opt| opt.theme_preference);
-                        let r = ui.selectable_value(
-                            &mut theme_preference,
-                            ThemePreference::System,
-                            "💻 System",
-                        );
-                        let r = r.union(ui.selectable_value(
-                            &mut theme_preference,
-                            ThemePreference::Dark,
-                            "🌙 Dark",
-                        ));
-                        let r = r.union(ui.selectable_value(
-                            &mut theme_preference,
-                            ThemePreference::Light,
-                            "☀ Light",
-                        ));
-                        if r.changed() {
+                        if !super::IS_WEB && ui.button("Quit").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             ui.close_menu();
-                            ui.ctx().set_theme(theme_preference);
                         }
                     });
 
-                    ui.menu_button("Code Theme", |ui| {
-                        let mut theme = CodeTheme::from_memory(ui.ctx(), ui.style());
-
-                        for (id, name) in CodeTheme::themes() {
-                            if ui
-                                .selectable_value(&mut theme.theme, id.to_string(), name)
-                                .changed()
+                    ui.menu_button("Language", |ui| {
+                        let mut saved_lang = LANGUAGE.get(ctx);
+                        for lang in Language::iter() {
+                            if lang != Language::None
+                                && ui
+                                    .selectable_value(&mut saved_lang, lang, lang.to_string())
+                                    .changed()
                             {
-                                theme.clone().store_in_memory(ui.ctx());
+                                LANGUAGE.set(ctx, lang);
                                 ui.close_menu();
                             }
                         }
                     });
 
-                    ui.menu_button("Sort Columns by", |ui| {
-                        let mut sorted_by_offset = SORTED_BY_OFFSET.get(ctx);
-                        let r = ui.selectable_value(&mut sorted_by_offset, true, "Offset");
-                        let r = r.union(ui.selectable_value(&mut sorted_by_offset, false, "Index"));
-                        if r.changed() {
-                            ui.close_menu();
-                            SORTED_BY_OFFSET.set(ctx, sorted_by_offset);
+                    ui.menu_button("View", |ui| {
+                        ui.menu_button("Color Theme", |ui| {
+                            let mut color_theme = COLOR_THEME.get(ui.ctx());
+                            for theme in ColorTheme::themes() {
+                                if ui
+                                    .selectable_value(&mut color_theme, *theme, theme.name())
+                                    .changed()
+                                {
+                                    color_theme.apply(ui.ctx());
+                                    COLOR_THEME.set(ui.ctx(), color_theme);
+                                    // ui.close_menu();
+                                }
+                            }
+                        });
+
+                        ui.menu_button("Code Theme", |ui| {
+                            let mut theme = CODE_SYNTAX_THEME.get(ui.ctx());
+
+                            for (id, name) in CodeTheme::themes() {
+                                if ui
+                                    .selectable_value(&mut theme.theme, id.to_string(), name)
+                                    .changed()
+                                {
+                                    CODE_SYNTAX_THEME.set(ui.ctx(), theme.clone());
+                                }
+                            }
+                        });
+
+                        ui.menu_button("Sort Columns by", |ui| {
+                            let mut sorted_by_offset = SORTED_BY_OFFSET.get(ctx);
+                            let r = ui.selectable_value(&mut sorted_by_offset, true, "Offset");
+                            let r =
+                                r.union(ui.selectable_value(&mut sorted_by_offset, false, "Index"));
+                            if r.changed() {
+                                ui.close_menu();
+                                SORTED_BY_OFFSET.set(ctx, sorted_by_offset);
+                            }
+                        });
+
+                        {
+                            let mut thick_scrollbar = ctx.options(|o| {
+                                o.dark_style.spacing.scroll == ScrollStyle::solid()
+                                    && o.light_style.spacing.scroll == ScrollStyle::solid()
+                            });
+                            if ui
+                                .checkbox(&mut thick_scrollbar, "Solid Scrollbar")
+                                .changed()
+                            {
+                                ctx.all_styles_mut(|s| {
+                                    s.spacing.scroll = if thick_scrollbar {
+                                        ScrollStyle::solid()
+                                    } else {
+                                        ScrollStyle::default()
+                                    };
+                                });
+                                ui.close_menu();
+                            }
+                        }
+
+                        {
+                            let mut always_hires = ALWAYS_HIRES.get(ctx);
+                            if ui.checkbox(&mut always_hires, "HD Icons").changed() {
+                                ALWAYS_HIRES.set(ctx, always_hires);
+                                ui.close_menu();
+                            }
+                        }
+
+                        {
+                            let mut display_field_shown = DISPLAY_FIELD_SHOWN.get(ctx);
+                            if ui
+                                .checkbox(&mut display_field_shown, "Use Display Fields")
+                                .changed()
+                            {
+                                DISPLAY_FIELD_SHOWN.set(ctx, display_field_shown);
+                                ui.close_menu();
+                            }
+                        }
+
+                        {
+                            let mut logger_shown = LOGGER_SHOWN.get(ctx);
+                            if ui.checkbox(&mut logger_shown, "Show Log Window").changed() {
+                                LOGGER_SHOWN.set(ctx, logger_shown);
+                                // ui.close_menu();
+                            }
                         }
                     });
 
-                    {
-                        let mut thick_scrollbar = ctx.options(|o| {
-                            o.dark_style.spacing.scroll == ScrollStyle::solid()
-                                && o.light_style.spacing.scroll == ScrollStyle::solid()
-                        });
-                        if ui
-                            .checkbox(&mut thick_scrollbar, "Solid Scrollbar")
-                            .changed()
-                        {
-                            ctx.all_styles_mut(|s| {
-                                s.spacing.scroll = if thick_scrollbar {
-                                    ScrollStyle::solid()
-                                } else {
-                                    ScrollStyle::default()
-                                };
-                            });
-                            ui.close_menu();
-                        }
-                    }
-
-                    {
-                        let mut always_hires = ALWAYS_HIRES.get(ctx);
-                        if ui.checkbox(&mut always_hires, "HD Icons").changed() {
-                            ALWAYS_HIRES.set(ctx, always_hires);
-                            ui.close_menu();
-                        }
-                    }
-
-                    {
-                        let mut display_field_shown = DISPLAY_FIELD_SHOWN.get(ctx);
-                        if ui
-                            .checkbox(&mut display_field_shown, "Use Display Fields")
-                            .changed()
-                        {
-                            DISPLAY_FIELD_SHOWN.set(ctx, display_field_shown);
-                            ui.close_menu();
-                        }
-                    }
-
-                    {
-                        let mut logger_shown = LOGGER_SHOWN.get(ctx);
-                        if ui.checkbox(&mut logger_shown, "Show Log Window").changed() {
-                            LOGGER_SHOWN.set(ctx, logger_shown);
-                            ui.close_menu();
-                        }
-                    }
+                    add_links(ui);
                 });
-
-                add_links(ui);
             });
-        });
     }
 
     fn draw_logger(&mut self, ctx: &egui::Context) {
@@ -450,10 +431,9 @@ impl App {
                     });
                     ui.add_space(4.0);
                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                        let mut filter =
-                            TEMP_SHEET_FILTER.use_with(ui.ctx(), HashMap::new, |map| {
-                                map.entry(sheet_name.clone()).or_default().clone()
-                            });
+                        let mut filter = SHEET_FILTERS.use_with(ui.ctx(), |map| {
+                            map.entry(sheet_name.clone()).or_default().clone()
+                        });
                         let is_miscellaneous = backend
                             .excel()
                             .get_entries()
@@ -487,7 +467,7 @@ impl App {
                                     resolve_display_field: DISPLAY_FIELD_SHOWN.get(ui.ctx()),
                                 })
                             });
-                            TEMP_SHEET_FILTER.use_with(ui.ctx(), HashMap::new, |map| {
+                            SHEET_FILTERS.use_with(ui.ctx(), |map| {
                                 map.entry(sheet_name.clone()).insert_entry(filter);
                             });
                         }
@@ -648,8 +628,16 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_image_loaders(&cc.egui_ctx);
         Self::setup_fonts(&cc.egui_ctx);
+        Self::setup_theme(&cc.egui_ctx);
 
-        Self::default()
+        Self {
+            router: Rc::new(OnceCell::new()),
+            icon_manager: IconManager::new(),
+            setup_window: None,
+            backend: None,
+            sheet_data: LruCache::new(NonZero::new(32).unwrap()),
+            sheet_matcher: SkimMatcherV2::default(),
+        }
     }
 
     fn setup_fonts(ctx: &egui::Context) {
@@ -677,6 +665,10 @@ impl App {
                 priority: FontPriority::Lowest,
             }],
         ));
+    }
+
+    fn setup_theme(ctx: &egui::Context) {
+        COLOR_THEME.get(ctx).apply(ctx);
     }
 }
 

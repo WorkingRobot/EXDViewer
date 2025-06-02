@@ -1,7 +1,10 @@
 use crate::{
     schema::{Schema, boxed::BoxedSchemaProvider, provider::SchemaProvider},
-    settings::{SCHEMA_EDITOR_ERRORS_SHOWN, SCHEMA_EDITOR_VISIBLE, SCHEMA_EDITOR_WORD_WRAP},
-    utils::{CodeTheme, TrackedPromise, highlight, shortcut},
+    settings::{
+        CODE_SYNTAX_THEME, SCHEMA_EDITOR_ERRORS_SHOWN, SCHEMA_EDITOR_VISIBLE,
+        SCHEMA_EDITOR_WORD_WRAP,
+    },
+    utils::{TrackedPromise, highlight, shortcut},
 };
 use egui::{
     CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,
@@ -267,7 +270,7 @@ impl EditableSchema {
                     )
                     .show_inside(ui, |ui| {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                            let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
+                            let theme = CODE_SYNTAX_THEME.get(ui.ctx());
 
                             let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
                                 let mut layout_job =

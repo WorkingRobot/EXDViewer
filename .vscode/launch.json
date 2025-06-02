@@ -7,15 +7,14 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'exdviewer'",
+            "name": "Debug viewer",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=exdviewer",
-                    "--package=exdviewer"
+                    "--bin=viewer",
                 ],
                 "filter": {
-                    "name": "exdviewer",
+                    "name": "viewer",
                     "kind": "bin"
                 }
             },

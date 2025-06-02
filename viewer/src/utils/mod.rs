@@ -1,6 +1,7 @@
 mod cache;
 mod cloneable_error;
 mod collapsible_side_panel;
+mod color_theme;
 mod convertible_promise;
 mod icon_manager;
 #[cfg(target_arch = "wasm32")]
@@ -17,6 +18,7 @@ mod yield_now;
 pub use cache::KeyedCache;
 pub use cloneable_error::CloneableResult;
 pub use collapsible_side_panel::CollapsibleSidePanel;
+pub use color_theme::ColorTheme;
 pub use convertible_promise::{ConvertiblePromise, PromiseKind};
 pub use icon_manager::{IconManager, ManagedIcon};
 #[cfg(target_arch = "wasm32")]
