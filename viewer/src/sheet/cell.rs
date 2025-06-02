@@ -50,7 +50,7 @@ pub enum CellValue {
     Float(f32),
     Boolean(bool),
     Icon(u32),
-    ModelId(u64),
+    ModelId(Either<u32, u64>),
     Color(Color32),
     InvalidLink(i128),
     InProgressLink(i128),
@@ -241,12 +241,23 @@ impl<'a> Cell<'a> {
                     CellValue::Icon(icon_id)
                 }
                 SchemaColumnMeta::ModelId => {
-                    let model_id: u64 = read_integer(
-                        self.row,
-                        self.sheet_column.offset() as u32,
-                        self.sheet_column.kind(),
-                    )?;
-                    CellValue::ModelId(model_id)
+                    if self.sheet_column.kind() == ColumnKind::Int64
+                        || self.sheet_column.kind() == ColumnKind::UInt64
+                    {
+                        let model_id: u64 = read_integer(
+                            self.row,
+                            self.sheet_column.offset() as u32,
+                            self.sheet_column.kind(),
+                        )?;
+                        CellValue::ModelId(Either::Right(model_id))
+                    } else {
+                        let model_id: u32 = read_integer(
+                            self.row,
+                            self.sheet_column.offset() as u32,
+                            self.sheet_column.kind(),
+                        )?;
+                        CellValue::ModelId(Either::Left(model_id))
+                    }
                 }
                 SchemaColumnMeta::Color => {
                     let color: u32 = read_integer(
@@ -356,7 +367,24 @@ impl CellValue {
                 }
                 resp
             }
-            CellValue::ModelId(model_id) => copyable_label(ui, model_id),
+            CellValue::ModelId(model_id) => {
+                let label = model_id.map_either(
+                    |model_id| {
+                        let model = (model_id & 0xFFFF) as u16;
+                        let variant = ((model_id >> 16) & 0xFF) as u8;
+                        let stain = ((model_id >> 24) & 0xFF) as u8;
+                        format!("{model}, {variant}, {stain}")
+                    },
+                    |weapon_id| {
+                        let skeleton = (weapon_id & 0xFFFF) as u16;
+                        let model = ((weapon_id >> 16) & 0xFFFF) as u16;
+                        let variant = ((weapon_id >> 32) & 0xFFFF) as u16;
+                        let stain = ((weapon_id >> 48) & 0xFFFF) as u16;
+                        format!("{skeleton}, {model}, {variant}, {stain}")
+                    },
+                );
+                copyable_label(ui, label)
+            }
             CellValue::Color(color) => draw_color(ui, color),
             CellValue::InProgressLink(row_id) => copyable_label(ui, format!("...#{row_id}")),
             CellValue::InvalidLink(row_id) => copyable_label(ui, format!("???#{row_id}")),

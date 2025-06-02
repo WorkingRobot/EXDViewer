@@ -268,7 +268,24 @@ impl TableContext {
             CellValue::Float(f) => f.to_string().contains(&filter.to_lowercase()),
             CellValue::Boolean(b) => b.to_string().contains(&filter.to_lowercase()),
             CellValue::Icon(id) => id.to_string().contains(&filter.to_lowercase()),
-            CellValue::ModelId(id) => id.to_string().contains(&filter.to_lowercase()),
+            CellValue::ModelId(id) => {
+                let label = id.map_either(
+                    |model_id| {
+                        let model = (model_id & 0xFFFF) as u16;
+                        let variant = ((model_id >> 16) & 0xFF) as u8;
+                        let stain = ((model_id >> 24) & 0xFF) as u8;
+                        format!("{model}, {variant}, {stain}")
+                    },
+                    |weapon_id| {
+                        let skeleton = (weapon_id & 0xFFFF) as u16;
+                        let model = ((weapon_id >> 16) & 0xFFFF) as u16;
+                        let variant = ((weapon_id >> 32) & 0xFFFF) as u16;
+                        let stain = ((weapon_id >> 48) & 0xFFFF) as u16;
+                        format!("{skeleton}, {model}, {variant}, {stain}")
+                    },
+                );
+                label.contains(&filter.to_lowercase())
+            }
             CellValue::Color(color) => color.to_hex().contains(&filter.to_lowercase()),
             CellValue::InvalidLink(id) => id.to_string().contains(&filter.to_lowercase()),
             CellValue::InProgressLink(id) => {
