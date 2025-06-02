@@ -5,8 +5,6 @@ use egui::text::LayoutJob;
 use serde::{Deserialize, Serialize};
 use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 
-use crate::settings::CODE_SYNTAX_THEME;
-
 /// View some code with syntax highlighting and selection.
 pub fn code_view_ui(
     ui: &mut egui::Ui,
@@ -56,35 +54,11 @@ pub fn highlight(
     })
 }
 
-fn monospace_font_size(style: &egui::Style) -> f32 {
-    TextStyle::Monospace.resolve(style).size
-}
-
 /// A selected color theme.
 #[derive(Clone, Hash, PartialEq, Deserialize, Serialize)]
 pub struct CodeTheme {
     pub theme: String,
     pub font_id: egui::FontId,
-}
-
-impl CodeTheme {
-    /// Load code theme from egui memory.
-    pub fn from_memory(ctx: &egui::Context, style: &egui::Style) -> Self {
-        CODE_SYNTAX_THEME.get_or_insert(ctx, || Self {
-            theme: if style.visuals.dark_mode {
-                "base16-mocha.dark"
-            } else {
-                "Solarized (light)"
-            }
-            .to_owned(),
-            font_id: egui::FontId::monospace(monospace_font_size(style)),
-        })
-    }
-
-    /// Store theme to egui memory.
-    pub fn store_in_memory(self, ctx: &egui::Context) {
-        CODE_SYNTAX_THEME.set(ctx, self);
-    }
 }
 
 impl CodeTheme {
