@@ -73,7 +73,7 @@
   "lang": "en",
   "scope": "/",
   "start_url": "/",
-  "background_color": "#404040",
-  "theme_color": "#909090",
-  "display": "minimal-ui"
+  "background_color": "#1e1e2e",
+  "theme_color": "#1e1e2e",
+  "display": "standalone"
 }
