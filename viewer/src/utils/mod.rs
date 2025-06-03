@@ -10,7 +10,6 @@ mod shared_future;
 pub mod shortcut;
 mod syntax_highlighting;
 pub mod tex_loader;
-pub mod time;
 mod tracked_promise;
 mod unsend_promise;
 mod yield_now;

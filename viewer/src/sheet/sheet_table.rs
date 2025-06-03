@@ -2,16 +2,21 @@ use egui::{Align, Color32, Id, InnerResponse, Layout, Margin, Modal, Spinner, Ui
 use egui_table::TableDelegate;
 use itertools::Itertools;
 use lru::LruCache;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Duration, Instant};
 use std::{
     cell::{Cell, RefCell},
     num::NonZero,
     rc::Rc,
 };
+#[cfg(target_arch = "wasm32")]
+use web_time::{Duration, Instant};
 
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
-    utils::{ManagedIcon, PromiseKind, TrackedPromise, time, yield_to_ui},
+    stopwatch::Stopwatch,
+    utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_to_ui},
 };
 
 use super::{cell::CellResponse, table_context::TableContext};
@@ -361,8 +366,9 @@ impl SheetTable {
             let mut filtered_rows = Vec::new();
             let mut is_in_progress = false;
 
-            let mut last_now = time::now();
+            let mut last_now = Instant::now();
             let mut iters = 0;
+            const MAX_FRAME_TIME: Duration = Duration::from_millis(250);
             for chunk in &iter.enumerate().chunks(batch_count) {
                 for (row_nr, row) in chunk {
                     let (matches, in_progress) =
@@ -380,8 +386,8 @@ impl SheetTable {
                     return Err(anyhow::anyhow!("Filter cancelled"));
                 }
 
-                let now = time::now();
-                if now - last_now > 250.0 {
+                let now = Instant::now();
+                if now.duration_since(last_now) >= MAX_FRAME_TIME {
                     iters += 1;
                     last_now = now;
                     yield_to_ui().await;
