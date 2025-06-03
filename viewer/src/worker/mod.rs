@@ -3,7 +3,6 @@ mod directory;
 mod file;
 mod protocol;
 mod sqpack_worker;
-mod stopwatch;
 mod vfs;
 
 pub use codec::PreservingCodec;

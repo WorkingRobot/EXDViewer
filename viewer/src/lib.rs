@@ -15,6 +15,7 @@ mod schema;
 mod settings;
 mod setup;
 mod sheet;
+pub mod stopwatch;
 mod utils;
 #[cfg(target_arch = "wasm32")]
 pub mod worker;

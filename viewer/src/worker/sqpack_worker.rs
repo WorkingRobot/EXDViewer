@@ -10,13 +10,15 @@ use ironworks::{
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, js_sys::JsString};
 
-use crate::utils::{JsErr, tex_loader};
+use crate::{
+    stopwatch::Stopwatch,
+    utils::{JsErr, tex_loader},
+};
 
 use super::{
     WorkerDirectory, WorkerRequest, WorkerResponse,
     directory::{Directory, get_file_blob, get_file_writer, verify_permission},
     file::SyncAccessFile,
-    stopwatch::Stopwatch,
     vfs::DirectoryVfs,
 };
 
