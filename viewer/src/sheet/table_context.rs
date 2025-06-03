@@ -6,7 +6,7 @@ use itertools::Itertools;
 use crate::{
     excel::{
         base::BaseSheet,
-        provider::{ExcelProvider, ExcelRow, ExcelSheet},
+        provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     },
     schema::{Schema, provider::SchemaProvider},
     utils::{CloneableResult, ConvertiblePromise, TrackedPromise},
@@ -232,6 +232,14 @@ impl TableContext {
 
     pub fn display_field_cell<'a>(&'a self, row: ExcelRow<'a>) -> Option<anyhow::Result<Cell<'a>>> {
         Some(self.cell_by_offset(row, self.0.display_column_idx.get()?))
+    }
+
+    pub fn size_row(&self, row: ExcelRow<'_>, ui: &mut egui::Ui) -> f32 {
+        let size = (0..self.sheet().columns().len())
+            .filter_map(|column_idx| self.cell_by_offset(row, column_idx as u32).ok())
+            .map(|c| c.size(ui))
+            .reduce(|a, b| a.max(b));
+        size.unwrap_or_default() + 4.0
     }
 
     pub fn filter_row(

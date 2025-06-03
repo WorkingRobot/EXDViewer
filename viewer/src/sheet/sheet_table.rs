@@ -41,12 +41,11 @@ struct FilterValue {
 
 pub struct SheetTable {
     context: TableContext,
-    // Row index (not ID) to accumulated subrow count (row_nr)
+    // Accumulated subrow count (row_nr), indexed by row index (not ID)
     // This is used to map row_nr to row_id and subrow_id
     subrow_lookup: Option<Vec<u32>>,
-
-    // Cached row sizes, indexed by row_nr
-    row_sizes: RefCell<Vec<f32>>,
+    // Precomputed row sizes, indexed by row_nr
+    row_sizes: Vec<f32>,
 
     modal_image: Option<u32>,
 
@@ -61,9 +60,9 @@ pub struct SheetTable {
 }
 
 impl SheetTable {
-    pub fn new(context: TableContext) -> Self {
+    pub fn new(context: TableContext, ui: &mut egui::Ui) -> Self {
         let sheet = context.sheet();
-        let row_sizes = RefCell::new(Vec::with_capacity(sheet.subrow_count() as usize));
+
         let unfiltered_row_offsets = Rc::new(RefCell::new(Vec::with_capacity(
             sheet.subrow_count() as usize,
         )));
@@ -72,18 +71,25 @@ impl SheetTable {
         let subrow_lookup = if sheet.has_subrows() {
             let mut subrow_lookup = Vec::with_capacity(sheet.row_count() as usize);
             let mut offset = 0u32;
-            for i in 0..sheet.row_count() {
+            for row_id in sheet.get_row_ids() {
                 subrow_lookup.push(offset);
-                let row_id = sheet.get_row_id_at(i).unwrap();
-                offset += sheet.get_row_subrow_count(row_id).unwrap_or_else(|e| {
-                    log::error!("Failed to get subrow count for row {}: {:?}", i, e);
-                    0
-                }) as u32;
+                offset += sheet.get_row_subrow_count(row_id).unwrap() as u32;
             }
             Some(subrow_lookup)
         } else {
             None
         };
+
+        let mut row_sizes = Vec::with_capacity(sheet.subrow_count() as usize);
+        {
+            let _stop = Stopwatch::new(format!("Sizing - {}", sheet.name()));
+            let mut sizing_ui = ui.new_child(UiBuilder::new().sizing_pass());
+            for (row_id, subrow_id) in sheet.get_subrow_ids() {
+                row_sizes.push(
+                    context.size_row(sheet.get_subrow(row_id, subrow_id).unwrap(), &mut sizing_ui),
+                );
+            }
+        }
 
         Self {
             context,
@@ -216,68 +222,23 @@ impl SheetTable {
         }
     }
 
-    fn get_row_data(&self, row_id: u32, subrow_id: Option<u16>) -> anyhow::Result<ExcelRow<'_>> {
-        if let Some(subrow_id) = subrow_id {
-            self.context.sheet().get_subrow(row_id, subrow_id)
-        } else {
-            self.context.sheet().get_row(row_id)
-        }
-    }
-
-    fn size_row_single_uncached(&self, ui: &mut egui::Ui, row_nr: u64) -> anyhow::Result<f32> {
-        let (row_id, subrow_id) = self.get_row_id(row_nr)?;
-        let row = self.get_row_data(row_id, subrow_id)?;
-        let size = (0..self.context.sheet().columns().len())
-            .filter_map(|column_idx| self.context.cell_by_offset(row, column_idx as u32).ok())
-            .map(|c| c.size(ui))
-            .reduce(|a, b| a.max(b));
-        Ok(size.unwrap_or_default() + 4.0)
-    }
-
-    fn size_row_single(&self, ui: &mut egui::Ui, row_nr: u64) -> anyhow::Result<f32> {
-        let mut row_sizes = self.row_sizes.borrow_mut();
-        if let Some(size) = row_sizes.get(row_nr as usize) {
-            return Ok(*size);
-        }
-
-        let len = row_sizes.len() as u64;
-        row_sizes.reserve((row_nr - len + 1) as usize);
-        for i in len..=row_nr {
-            row_sizes.push(self.size_row_single_uncached(ui, i)?);
-        }
-        Ok(row_sizes[row_nr as usize])
-    }
-
-    fn get_filtered_row_offset(
-        &self,
-        ctx: &egui::Context,
-        filtered_row_nr: u64,
-    ) -> anyhow::Result<f32> {
+    fn get_filtered_row_offset(&self, filtered_row_nr: u64) -> anyhow::Result<f32> {
         let row_offsets = self.get_row_offsets();
+
         let mut row_offsets = row_offsets.borrow_mut();
         if let Some(offset) = row_offsets.get(filtered_row_nr as usize) {
             return Ok(*offset);
         }
-        let mut ui = egui::Ui::new(
-            ctx.clone(),
-            Id::new("size_row").with(filtered_row_nr),
-            UiBuilder::new().sizing_pass(),
-        );
 
         let (len, mut last_size) = (
             row_offsets.len() as u64,
             row_offsets.last().copied().unwrap_or_default(),
         );
 
-        // Pre-calculate
-        if let Some(row_nr) = filtered_row_nr.checked_sub(1) {
-            _ = self.size_row_single(&mut ui, self.get_filtered_row_nr(row_nr))?;
-        }
-
         row_offsets.reserve((filtered_row_nr - len) as usize);
         for i in len..filtered_row_nr {
             row_offsets.push(last_size);
-            last_size += self.size_row_single(&mut ui, self.get_filtered_row_nr(i))?;
+            last_size += self.row_sizes[self.get_filtered_row_nr(i) as usize];
         }
         row_offsets.push(last_size);
         Ok(row_offsets[filtered_row_nr as usize])
@@ -537,7 +498,13 @@ impl TableDelegate for SheetTable {
 
         let row_data = self
             .get_row_id(self.get_filtered_row_nr(row_nr))
-            .and_then(|(r, s)| Ok((r, s, self.get_row_data(r, s)?)));
+            .and_then(|(r, s)| {
+                Ok((
+                    r,
+                    s,
+                    self.context.sheet().get_subrow(r, s.unwrap_or_default())?,
+                ))
+            });
         let (row_id, subrow_id, row_data) = match row_data {
             Ok(row_data) => row_data,
             Err(error) => {
@@ -620,8 +587,8 @@ impl TableDelegate for SheetTable {
         }
     }
 
-    fn row_top_offset(&self, ctx: &egui::Context, _table_id: Id, row_nr: u64) -> f32 {
-        match self.get_filtered_row_offset(ctx, row_nr) {
+    fn row_top_offset(&self, _ctx: &egui::Context, _table_id: Id, row_nr: u64) -> f32 {
+        match self.get_filtered_row_offset(row_nr) {
             Ok(size) => size,
             Err(error) => {
                 log::error!("Failed to size row {}: {:?}", row_nr, error);

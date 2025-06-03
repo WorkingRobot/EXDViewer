@@ -38,6 +38,13 @@ pub trait ExcelSheet: ExcelHeader {
 
     fn get_row_ids(&self) -> impl Iterator<Item = u32>;
 
+    fn get_subrow_ids(&self) -> impl Iterator<Item = (u32, u16)> {
+        self.get_row_ids().flat_map(|row_id| {
+            (0..self.get_row_subrow_count(row_id).unwrap())
+                .map(move |subrow_id| (row_id, subrow_id))
+        })
+    }
+
     fn get_row_id_at(&self, index: u32) -> Result<u32>;
 
     fn get_row_subrow_count(&self, row_id: u32) -> Result<u16>;

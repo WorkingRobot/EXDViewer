@@ -390,16 +390,19 @@ impl App {
                             }
                             None => EditableSchema::from_miscellaneous(sheet_name)?,
                         };
-                        let table = SheetTable::new(TableContext::new(
-                            GlobalContext::new(
-                                ui.ctx().clone(),
-                                backend.clone(),
-                                language,
-                                self.icon_manager.clone(),
+                        let table = SheetTable::new(
+                            TableContext::new(
+                                GlobalContext::new(
+                                    ui.ctx().clone(),
+                                    backend.clone(),
+                                    language,
+                                    self.icon_manager.clone(),
+                                ),
+                                sheet.clone(),
+                                editor.get_schema().cloned(),
                             ),
-                            sheet.clone(),
-                            editor.get_schema().cloned(),
-                        ));
+                            ui,
+                        );
                         Ok((table, editor))
                     })
                 });
