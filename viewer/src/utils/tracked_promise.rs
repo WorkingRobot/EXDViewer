@@ -1,5 +1,8 @@
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -12,9 +15,12 @@ use super::convertible_promise::PromiseKind;
 pub struct TrackedPromise<T: Send + 'static>(Promise<T>);
 
 static RUNNING_PROMISES: AtomicUsize = AtomicUsize::new(0);
+static PROMISE_CTX: OnceLock<egui::Context> = OnceLock::new();
 
 /// Call this inside `App::update()`
 pub fn tick_promises(ctx: &egui::Context) {
+    PROMISE_CTX.get_or_init(|| ctx.clone());
+
     #[cfg(not(target_arch = "wasm32"))]
     poll_promise::tick_local();
 
@@ -43,6 +49,9 @@ impl<T: Send + 'static> TrackedPromise<T> {
 
     fn decrement() {
         RUNNING_PROMISES.fetch_sub(1, Ordering::SeqCst);
+        PROMISE_CTX.get().inspect(|ctx| {
+            ctx.request_repaint();
+        });
     }
 }
 
