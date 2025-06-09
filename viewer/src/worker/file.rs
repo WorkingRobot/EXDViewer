@@ -134,7 +134,7 @@ impl Seek for SyncAccessFile {
                     })?;
             }
             std::io::SeekFrom::Current(v) => {
-                self.offset.checked_add_signed(v).ok_or_else(|| {
+                self.offset = self.offset.checked_add_signed(v).ok_or_else(|| {
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
                         "offset would over/underflow",
