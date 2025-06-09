@@ -186,7 +186,10 @@ impl TableContext {
     ) -> Option<Option<(String, TableContext)>> {
         sheets
             .iter()
-            .find_map(|s| match self.try_get_sheet(s.clone()) {
+            .map(|s| (s, self.try_get_sheet(s.clone())))
+            .collect_vec()
+            .into_iter()
+            .find_map(|(s, result)| match result {
                 None => Some(None),
                 Some(Ok(table)) => {
                     if table.sheet().get_row(row_id).is_ok() {
