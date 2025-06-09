@@ -58,6 +58,7 @@ impl WorkerProvider {
 #[async_trait(?Send)]
 impl SchemaProvider for WorkerProvider {
     async fn get_schema_text(&self, name: &str) -> anyhow::Result<String> {
+        log::info!("WorkerProvider: requesting schema {:?}", name);
         if let WorkerResponse::SchemaRequestGet(result) =
             worker::transact(WorkerRequest::SchemaRequestGet(format!("{name}.yml"))).await
         {
@@ -76,6 +77,7 @@ impl SchemaProvider for WorkerProvider {
     }
 
     async fn save_schema(&self, name: &str, text: &str) -> anyhow::Result<()> {
+        log::info!("WorkerProvider: saving schema {:?}", name);
         if let WorkerResponse::SchemaRequestStore(result) = worker::transact(
             WorkerRequest::SchemaRequestStore((format!("{name}.yml"), text.to_string())),
         )

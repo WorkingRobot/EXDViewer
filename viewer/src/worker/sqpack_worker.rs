@@ -153,14 +153,14 @@ impl Worker for SqpackWorker {
                 });
             }
             WorkerRequest::DataRequestFile(path) => {
-                let _stop = Stopwatch::new("SqpackWorker::DataRequestFile");
+                let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestFile({path:?})"));
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
                     let file = inst.0.file::<Vec<u8>>(&path).map_err(|e| e.to_string());
                     scope.respond(id, WorkerResponse::DataRequestFile(file));
                 }
             }
             WorkerRequest::DataRequestTexture(path) => {
-                let _stop = Stopwatch::new("SqpackWorker::DataRequestTexture");
+                let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestTexture({path:?})"));
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
                     let data = tex_loader::read(&inst.0, &path)
                         .map(|data| {
@@ -216,7 +216,7 @@ impl Worker for SqpackWorker {
                 });
             }
             WorkerRequest::SchemaRequestGet(name) => {
-                let _stop = Stopwatch::new("SqpackWorker::SchemaRequestGet");
+                let _stop = Stopwatch::new(format!("SqpackWorker::SchemaRequestGet({name:?})"));
                 if let Some(inst) = self.schema_instance.borrow().as_ref() {
                     match inst.get_file_handle(name).map_err(|e| e.to_string()) {
                         Ok(handle) => {
@@ -242,7 +242,7 @@ impl Worker for SqpackWorker {
                 }
             }
             WorkerRequest::SchemaRequestStore((name, data)) => {
-                let _stop = Stopwatch::new("SqpackWorker::SchemaRequestStore");
+                let _stop = Stopwatch::new(format!("SqpackWorker::SchemaRequestStore({name:?})"));
                 if let Some(inst) = self.schema_instance.borrow().as_ref() {
                     match inst.get_file_handle(name).map_err(|e| e.to_string()) {
                         Ok(handle) => {
