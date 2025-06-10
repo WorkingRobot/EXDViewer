@@ -1,6 +1,7 @@
 use std::{cell::RefCell, convert::Infallible, rc::Rc};
 
 use eframe::wasm_bindgen::JsCast;
+use futures_util::lock::Mutex;
 use gloo_worker::{HandlerId, Worker, WorkerScope};
 use indexed_db::Database;
 use ironworks::{
@@ -22,7 +23,7 @@ use super::{
 
 pub struct SqpackWorker {
     install_instance: Rc<RefCell<Option<InstallInstance>>>,
-    schema_instance: Rc<RefCell<Option<DynamicDirectory>>>,
+    schema_instance: Rc<Mutex<Option<DynamicDirectory>>>,
 }
 
 const STORE_DATA: &str = "folders";
@@ -100,7 +101,7 @@ impl Worker for SqpackWorker {
     fn create(_scope: &WorkerScope<Self>) -> Self {
         Self {
             install_instance: Rc::new(None.into()),
-            schema_instance: Rc::new(None.into()),
+            schema_instance: Rc::new(Mutex::new(None)),
         }
     }
 
@@ -198,11 +199,8 @@ impl Worker for SqpackWorker {
                         web_sys::FileSystemPermissionMode::Readwrite,
                         false,
                     );
-                    let result = Self::add_db_folder_impl(STORE_SCHEMA, handle.0)
-                        .await
-                        .map(|_| {
-                            schema_instance.borrow_mut().replace(ret);
-                        });
+                    schema_instance.lock().await.replace(ret);
+                    let result = Self::add_db_folder_impl(STORE_SCHEMA, handle.0).await;
                     scope.respond(id, WorkerResponse::SchemaSetup(result));
                 });
             }
@@ -213,7 +211,7 @@ impl Worker for SqpackWorker {
                 let scope = scope.clone();
                 spawn_local(async move {
                     let _stop = _stop;
-                    if let Some(inst) = schema_instance.borrow().as_ref() {
+                    if let Some(inst) = schema_instance.lock().await.as_ref() {
                         match inst.get_file_handle(name).await.map_err(|e| e.to_string()) {
                             Ok(handle) => {
                                 let ret = get_file_str(handle).await.map_err(|e| e.to_string());
@@ -231,7 +229,7 @@ impl Worker for SqpackWorker {
                 let schema_instance = self.schema_instance.clone();
                 let scope = scope.clone();
                 spawn_local(async move {
-                    if let Some(inst) = schema_instance.borrow().as_ref() {
+                    if let Some(inst) = schema_instance.lock().await.as_ref() {
                         let _stop = _stop;
                         match inst.get_file_handle(name).await.map_err(|e| e.to_string()) {
                             Ok(handle) => {
