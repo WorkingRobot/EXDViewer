@@ -368,15 +368,19 @@ fn radio(ui: &mut egui::Ui, selected: bool, text: impl Into<WidgetText>) -> bool
 }
 
 #[cfg(target_arch = "wasm32")]
+type SelectedPickerPromise = UnsendPromise<anyhow::Result<WorkerDirectory>>;
+
+#[cfg(target_arch = "wasm32")]
+type FolderListPromise = UnsendPromise<anyhow::Result<Vec<WorkerDirectory>>>;
+#[cfg(target_arch = "wasm32")]
+type ConvertibleFolderListPromise =
+    ConvertiblePromise<FolderListPromise, anyhow::Result<Vec<WorkerDirectory>>>;
+
+#[cfg(target_arch = "wasm32")]
 #[derive(Default)]
 struct SetupPromises {
-    selected: Option<UnsendPromise<anyhow::Result<WorkerDirectory>>>,
-    list: Option<
-        ConvertiblePromise<
-            UnsendPromise<anyhow::Result<Vec<WorkerDirectory>>>,
-            anyhow::Result<Vec<WorkerDirectory>>,
-        >,
-    >,
+    selected: Option<SelectedPickerPromise>,
+    list: Option<ConvertibleFolderListPromise>,
 }
 
 #[cfg(target_arch = "wasm32")]
