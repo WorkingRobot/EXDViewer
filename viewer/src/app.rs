@@ -1,5 +1,6 @@
 use std::{cell::OnceCell, num::NonZero, rc::Rc};
 
+use anyhow::Result;
 use egui::{
     Button, CentralPanel, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit,
     Vec2, Widget,
@@ -42,10 +43,13 @@ type CachedSheetEntry = (
     String,   // sheet name
 );
 
-type CachedSheetPromise =
-    TrackedPromise<anyhow::Result<(BaseSheet, Option<anyhow::Result<String>>)>>;
-type ConvertibleSheetPromise =
-    ConvertiblePromise<CachedSheetPromise, anyhow::Result<(SheetTable, EditableSchema)>>;
+type CachedSheetPromise = TrackedPromise<Result<BaseSheet>>;
+type ConvertibleSheetPromise = ConvertiblePromise<CachedSheetPromise, Result<SheetTable>>;
+
+type CachedSchemaEntry = String; // sheet name
+
+type CachedSchemaPromise = TrackedPromise<Option<Result<String>>>;
+type ConvertibleSchemaPromise = ConvertiblePromise<CachedSchemaPromise, Result<EditableSchema>>;
 
 pub struct App {
     router: Rc<OnceCell<Router<Self>>>,
@@ -53,10 +57,11 @@ pub struct App {
     setup_window: Option<setup::SetupWindow>,
     backend: Option<Backend>,
     sheet_data: LruCache<CachedSheetEntry, ConvertibleSheetPromise>,
+    schema_data: LruCache<CachedSchemaEntry, ConvertibleSchemaPromise>,
     sheet_matcher: SkimMatcherV2,
 }
 
-fn create_router(ctx: egui::Context) -> anyhow::Result<Router<App>> {
+fn create_router(ctx: egui::Context) -> Result<Router<App>> {
     let mut builder = Router::<App>::new(ctx);
     builder.set_title_formatter(|title| format!("EXDViewer - {title}"));
     builder.add_route("/", App::on_setup, App::draw_setup)?;
@@ -352,73 +357,91 @@ impl App {
                     self.sheet_data
                         .get_or_insert_mut_ref(&(language, sheet_name.clone()), || {
                             let sheet_name = sheet_name.clone();
-                            let is_sheet_miscellaneous = backend
-                                .excel()
-                                .get_entries()
-                                .get(&sheet_name)
-                                .cloned()
-                                .unwrap_or_default()
-                                < 0;
                             let excel = backend.excel().clone();
-                            let schema = backend.schema().clone();
 
                             ConvertiblePromise::new_promise(TrackedPromise::spawn_local(
-                                async move {
-                                    Ok(futures_util::try_join!(
-                                        excel.get_sheet(&sheet_name, language),
-                                        async {
-                                            if !is_sheet_miscellaneous {
-                                                Ok(Some(schema.get_schema_text(&sheet_name).await))
-                                            } else {
-                                                Ok(None)
-                                            }
-                                        },
-                                    )?)
-                                },
+                                async move { excel.get_sheet(&sheet_name, language).await },
                             ))
                         });
 
-                let sheet_data = sheet_data.get_mut(|result| {
-                    result.and_then(|(sheet, schema)| {
-                        let sheet_name = sheet.name().to_owned();
-                        let editor = match schema {
-                            Some(Ok(schema)) => EditableSchema::new(sheet_name, schema),
-                            Some(Err(error)) => {
-                                // Soft-fail on schema retrieval/parsing errors
-                                log::error!("Failed to get schema: {:?}", error);
-                                EditableSchema::from_blank(sheet_name, sheet.columns().len())?
-                            }
-                            None => EditableSchema::from_miscellaneous(sheet_name)?,
-                        };
-                        let table = SheetTable::new(
-                            TableContext::new(
-                                GlobalContext::new(
-                                    ui.ctx().clone(),
-                                    backend.clone(),
-                                    language,
-                                    self.icon_manager.clone(),
-                                ),
-                                sheet.clone(),
-                                editor.get_schema().cloned(),
-                            ),
-                            ui,
-                        );
-                        Ok((table, editor))
-                    })
+                let schema_data = self.schema_data.get_or_insert_mut_ref(&sheet_name, || {
+                    let sheet_name = sheet_name.clone();
+                    let is_sheet_miscellaneous = backend
+                        .excel()
+                        .get_entries()
+                        .get(&sheet_name)
+                        .cloned()
+                        .unwrap_or_default()
+                        < 0;
+                    let schema = backend.schema().clone();
+
+                    ConvertiblePromise::new_promise(TrackedPromise::spawn_local(async move {
+                        if !is_sheet_miscellaneous {
+                            Some(schema.get_schema_text(&sheet_name).await)
+                        } else {
+                            None
+                        }
+                    }))
                 });
 
-                let (table, editor) = match sheet_data {
-                    Some(Ok(data)) => data,
-                    Some(Err(err)) => {
-                        ui.label("Failed to load sheet");
-                        ui.label(err.to_string());
-                        return;
+                let data = sheet_data.get_mut_with(schema_data, |sheet, schema| {
+                    let mut converter =
+                        |sheet: Result<BaseSheet>,
+                         schema: Option<Result<String>>|
+                         -> Result<(SheetTable, EditableSchema)> {
+                            let sheet = sheet?;
+                            let sheet_name = sheet.name().to_owned();
+                            let editor = match schema {
+                                Some(Ok(schema)) => EditableSchema::new(sheet_name, schema),
+                                Some(Err(error)) => {
+                                    // Soft-fail on schema retrieval/parsing errors
+                                    log::error!("Failed to get schema: {:?}", error);
+                                    EditableSchema::from_blank(sheet_name, sheet.columns().len())?
+                                }
+                                None => EditableSchema::from_miscellaneous(sheet_name)?,
+                            };
+                            let table = SheetTable::new(
+                                TableContext::new(
+                                    GlobalContext::new(
+                                        ui.ctx().clone(),
+                                        backend.clone(),
+                                        language,
+                                        self.icon_manager.clone(),
+                                    ),
+                                    sheet.clone(),
+                                    editor.get_schema().cloned(),
+                                ),
+                                ui,
+                            );
+                            Ok((table, editor))
+                        };
+
+                    let result = converter(sheet, schema);
+                    match result {
+                        Ok((table, editor)) => (Ok(table), Ok(editor)),
+                        Err(err) => {
+                            log::error!("Failed to create sheet table: {:?}", err);
+                            let editor_err = anyhow::anyhow!("{:?}", err);
+                            (Err(err), Err(editor_err))
+                        }
                     }
+                });
+
+                let (sheet_data, schema_data) = match data {
+                    Some(data) => data,
                     None => {
                         ui.label("Loading...");
                         return;
                     }
                 };
+
+                if let Some(err) = sheet_data.as_ref().err().or(schema_data.as_ref().err()) {
+                    ui.label("Failed to load sheet");
+                    ui.label(err.to_string());
+                    return;
+                }
+
+                let (table, editor) = (sheet_data.as_mut().unwrap(), schema_data.as_mut().unwrap());
 
                 egui::TopBottomPanel::top("sheet_data_header").show_inside(ui, |ui| {
                     ui.add_space(4.0);
@@ -535,6 +558,9 @@ impl App {
     fn draw_setup(&mut self, ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) {
         if let Some((backend, config)) = self.setup_window.as_mut().unwrap().draw(ui.ctx()) {
             self.backend = Some(backend);
+            self.sheet_data.clear();
+            self.schema_data.clear();
+
             BACKEND_CONFIG.set(ui.ctx(), Some(config));
             if let Some(redirect_path) = path.query_pairs().get("redirect").map(|s| s.as_str()) {
                 self.navigate_replace(redirect_path);
@@ -637,6 +663,7 @@ impl App {
             setup_window: None,
             backend: None,
             sheet_data: LruCache::new(NonZero::new(32).unwrap()),
+            schema_data: LruCache::unbounded(),
             sheet_matcher: SkimMatcherV2::default(),
         }
     }

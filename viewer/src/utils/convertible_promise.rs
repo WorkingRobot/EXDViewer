@@ -42,14 +42,16 @@ impl<P: PromiseKind, T> ConvertiblePromise<P, T> {
         Self(Either::Left(promise))
     }
 
-    fn convert(&mut self, converter: impl FnOnce(P::Output) -> T) {
-        let should_swap = if let Left(promise) = &self.0 {
-            promise.ready()
-        } else {
-            false
-        };
+    fn should_swap(&self) -> bool {
+        matches!(&self.0, Left(promise) if promise.ready())
+    }
 
-        if should_swap {
+    fn converted(&self) -> bool {
+        matches!(&self.0, Right(_))
+    }
+
+    fn convert(&mut self, converter: impl FnOnce(P::Output) -> T) {
+        if self.should_swap() {
             replace_with::replace_with_or_abort(&mut self.0, |this| {
                 let promise = match this {
                     Left(promise) => promise,
@@ -69,5 +71,46 @@ impl<P: PromiseKind, T> ConvertiblePromise<P, T> {
     pub fn get(&mut self, converter: impl FnOnce(P::Output) -> T) -> Option<&T> {
         self.convert(converter);
         self.0.as_ref().right()
+    }
+
+    pub fn get_mut_with<'a, 'b, P2: PromiseKind, T2>(
+        &'a mut self,
+        other: &'b mut ConvertiblePromise<P2, T2>,
+        converter: impl FnOnce(P::Output, P2::Output) -> (T, T2),
+    ) -> Option<(&'a mut T, &'b mut T2)> {
+        if self.converted() != other.converted() {
+            return None;
+        }
+
+        if self.should_swap() && other.should_swap() {
+            // Convert both at the same time
+            replace_with::replace_with_or_abort(&mut self.0, |this| {
+                let this_promise = match this {
+                    Left(promise) => promise,
+                    Right(_) => unreachable!(),
+                };
+                let this_result = this_promise.block_and_take();
+
+                let mut converted_this_val = None;
+
+                replace_with::replace_with_or_abort(&mut other.0, |other| {
+                    let other_promise = match other {
+                        Left(promise) => promise,
+                        Right(_) => unreachable!(),
+                    };
+                    let other_result = other_promise.block_and_take();
+
+                    let (converted_this, converted_other) = converter(this_result, other_result);
+
+                    converted_this_val = Some(converted_this);
+
+                    Right(converted_other)
+                });
+
+                Right(converted_this_val.expect("Converter must always be called"))
+            });
+        }
+
+        self.0.as_mut().right().zip(other.0.as_mut().right())
     }
 }
