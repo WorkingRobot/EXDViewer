@@ -8,23 +8,14 @@ use web_sys::{File, FileSystemDirectoryHandle, FileSystemPermissionMode};
 
 use crate::utils::JsResult;
 
-use super::{
-    directory::{Directory, get_file_blob},
-    file::SyncAccessFile,
-};
+use super::{directory::Directory, file::SyncAccessFile};
 
-pub struct DirectoryVfs(Directory<File>);
+pub struct DirectoryVfs(Directory);
 
 impl DirectoryVfs {
     pub async fn new(handle: FileSystemDirectoryHandle) -> JsResult<Self> {
         Ok(Self(
-            Directory::new(
-                handle,
-                FileSystemPermissionMode::Read,
-                Box::new(|handle| Box::pin(get_file_blob(handle))),
-                true,
-            )
-            .await?,
+            Directory::new(handle, FileSystemPermissionMode::Read, true).await?,
         ))
     }
 }
