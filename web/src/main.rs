@@ -81,11 +81,19 @@ async fn main() -> Result<(), ServerError> {
         App::new()
             .wrap(
                 Helmet::new()
-                    .add(CrossOriginOpenerPolicy::same_origin())
-                    .add(CrossOriginEmbedderPolicy::require_corp())
+                    // .add(CrossOriginOpenerPolicy::same_origin())
+                    // .add(CrossOriginEmbedderPolicy::require_corp())
                     .add(XContentTypeOptions::nosniff()),
             )
-            .wrap(Cors::default())
+            .wrap(
+                Cors::default()
+                    .allowed_origin("http://localhost:3000")
+                    .allowed_origin("http://localhost:8080")
+                    .allowed_origin("http://127.0.0.1:3000")
+                    .allowed_origin("http://127.0.0.1:8080")
+                    .allowed_methods(vec!["GET"])
+                    .allowed_headers(vec!["Content-Type"]),
+            )
             .wrap(NormalizePath::new(TrailingSlash::Always))
             .wrap(Condition::new(
                 server_config.metrics_server_addr.is_some(),
