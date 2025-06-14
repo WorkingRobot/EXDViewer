@@ -13,16 +13,20 @@ use egui::{
 };
 use itertools::Itertools;
 use jsonschema::output::{ErrorDescription, OutputUnit};
-use std::collections::VecDeque;
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    rc::Rc,
+};
 
 pub struct EditableSchema {
     sheet_name: String,
-    original: String,
+    original: Rc<RefCell<String>>,
     text: String,
-    is_modified: bool,
+    is_modified: Rc<Cell<bool>>,
     schema: anyhow::Result<Result<Schema, VecDeque<OutputUnit<ErrorDescription>>>>,
-    save_promise: Option<TrackedPromise<()>>,
-    save_as_promise: Option<TrackedPromise<()>>,
+    save_promise: Cell<Option<TrackedPromise<()>>>,
+    save_as_promise: Cell<Option<TrackedPromise<()>>>,
 }
 
 impl EditableSchema {
@@ -30,12 +34,12 @@ impl EditableSchema {
         let schema = Schema::from_str(&schema_text);
         Self {
             sheet_name: sheet_name.into(),
-            original: schema_text.clone(),
+            original: Rc::new(RefCell::new(schema_text.clone())),
             text: schema_text,
-            is_modified: false,
+            is_modified: Rc::new(Cell::new(false)),
             schema,
-            save_promise: None,
-            save_as_promise: None,
+            save_promise: Cell::new(None),
+            save_as_promise: Cell::new(None),
         }
     }
 
@@ -43,12 +47,12 @@ impl EditableSchema {
         let text = serde_yml::to_string(&schema)?;
         Ok(Self {
             sheet_name: schema.name.clone(),
-            original: text.clone(),
+            original: Rc::new(RefCell::new(text.clone())),
             text,
-            is_modified: false,
+            is_modified: Rc::new(Cell::new(false)),
             schema: Ok(Ok(schema)),
-            save_promise: None,
-            save_as_promise: None,
+            save_promise: Cell::new(None),
+            save_as_promise: Cell::new(None),
         })
     }
 
@@ -65,7 +69,7 @@ impl EditableSchema {
     }
 
     pub fn is_modified(&self) -> bool {
-        self.is_modified
+        self.is_modified.get()
     }
 
     pub fn get_schema(&self) -> Option<&Schema> {
@@ -76,7 +80,7 @@ impl EditableSchema {
         let resp = self.draw_internal(ui, provider);
         if resp.changed() {
             self.schema = Schema::from_str(self.get_text());
-            self.is_modified = self.text != self.original;
+            self.is_modified.set(self.text != *self.original.borrow());
         }
         resp
     }
@@ -247,7 +251,7 @@ impl EditableSchema {
                                 add_separator = true;
                             }
 
-                            if self.is_modified {
+                            if self.is_modified() {
                                 if add_separator {
                                     ui.separator();
                                 }
@@ -354,26 +358,34 @@ impl EditableSchema {
     }
 
     fn command_revert(&mut self) {
-        self.text.replace_with(&self.original);
+        self.text.replace_with(&self.original.borrow());
     }
 
     fn command_clear(&mut self) {
         TextBuffer::clear(&mut self.text);
     }
 
-    fn command_save(&mut self, provider: &BoxedSchemaProvider) {
+    pub fn command_save(&self, provider: &BoxedSchemaProvider) {
         let sheet_name = self.sheet_name.clone();
         let sheet_data = self.text.clone();
         let provider = provider.clone();
 
-        self.save_promise = Some(TrackedPromise::spawn_local(async move {
-            if let Err(e) = provider.save_schema(&sheet_name, &sheet_data).await {
-                log::error!("Failed to save schema: {}", e);
-            }
-        }));
+        let original = self.original.clone();
+        let is_modified = self.is_modified.clone();
+
+        self.save_promise
+            .set(Some(TrackedPromise::spawn_local(async move {
+                if let Err(e) = provider.save_schema(&sheet_name, &sheet_data).await {
+                    log::error!("Failed to save schema: {}", e);
+                } else {
+                    log::info!("Schema '{}' saved successfully", sheet_name);
+                    original.replace(sheet_data);
+                    is_modified.set(false);
+                }
+            })));
     }
 
-    fn command_save_as(&mut self, provider: &BoxedSchemaProvider) {
+    pub fn command_save_as(&self, provider: &BoxedSchemaProvider) {
         let start_dir = provider
             .can_save_schemas()
             .then(|| provider.save_schema_start_dir())
@@ -382,18 +394,21 @@ impl EditableSchema {
         let sheet_name = self.sheet_name.clone();
         let sheet_data = self.text.clone();
 
-        self.save_as_promise = Some(TrackedPromise::spawn_local(async move {
-            let mut dialog = rfd::AsyncFileDialog::new()
-                .set_title("Save Schema As")
-                .set_file_name(format!("{}.yml", sheet_name));
-            if let Some(start_dir) = start_dir {
-                dialog = dialog.set_directory(start_dir);
-            }
-            if let Some(file) = dialog.save_file().await {
-                if let Err(e) = file.write(sheet_data.as_bytes()).await {
-                    log::error!("Failed to save schema: {}", e);
+        self.save_as_promise
+            .set(Some(TrackedPromise::spawn_local(async move {
+                let mut dialog = rfd::AsyncFileDialog::new()
+                    .set_title("Save Schema As")
+                    .set_file_name(format!("{}.yml", sheet_name));
+                if let Some(start_dir) = start_dir {
+                    dialog = dialog.set_directory(start_dir);
                 }
-            }
-        }));
+                if let Some(file) = dialog.save_file().await {
+                    if let Err(e) = file.write(sheet_data.as_bytes()).await {
+                        log::error!("Failed to save schema: {}", e);
+                    } else {
+                        log::info!("Schema '{}' saved successfully", sheet_name);
+                    }
+                }
+            })));
     }
 }

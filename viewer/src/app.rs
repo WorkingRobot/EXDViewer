@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, num::NonZero, rc::Rc};
+use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc};
 
 use anyhow::Result;
 use egui::{
@@ -15,6 +15,7 @@ use ironworks::excel::Language;
 use itertools::Itertools;
 use lru::LruCache;
 use matchit::Params;
+use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     backend::Backend,
@@ -59,6 +60,7 @@ pub struct App {
     sheet_data: LruCache<CachedSheetEntry, ConvertibleSheetPromise>,
     schema_data: LruCache<CachedSchemaEntry, ConvertibleSchemaPromise>,
     sheet_matcher: SkimMatcherV2,
+    save_promise: Option<TrackedPromise<()>>,
 }
 
 fn create_router(ctx: egui::Context) -> Result<Router<App>> {
@@ -276,7 +278,36 @@ impl App {
                 ui.add_space(4.0);
             });
 
-            egui::TopBottomPanel::bottom("egui_credit").show_inside(ui, powered_by_egui_and_eframe);
+            egui::TopBottomPanel::bottom("sheet_list_status").show_inside(ui, |ui| {
+                ScrollArea::horizontal()
+                    .min_scrolled_width(0.0)
+                    .show(ui, |ui| {
+                        ui.horizontal_centered(|ui| {
+                            let modified_schemas = self.get_modified_schemas();
+                            if !modified_schemas.is_empty() {
+                                ui.label(format!(
+                                    "{} modified schema{}",
+                                    modified_schemas.len(),
+                                    if modified_schemas.len() > 1 { "s" } else { "" }
+                                ))
+                                .on_hover_text(
+                                    modified_schemas.iter().map(|(name, _)| name).join("\n"),
+                                );
+                                let resp = Button::new(if modified_schemas.len() > 1 {
+                                    "Save All"
+                                } else {
+                                    "Save"
+                                })
+                                .right(ui);
+                                if resp.clicked() {
+                                    self.command_save_all_schemas();
+                                }
+                            } else {
+                                powered_by_egui_and_eframe(ui);
+                            }
+                        });
+                    });
+            });
 
             let sheets_filter = SHEETS_FILTER.get(ctx);
             let misc_sheets_shown = MISC_SHEETS_SHOWN.get(ctx);
@@ -649,6 +680,73 @@ impl App {
         self.draw_sheet_list(ui.ctx());
         self.draw_sheet_data(ui.ctx());
     }
+
+    fn get_modified_schemas(&self) -> Vec<(&String, &EditableSchema)> {
+        self.schema_data
+            .iter()
+            .filter_map(|(name, schema)| schema.try_get().ok().map(|s| (name, s)))
+            .filter_map(|(name, schema)| schema.as_ref().ok().map(|s| (name, s)))
+            .filter(|(_, schema)| schema.is_modified())
+            .collect()
+    }
+
+    fn command_save_all_schemas(&mut self) {
+        let backend = self.backend.as_ref().unwrap();
+        let modified_schemas = self.get_modified_schemas();
+
+        if modified_schemas.is_empty() {
+            log::info!("No modified schemas to save.");
+            return;
+        }
+
+        let provider = backend.schema();
+        let start_dir = provider
+            .can_save_schemas()
+            .then(|| provider.save_schema_start_dir())
+            .flatten();
+
+        if provider.can_save_schemas() {
+            for (_, schema) in modified_schemas {
+                schema.command_save(provider);
+            }
+        } else if let Ok((_, schema)) = modified_schemas.iter().exactly_one() {
+            schema.command_save_as(provider);
+        } else {
+            let create_archive = || -> Result<Vec<u8>> {
+                let mut archive = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+                for (sheet_name, schema) in modified_schemas {
+                    archive
+                        .start_file(format!("{sheet_name}.yml"), SimpleFileOptions::default())?;
+                    archive.write_all(schema.get_text().as_bytes())?;
+                }
+                Ok(archive.finish()?.into_inner())
+            };
+
+            let archive = match create_archive() {
+                Ok(archive) => archive,
+                Err(e) => {
+                    log::error!("Failed to create schema archive: {}", e);
+                    return;
+                }
+            };
+
+            self.save_promise = Some(TrackedPromise::spawn_local(async move {
+                let mut dialog = rfd::AsyncFileDialog::new()
+                    .set_title("Save Schemas As")
+                    .set_file_name("schemas.zip");
+                if let Some(start_dir) = start_dir {
+                    dialog = dialog.set_directory(start_dir);
+                }
+                if let Some(file) = dialog.save_file().await {
+                    if let Err(e) = file.write(&archive).await {
+                        log::error!("Failed to save schemas: {}", e);
+                    } else {
+                        log::info!("Saved all saved successfully");
+                    }
+                }
+            }));
+        }
+    }
 }
 
 impl App {
@@ -665,6 +763,7 @@ impl App {
             sheet_data: LruCache::new(NonZero::new(32).unwrap()),
             schema_data: LruCache::unbounded(),
             sheet_matcher: SkimMatcherV2::default(),
+            save_promise: None,
         }
     }
 
@@ -734,19 +833,13 @@ fn add_links(ui: &mut egui::Ui) {
 }
 
 fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
-    ScrollArea::horizontal()
-        .min_scrolled_width(0.0)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.label("Powered by ");
-                ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-                ui.label(" and ");
-                ui.hyperlink_to(
-                    "eframe",
-                    "https://github.com/emilk/egui/tree/master/crates/eframe",
-                );
-                ui.label(".");
-            });
-        });
+    ui.spacing_mut().item_spacing.x = 0.0;
+    ui.label("Powered by ");
+    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
+    ui.label(" and ");
+    ui.hyperlink_to(
+        "eframe",
+        "https://github.com/emilk/egui/tree/master/crates/eframe",
+    );
+    ui.label(".");
 }

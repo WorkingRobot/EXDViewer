@@ -63,6 +63,20 @@ impl<P: PromiseKind, T> ConvertiblePromise<P, T> {
         }
     }
 
+    pub fn try_get(&self) -> Result<&T, &P> {
+        match &self.0 {
+            Left(promise) => Err(promise),
+            Right(value) => Ok(value),
+        }
+    }
+
+    pub fn try_get_mut(&mut self) -> Result<&mut T, &mut P> {
+        match &mut self.0 {
+            Left(promise) => Err(promise),
+            Right(value) => Ok(value),
+        }
+    }
+
     pub fn get_mut(&mut self, converter: impl FnOnce(P::Output) -> T) -> Option<&mut T> {
         self.convert(converter);
         self.0.as_mut().right()
