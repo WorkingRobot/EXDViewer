@@ -10,6 +10,7 @@ mod app;
 mod backend;
 mod editable_schema;
 mod excel;
+mod goto;
 mod router;
 mod schema;
 mod settings;

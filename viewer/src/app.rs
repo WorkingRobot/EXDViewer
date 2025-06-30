@@ -24,6 +24,7 @@ use crate::{
         base::BaseSheet,
         provider::{ExcelHeader, ExcelProvider},
     },
+    goto,
     router::{Router, path::Path, route::RouteResponse},
     schema::provider::SchemaProvider,
     settings::{
@@ -61,6 +62,7 @@ pub struct App {
     schema_data: LruCache<CachedSchemaEntry, ConvertibleSchemaPromise>,
     sheet_matcher: SkimMatcherV2,
     save_promise: Option<TrackedPromise<()>>,
+    goto_window: Option<goto::GoToWindow>,
 }
 
 fn create_router(ctx: egui::Context) -> Result<Router<App>> {
@@ -77,6 +79,7 @@ impl App {
         self.router
             .get_or_init(|| create_router(ctx.clone()).unwrap());
 
+        self.draw_goto(ctx);
         self.draw_menubar(ctx);
         self.draw_logger(ctx);
 
@@ -97,6 +100,21 @@ impl App {
         self.router.get().unwrap().replace(path).unwrap()
     }
 
+    fn draw_goto(&mut self, ctx: &egui::Context) {
+        if let Some(window) = &mut self.goto_window {
+            window.draw(ctx);
+        }
+
+        if let Some(window) = &self.goto_window {
+            if let Some(link) = &window.link {
+                if let Some(selected_sheet) = SELECTED_SHEET.get(ctx) {
+                    self.navigate(format!("/sheet/{selected_sheet}{link}"));
+                    self.goto_window = None;
+                }
+            }
+        }
+    }
+
     fn draw_menubar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_panel")
             .frame(
@@ -111,6 +129,13 @@ impl App {
                         }
                         if !super::IS_WEB && ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.menu_button("Navigate", |ui| {
+                        if ui.button("To Row…").clicked() {
+                            self.goto_window = Some(goto::GoToWindow::default());
                             ui.close_menu();
                         }
                     });
@@ -764,6 +789,7 @@ impl App {
             schema_data: LruCache::unbounded(),
             sheet_matcher: SkimMatcherV2::default(),
             save_promise: None,
+            goto_window: None,
         }
     }
 
