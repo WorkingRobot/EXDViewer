@@ -12,6 +12,7 @@ pub struct SchemaColumn(Rc<SchemaColumnImpl>);
 struct SchemaColumnImpl {
     name: String,
     meta: SchemaColumnMeta,
+    comment: Option<String>,
 }
 
 impl SchemaColumn {
@@ -21,6 +22,10 @@ impl SchemaColumn {
 
     pub fn meta(&self) -> &SchemaColumnMeta {
         &self.0.meta
+    }
+
+    pub fn comment(&self) -> Option<&str> {
+        self.0.comment.as_deref()
     }
 
     fn get_columns_inner(
@@ -86,7 +91,7 @@ impl SchemaColumn {
                     FieldType::Array => unreachable!(),
                 };
 
-                ret.push(Self::new(name, meta));
+                ret.push(Self::new(name, meta, field.comment.clone()));
             }
         }
 
@@ -133,7 +138,7 @@ impl SchemaColumn {
                     } else {
                         unreachable!();
                     }
-                    ret[i] = Self::new(name, meta);
+                    ret[i] = Self::new(name, meta, None);
                 } else {
                     unreachable!();
                 }
@@ -179,12 +184,16 @@ impl SchemaColumn {
 
     pub fn from_blank(column_count: u32) -> Vec<Self> {
         (0..column_count)
-            .map(|i| Self::new(format!("Column{}", i), SchemaColumnMeta::Scalar))
+            .map(|i| Self::new(format!("Column{}", i), SchemaColumnMeta::Scalar, None))
             .collect()
     }
 
-    pub fn new(name: String, meta: SchemaColumnMeta) -> Self {
-        Self(Rc::new(SchemaColumnImpl { name, meta }))
+    pub fn new(name: String, meta: SchemaColumnMeta, comment: Option<String>) -> Self {
+        Self(Rc::new(SchemaColumnImpl {
+            name,
+            meta,
+            comment,
+        }))
     }
 }
 
