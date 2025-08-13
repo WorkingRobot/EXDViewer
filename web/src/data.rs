@@ -35,6 +35,7 @@ impl From<SlugData> for VersionInfo {
 pub struct GameData {
     cache: Server,
     slug: Slug,
+    readahead_size: usize,
     ironworks_cache: Cache<GameVersion, Arc<Ironworks<SqPack<VInstall<CacheVfs>>>>>,
     file_cache: Cache<(GameVersion, String), Arc<Vec<u8>>>,
 }
@@ -44,12 +45,14 @@ impl GameData {
         cache_config: ServerBuilder,
         asset_config: AssetCache,
         slug: Slug,
+        readahead_size: usize,
     ) -> anyhow::Result<Self> {
         let server = cache_config.build().await?;
 
         Ok(Self {
             cache: server,
             slug,
+            readahead_size,
             ironworks_cache: CacheBuilder::new(asset_config.version_capacity)
                 .time_to_live(Duration::from_secs(60 * asset_config.version_ttl_minutes))
                 .build(),
@@ -75,9 +78,15 @@ impl GameData {
             return Ok(ret);
         }
 
-        let vfs = CacheVfs::new(self.cache.clone(), self.slug, version.clone())
-            .await
-            .map_err(|e| ironworks::Error::Resource(Box::new(std::io::Error::other(e))))?;
+        log::info!("Fetching ironworks for version: {version}");
+        let vfs = CacheVfs::new(
+            self.cache.clone(),
+            self.readahead_size,
+            self.slug,
+            version.clone(),
+        )
+        .await
+        .map_err(|e| ironworks::Error::Resource(Box::new(std::io::Error::other(e))))?;
         let resource = VInstall::at_sqpack(vfs);
         let resource = ironworks::sqpack::SqPack::new(resource);
         let ironworks = Arc::new(Ironworks::new().with_resource(resource));
@@ -90,18 +99,15 @@ impl GameData {
         version: GameVersion,
         file: String,
     ) -> Result<Arc<Vec<u8>>, ironworks::Error> {
-        log::info!("Fetching file: {file} for version: {version}");
-
         let key = (version, file);
         if let Some(ret) = self.file_cache.get(&key) {
             return Ok(ret);
         }
         let (version, file) = key;
 
-        log::info!("Fetching ironworks for version: {version}");
         let ironworks = self.get_version(version.clone()).await?;
 
-        log::info!("Fetching file: {file} from ironworks for version: {version}");
+        log::info!("Fetching file: {file} for version: {version}");
         let file_data = ironworks.file::<Vec<u8>>(&file)?;
 
         let data = Arc::new(file_data);
@@ -117,19 +123,24 @@ impl GameData {
 struct CacheVfs {
     server: Server,
     slug: Slug,
+    readahead_size: usize,
     clut: Arc<Clut>,
 }
 
 impl CacheVfs {
-    pub async fn new(server: Server, slug: Slug, version: GameVersion) -> anyhow::Result<Self> {
+    pub async fn new(
+        server: Server,
+        readahead_size: usize,
+        slug: Slug,
+        version: GameVersion,
+    ) -> anyhow::Result<Self> {
         let clut = server.get_clut(slug, version).await?;
-        clut.files
-            .keys()
-            .for_each(|k| log::debug!("File in clut: {k}"));
-        clut.folders
-            .iter()
-            .for_each(|k| log::debug!("Folder in clut: {k}"));
-        Ok(Self { server, slug, clut })
+        Ok(Self {
+            server,
+            slug,
+            readahead_size,
+            clut,
+        })
     }
 }
 
@@ -139,7 +150,6 @@ impl Vfs for CacheVfs {
     fn exists(&self, path: impl AsRef<Path>) -> bool {
         let path = Path::new("sqpack").join(path);
         let path_str = path.to_str().unwrap_or_default();
-        log::debug!("Checking existence of path: {path:?}");
         // file
         self.clut
             .files
@@ -163,7 +173,6 @@ impl Vfs for CacheVfs {
     fn open(&self, path: impl AsRef<Path>) -> std::io::Result<Self::File> {
         let path = Path::new("sqpack").join(path);
         let path = path.to_str().unwrap_or_default();
-        log::debug!("Opening file at path: {path:?}");
 
         let data =
             self.clut.files.get(path).ok_or_else(|| {
@@ -173,7 +182,7 @@ impl Vfs for CacheVfs {
         Ok(BlockingReader::new(
             CacheFile::new(self.server.clone(), self.slug, data.clone())
                 .map_err(std::io::Error::other)?
-                .into_reader_buffered(0x800000),
+                .into_reader_buffered(self.readahead_size),
         ))
     }
 }

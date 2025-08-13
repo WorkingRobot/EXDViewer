@@ -20,6 +20,7 @@ pub struct Config {
     pub cache: ServerBuilder,
     pub assets: AssetCache,
     pub slug: String,
+    pub file_readahead: usize,
 }
 
 impl Default for AssetCache {
@@ -45,6 +46,7 @@ impl Default for Config {
             cache: ServerBuilder::default(),
             assets: AssetCache::default(),
             slug: "4e9a232b".parse().unwrap(),
+            file_readahead: 0x800000, // 8 MiB
         }
     }
 }

@@ -62,6 +62,7 @@ async fn main() -> Result<(), ServerError> {
             config.cache.clone(),
             config.assets.clone(),
             config.slug.parse()?,
+            config.file_readahead,
         )
         .await?,
     );
@@ -77,8 +78,6 @@ async fn main() -> Result<(), ServerError> {
         })?;
     let server_config = config.clone();
     let server_game_data = game_data.clone();
-
-    blocking_stream::init_runtime();
 
     log::info!("Binding to {}", config.server_addr);
     let server = HttpServer::new(move || {
