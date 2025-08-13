@@ -1,13 +1,13 @@
 use serde::Deserialize;
+use xiv_cache::builder::ServerBuilder;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct DownloaderConfig {
-    pub storage_dir: String,
-    pub slug: String,
-    pub file_regex: String,
-    pub parallelism: u32,
-    pub clut_path: String,
+pub struct AssetCache {
+    pub version_capacity: u64,
+    pub version_ttl_minutes: u64,
+    pub file_capacity: u64,
+    pub file_ttl_minutes: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -17,17 +17,18 @@ pub struct Config {
     pub metrics_server_addr: Option<String>,
     pub log_filter: Option<String>,
     pub log_access_format: Option<String>,
-    pub downloader: DownloaderConfig,
+    pub cache: ServerBuilder,
+    pub assets: AssetCache,
+    pub slug: String,
 }
 
-impl Default for DownloaderConfig {
+impl Default for AssetCache {
     fn default() -> Self {
         Self {
-            storage_dir: "downloads".to_string(),
-            slug: "4e9a232b".to_string(),
-            file_regex: r"^sqpack\/ffxiv\/0a0000\..+$".to_string(),
-            parallelism: 4,
-            clut_path: "https://raw.githubusercontent.com/WorkingRobot/ffxiv-downloader/refs/heads/main/cluts".to_string(),
+            version_capacity: 4,
+            version_ttl_minutes: 60,
+            file_capacity: 50,
+            file_ttl_minutes: 5,
         }
     }
 }
@@ -37,9 +38,13 @@ impl Default for Config {
         Self {
             server_addr: "0.0.0.0:80".to_string(),
             metrics_server_addr: None,
-            log_filter: Some("debug,exdviewer_web=debug,tracing::span=warn".to_string()),
+            log_filter: Some(
+                "debug,exdviewer_web=debug,tracing::span=warn,foyer_memory::raw=warn".to_string(),
+            ),
             log_access_format: None,
-            downloader: DownloaderConfig::default(),
+            cache: ServerBuilder::default(),
+            assets: AssetCache::default(),
+            slug: "4e9a232b".parse().unwrap(),
         }
     }
 }

@@ -1,5 +1,5 @@
+mod blocking_stream;
 mod config;
-mod crons;
 mod data;
 mod routes;
 
@@ -10,14 +10,15 @@ use actix_web::{
     middleware::{Condition, Logger, NormalizePath, TrailingSlash},
     web::Data,
 };
-use actix_web_helmet::{
-    CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, Helmet, XContentTypeOptions,
-};
+use actix_web_helmet::{Helmet, XContentTypeOptions};
 use actix_web_prom::PrometheusMetricsBuilder;
 use data::GameData;
 use prometheus::Registry;
-use std::{io, path::PathBuf, sync::Arc};
+use shadow_rs::shadow;
+use std::{io, num::ParseIntError, sync::Arc};
 use thiserror::Error;
+
+shadow!(build);
 
 #[derive(Error, Debug)]
 pub enum ServerError {
@@ -29,6 +30,10 @@ pub enum ServerError {
     DotenvyError(#[from] dotenvy::Error),
     #[error("Prometheus error")]
     PrometheusError(#[from] prometheus::Error),
+    #[error("Slug conversion error")]
+    SlugConversionError(#[from] ParseIntError),
+    #[error("Other error")]
+    OtherError(#[from] anyhow::Error),
 }
 
 #[tokio::main]
@@ -52,17 +57,13 @@ async fn main() -> Result<(), ServerError> {
             .default_filter_or(config.log_filter.clone().unwrap_or("info".to_string())),
     );
 
-    let game_data = Arc::new(GameData::new(
-        PathBuf::from(&config.downloader.storage_dir),
-        4,
-        60,
-        50,
-        5,
-    ));
-
-    let update_game_data_token = crons::create_cron_job(
-        crons::UpdateGameData::new(config.downloader.clone())
-            .expect("Failed to create UpdateGameData cron job"),
+    let game_data = Arc::new(
+        GameData::new(
+            config.cache.clone(),
+            config.assets.clone(),
+            config.slug.parse()?,
+        )
+        .await?,
     );
 
     let prometheus_registry = Registry::new();
@@ -75,16 +76,14 @@ async fn main() -> Result<(), ServerError> {
                 .expect("Unknown error from prometheus builder")
         })?;
     let server_config = config.clone();
+    let server_game_data = game_data.clone();
+
+    blocking_stream::init_runtime();
 
     log::info!("Binding to {}", config.server_addr);
     let server = HttpServer::new(move || {
         App::new()
-            .wrap(
-                Helmet::new()
-                    // .add(CrossOriginOpenerPolicy::same_origin())
-                    // .add(CrossOriginEmbedderPolicy::require_corp())
-                    .add(XContentTypeOptions::nosniff()),
-            )
+            .wrap(Helmet::new().add(XContentTypeOptions::nosniff()))
             .wrap(
                 Cors::default()
                     .allowed_origin("http://localhost:3000")
@@ -106,7 +105,7 @@ async fn main() -> Result<(), ServerError> {
                     .map_or_else(Logger::default, Logger::new),
             )
             .app_data(Data::new(server_config.clone()))
-            .app_data(Data::new(game_data.clone()))
+            .app_data(Data::new(server_game_data.clone()))
             .service(routes::api::service())
             .service(routes::assets::service())
     })
@@ -147,7 +146,6 @@ async fn main() -> Result<(), ServerError> {
 
     let server_ret = server_task.await;
 
-    update_game_data_token.cancel();
     let prometheus_server_ret = match prometheus_server_task {
         Some(task) => task.await,
         None => Ok(Ok(())),
@@ -155,6 +153,8 @@ async fn main() -> Result<(), ServerError> {
 
     server_ret??;
     prometheus_server_ret??;
+
+    game_data.close().await?;
 
     log::info!("Goodbye!");
 

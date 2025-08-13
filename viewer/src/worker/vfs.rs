@@ -1,7 +1,4 @@
-use std::{
-    io::{BufReader, Read},
-    path::Path,
-};
+use std::{io::BufReader, path::Path};
 
 use ironworks::sqpack::Vfs;
 use web_sys::{File, FileSystemDirectoryHandle, FileSystemPermissionMode};
@@ -30,22 +27,10 @@ impl Vfs for DirectoryVfs {
         self.0.directory_exists(&path)
     }
 
-    fn read_to_string(&self, path: impl AsRef<Path>) -> std::io::Result<String> {
-        let mut buf = String::new();
-        self.open(path)?.read_to_string(&mut buf)?;
-        Ok(buf)
-    }
-
-    fn read(&self, path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        self.open(path)?.read_to_end(&mut buf)?;
-        Ok(buf)
-    }
-
     fn open(&self, path: impl AsRef<Path>) -> std::io::Result<Self::File> {
         let file_handle: File = self.0.get_file_handle(path)?;
-        let file = SyncAccessFile::new(file_handle)
-            .map_err(|jserr| std::io::Error::new(std::io::ErrorKind::Other, jserr))?;
+        let file =
+            SyncAccessFile::new(file_handle).map_err(|jserr| std::io::Error::other(jserr))?;
         Ok(BufReader::with_capacity(0x800000, file))
     }
 }

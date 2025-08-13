@@ -1,4 +1,4 @@
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, str::FromStr, sync::Arc};
 
 use actix_web::{
     HttpResponse, Result,
@@ -12,8 +12,9 @@ use actix_web::{
 };
 use actix_web_lab::header::{CacheControl, CacheDirective};
 use serde::Deserialize;
+use xiv_core::file::version::GameVersion;
 
-use crate::data::{GameData, GameVersion};
+use crate::data::GameData;
 
 pub fn service() -> impl HttpServiceFactory {
     web::scope("/api")
@@ -36,19 +37,19 @@ pub enum QueryGameVersion {
 impl<'a> Deserialize<'a> for QueryGameVersion {
     fn deserialize<D: serde::Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
         String::deserialize(deserializer)?
-            .try_into()
+            .parse()
             .map_err(|_| serde::de::Error::custom("invalid game version"))
     }
 }
 
-impl TryFrom<String> for QueryGameVersion {
-    type Error = ();
+impl FromStr for QueryGameVersion {
+    type Err = anyhow::Error;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.eq_ignore_ascii_case("latest") {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("latest") {
             Ok(Self::Latest)
         } else {
-            Ok(Self::Specific(value.try_into()?))
+            Ok(Self::Specific(GameVersion::new(s)?))
         }
     }
 }
@@ -57,7 +58,7 @@ impl Display for QueryGameVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             QueryGameVersion::Latest => write!(f, "latest"),
-            QueryGameVersion::Specific(version) => write!(f, "{}", version),
+            QueryGameVersion::Specific(version) => write!(f, "{version}"),
         }
     }
 }
@@ -78,6 +79,7 @@ async fn get_file(
     let resolved_ver = match &version {
         QueryGameVersion::Latest => {
             data.versions()
+                .await
                 .ok_or(ErrorBadRequest("No version info available"))?
                 .latest
         }
@@ -93,7 +95,7 @@ async fn get_file(
         directives.push(CacheDirective::MaxAge(60 * 60 * 24));
     }
 
-    let data = data.get(resolved_ver, path.clone());
+    let data = data.get(resolved_ver, path.clone()).await;
     match data {
         Ok(data) => Ok(HttpResponse::Ok()
             .insert_header(ContentDisposition::attachment(file_name))
@@ -108,6 +110,7 @@ async fn get_file(
 async fn get_versions(data: web::Data<Arc<GameData>>) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(
         data.versions()
+            .await
             .ok_or(ErrorBadRequest("No version info available"))?,
     ))
 }

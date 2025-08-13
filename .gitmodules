@@ -1,3 +1,6 @@
 [submodule "deps/ironworks"]
 	path = deps/ironworks
 	url = https://github.com/WorkingRobot/ironworks.git
+[submodule "deps/ffxiv-downloader"]
+	path = deps/ffxiv-downloader
+	url = https://github.com/WorkingRobot/ffxiv-downloader.git

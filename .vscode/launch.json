@@ -20,6 +20,23 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
-        }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug web",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=web",
+                ],
+                "filter": {
+                    "name": "web",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }

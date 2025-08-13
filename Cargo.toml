@@ -10,3 +10,5 @@ edition = "2024"
 
 [patch.crates-io]
 ironworks = { path = "deps/ironworks/ironworks" }
+xiv-dl-cache = { path = "deps/ffxiv-downloader/rust/cache" }
+xiv-dl-core = { path = "deps/ffxiv-downloader/rust/core" }

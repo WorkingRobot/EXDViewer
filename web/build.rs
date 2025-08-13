@@ -1,100 +1,17 @@
 use std::{
     ffi::OsStr,
-    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::SystemTime,
 };
 
+use shadow_rs::ShadowBuilder;
+
 fn main() {
-    {
-        let profile = std::env::var("PROFILE").unwrap();
-        println!("cargo:rustc-env=PROFILE={profile}");
-        if profile == "release" {
-            println!(
-                "cargo::rustc-env=BUILD_TIMESTAMP={}",
-                SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-            );
-        } else {
-            println!("cargo::rustc-env=BUILD_TIMESTAMP=0");
-        }
-    }
+    ShadowBuilder::builder().build().unwrap();
 
-    // Skip downloading the downloader if we're running in rust-analyzer or anywhere unnecessary
-    let is_redundant = cfg!(clippy) || cfg!(miri) || cfg!(doc) || cfg!(test) || cfg!(rustfmt);
-    let is_rust_analyzer = is_under_rust_analyzer();
-
-    if !is_redundant && !is_rust_analyzer {
-        download_downloader();
+    if std::env::var_os("CARGO_FEATURE_TRUNK_ASSETS").is_some() {
         build_frontend();
     }
-}
-
-#[cfg(target_os = "linux")]
-fn is_under_rust_analyzer() -> bool {
-    use procfs::process::Process;
-
-    let mut current = Process::myself().expect("Failed to get current process");
-    loop {
-        let parent_id = current.stat().expect("Failed to get process stat").ppid;
-        current = match Process::new(parent_id) {
-            Ok(p) => p,
-            Err(_) => break,
-        };
-
-        if PathBuf::from(
-            current
-                .stat()
-                .expect("Failed to get parent process stat")
-                .comm,
-        )
-        .components()
-        .any(|p| p.as_os_str().eq_ignore_ascii_case("rust-analyzer"))
-        {
-            return true;
-        }
-    }
-
-    false
-}
-
-#[cfg(windows)]
-fn is_under_rust_analyzer() -> bool {
-    std::env::var("_NT_SYMBOL_PATH").is_ok_and(|v| v.contains("rust-analyzer"))
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
-fn is_under_rust_analyzer() -> bool {
-    // For macOS and other unsupported OSes, we assume we're not under rust-analyzer
-    false
-}
-
-fn download_downloader() {
-    let exe_suffix = match std::env::var("CARGO_CFG_TARGET_OS")
-        .expect("Could not get target os")
-        .as_str()
-    {
-        "windows" => ".exe",
-        "linux" | "macos" => "",
-        _ => panic!("Unsupported OS"),
-    };
-    copy_executable_to(
-        &get_output_directory().join(format!("downloader{exe_suffix}")),
-        || {
-            let ret = ureq::get(format!("https://github.com/WorkingRobot/ffxiv-downloader/releases/latest/download/FFXIVDownloader.Command{exe_suffix}")).call().expect("Could not download downloader");
-            if ret.status().is_success() {
-                // 10 MB limit
-                ret.into_body()
-                    .read_to_vec()
-                    .expect("Could not read downloader")
-            } else {
-                panic!("Could not download downloader")
-            }
-        },
-    );
 }
 
 // Build egui frontend
@@ -113,7 +30,7 @@ fn build_frontend() {
     }
 
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    println!("Running: {:?}", command);
+    println!("Running: {command:?}");
     let child = command
         .spawn()
         .expect("Could not start frontend build process");
@@ -170,21 +87,4 @@ pub fn get_output_directory() -> PathBuf {
     }
 
     out_path
-}
-
-pub fn copy_executable_to(out_path: &Path, data_getter: impl FnOnce() -> Vec<u8>) {
-    if !std::fs::exists(out_path).expect("Could not check if path exists") {
-        let data = data_getter();
-        let mut file = std::fs::File::create(out_path).expect("Could not open path");
-        #[cfg(unix)]
-        {
-            use std::os::unix::prelude::PermissionsExt;
-            let mut perms = file.metadata().unwrap().permissions();
-            // Make the file executable for those with read perms
-            perms.set_mode(perms.mode() | ((perms.mode() & 0o444) >> 2));
-            file.set_permissions(perms)
-                .expect("Could not set permissions");
-        }
-        file.write_all(&data).expect("Could not write to file");
-    }
 }

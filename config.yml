@@ -2,13 +2,9 @@
 # You can also set these as environment variables.
 # For example, server_addr can be set with the environment variable SERVER_ADDR.
 
-log_filter: debug,exdviewer_web=debug,tracing::span=warn
+log_filter: debug,exdviewer_web=debug,tracing::span=warn,foyer_memory::raw=warn
 # The default is 0.0.0.0:80 to make docker bind to port 80.
 # vvv Except for this one vvv
 server_addr: 0.0.0.0:3000
-downloader:
-  storage_dir: downloads
-  slug: 4e9a232b
-  file_regex: '^sqpack\/ffxiv\/0a0000\..+$'
-  parallelism: 4
-  clut_path: "https://raw.githubusercontent.com/WorkingRobot/ffxiv-downloader/refs/heads/main/cluts"
+cache:
+  storage_directory: exd_cache
