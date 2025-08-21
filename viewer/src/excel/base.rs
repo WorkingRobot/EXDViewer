@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use either::Either;
+use futures_util::{StreamExt, stream::FuturesOrdered};
 use image::RgbaImage;
 use intmap::IntMap;
 use ironworks::{
@@ -290,14 +291,16 @@ impl BaseSheet {
         let mut row_id_lookup = Vec::with_capacity(header.imp.header.pages().len());
         let mut current_row_range: Option<(u32, Range<u32>)> = None;
 
-        let page_futures = header
+        let header_name = header.imp.name.clone();
+        let mut page_futures: FuturesOrdered<_> = header
             .imp
             .header
             .pages()
             .iter()
-            .map(|page_def| provider.data(&header.imp.name, page_def.start_id(), language));
-        let page_data = futures_util::future::try_join_all(page_futures).await?;
-        for data in page_data {
+            .map(|page_def| provider.data(&header_name, page_def.start_id(), language))
+            .collect();
+        while let Some(data) = page_futures.next().await {
+            let data = data?;
             let page = ExcelPage {
                 row_size,
                 data_offset: data.data_offset.try_into()?,
