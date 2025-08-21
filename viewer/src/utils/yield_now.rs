@@ -5,10 +5,12 @@ use std::{
     task::{Context, Poll},
 };
 
+/// A future that yields immediately, allowing the executor to process other tasks.
 pub fn yield_now() -> YieldNow {
     YieldNow(false)
 }
 
+/// Yield to the UI thread immediately, allowing it to process events and render frames.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn yield_to_ui() {
     yield_now().await;

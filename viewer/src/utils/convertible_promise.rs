@@ -1,6 +1,7 @@
 use either::Either::{self, Left, Right};
 use poll_promise::Promise;
 
+/// A trait that defines the behavior of a convertible promise.
 pub trait PromiseKind
 where
     Self: Sized,
@@ -31,6 +32,7 @@ impl<R: Send + 'static> PromiseKind for Promise<R> {
     }
 }
 
+/// A promise that whose value will be converted to a different type when accessed.
 pub struct ConvertiblePromise<P: PromiseKind, T>(Either<P, T>);
 
 impl<P: PromiseKind, T> ConvertiblePromise<P, T> {

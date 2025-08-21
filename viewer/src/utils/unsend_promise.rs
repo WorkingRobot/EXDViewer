@@ -3,6 +3,7 @@ use pinned::oneshot::Receiver;
 
 use super::{TrackedPromise, convertible_promise::PromiseKind};
 
+/// Creates a sendable promise that can be used in a context where `T` cannot be Send.
 pub struct UnsendPromise<T: 'static> {
     rx: Receiver<T>,
     promise: TrackedPromise<()>,

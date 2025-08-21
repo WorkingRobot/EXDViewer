@@ -3,6 +3,7 @@ use futures_util::{
     future::{LocalBoxFuture, Shared},
 };
 
+/// A future that can be shared across threads, allowing it to be cloned, awaited, and stored.
 #[derive(Clone)]
 pub struct SharedFuture<T: Clone + 'static>(Shared<LocalBoxFuture<'static, T>>);
 

@@ -181,39 +181,101 @@ impl SetupWindow {
                                             .selected_text(name.as_str())
                                             .width(ui.available_width())
                                             .show_ui(ui, |ui| {
+                                                // I think this line causes rustfmt to shit itself
                                                 match self.location_promises.get_folder_list(
-                                                crate::excel::worker::WorkerFileProvider::folders,
-                                            ) {
-                                                None => {
-                                                    ui.label("Retrieving...");
-                                                }
-                                                Some(Err(e)) => {
-                                                    ui.label(format!("An error occured: {e}"));
-                                                }
-                                                Some(Ok(entries)) => {
-                                                    if entries.is_empty() {
-                                                        ui.label("None");
+                                                    crate::excel::worker::WorkerFileProvider::folders,
+                                                ) {
+                                                    None => {
+                                                        ui.label("Retrieving...");
                                                     }
-                                                    else {
-                                                        for entry in entries {
-                                                            ui.selectable_value(
-                                                                name,
-                                                                entry.0.name(),
-                                                                entry.0.name(),
-                                                            );
+                                                    Some(Err(e)) => {
+                                                        ui.label(format!("An error occured: {e}"));
+                                                    }
+                                                    Some(Ok(entries)) => {
+                                                        if entries.is_empty() {
+                                                            ui.label("None");
+                                                        }
+                                                        else {
+                                                            for entry in entries {
+                                                                ui.selectable_value(
+                                                                    name,
+                                                                    entry.0.name(),
+                                                                    entry.0.name(),
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                 }
-                                            }
                                             });
                                     });
                                 });
                             }
 
-                            InstallLocation::Web(url) => {
+                            InstallLocation::Web(url, version) => {
                                 ui.horizontal(|ui| {
                                     ui.label("URL:");
                                     ui.text_edit_singleline(url);
+                                });
+
+                                if !url.is_empty()
+                                    && !self
+                                        .web_version_promise
+                                        .as_ref()
+                                        .is_some_and(|v| v.0 == *url)
+                                {
+                                    let url = url.clone();
+                                    self.web_version_promise = Some((
+                                        url.clone(),
+                                        ConvertiblePromise::new_promise(
+                                            TrackedPromise::spawn_local(async move {
+                                                WebFileProvider::get_versions(&url).await
+                                            }),
+                                        ),
+                                    ));
+                                }
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Version:");
+
+                                    if let Some((_, promise)) = &mut self.web_version_promise {
+                                        if let Some(versions) = promise.get_mut(|r| match r {
+                                            Ok(vers) => Some(vers),
+                                            Err(e) => {
+                                                log::error!("Error fetching versions: {e}");
+                                                self.display_error = Some(e);
+                                                None
+                                            }
+                                        }) {
+                                            if let Some(versions) = versions {
+                                                egui::ComboBox::from_id_salt("setup_version")
+                                                    .selected_text(version.as_ref().map_or_else(
+                                                        || format!("Latest ({})", versions.latest),
+                                                        |v| v.to_string(),
+                                                    ))
+                                                    .width(ui.available_width())
+                                                    .show_ui(ui, |ui| {
+                                                        ui.selectable_value(
+                                                            version,
+                                                            None,
+                                                            format!("Latest ({})", versions.latest),
+                                                        );
+                                                        for entry in versions.versions.iter() {
+                                                            ui.selectable_value(
+                                                                version,
+                                                                Some(entry.clone()),
+                                                                entry.to_string(),
+                                                            );
+                                                        }
+                                                    });
+                                            } else {
+                                                ui.label("Failed to load versions");
+                                            }
+                                        } else {
+                                            ui.label("Loading versions...");
+                                        }
+                                    } else {
+                                        ui.label("No versions available");
+                                    }
                                 });
                             }
                         }
