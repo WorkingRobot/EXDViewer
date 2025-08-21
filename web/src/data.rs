@@ -6,7 +6,6 @@ use ironworks::{
 };
 use mini_moka::sync::{Cache, CacheBuilder};
 use serde::Serialize;
-use tokio::io::BufReader;
 use xiv_cache::{
     builder::ServerBuilder,
     file::CacheFile,
@@ -15,7 +14,7 @@ use xiv_cache::{
 };
 use xiv_core::file::{clut::Clut, slug::Slug, version::GameVersion};
 
-use crate::{blocking_stream::BlockingReader, config::AssetCache};
+use crate::{blocking_stream::BlockingReader, config::AssetCache, smart_bufreader::SmartBufReader};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VersionInfo {
@@ -32,6 +31,7 @@ impl From<SlugData> for VersionInfo {
     }
 }
 
+#[derive(Debug)]
 pub struct GameData {
     cache: Server,
     slug: Slug,
@@ -109,6 +109,10 @@ impl GameData {
 
         log::info!("Fetching file: {file} for version: {version}");
         let file_data = ironworks.file::<Vec<u8>>(&file)?;
+        log::info!(
+            "File fetched: {file} for version: {version}, size: {}",
+            file_data.len()
+        );
 
         let data = Arc::new(file_data);
         self.file_cache.insert((version, file), data.clone());
@@ -120,7 +124,7 @@ impl GameData {
     }
 }
 
-struct CacheVfs {
+pub struct CacheVfs {
     server: Server,
     slug: Slug,
     readahead_size: usize,
@@ -145,7 +149,7 @@ impl CacheVfs {
 }
 
 impl Vfs for CacheVfs {
-    type File = BlockingReader<BufReader<CacheFileStream>>;
+    type File = SmartBufReader<BlockingReader<CacheFileStream>>;
 
     fn exists(&self, path: impl AsRef<Path>) -> bool {
         let path = Path::new("sqpack").join(path);
@@ -179,10 +183,18 @@ impl Vfs for CacheVfs {
                 std::io::Error::new(std::io::ErrorKind::NotFound, "file not found")
             })?;
 
-        Ok(BlockingReader::new(
-            CacheFile::new(self.server.clone(), self.slug, data.clone())
+        Ok(SmartBufReader::unchecked_new(
+            BlockingReader::new(
+                CacheFile::new(
+                    self.server.clone(),
+                    self.slug,
+                    data.clone(),
+                    path.to_string(),
+                )
                 .map_err(std::io::Error::other)?
-                .into_reader_buffered(self.readahead_size),
+                .into_reader(),
+            ),
+            self.readahead_size,
         ))
     }
 }

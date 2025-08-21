@@ -75,7 +75,7 @@ checksum = "fcee751cc20d88678c33edaf9c07e8b693cd02819fe89053776f5313492273f5"
 dependencies = [
  "accesskit",
  "accesskit_atspi_common",
- "async-channel 2.3.1",
+ "async-channel 2.5.0",
  "async-executor",
  "async-task",
  "atspi",
@@ -670,9 +670,9 @@ dependencies = [
 
 [[package]]
 name = "async-channel"
-version = "2.3.1"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89b47800b0be77592da0afd425cc03468052844aff33b84e33cc696f64e77b6a"
+checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
 dependencies = [
  "concurrent-queue",
  "event-listener-strategy",
@@ -820,7 +820,7 @@ version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63255f1dc2381611000436537bbedfe83183faa303a5a0edaf191edef06526bb"
 dependencies = [
- "async-channel 2.3.1",
+ "async-channel 2.5.0",
  "async-io 2.4.0",
  "async-lock 3.4.0",
  "async-signal",
@@ -1150,7 +1150,7 @@ version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703f41c54fc768e63e091340b424302bb1c29ef4aa0c7f10fe849dfb114d29ea"
 dependencies = [
- "async-channel 2.3.1",
+ "async-channel 2.5.0",
  "async-task",
  "futures-io",
  "futures-lite 2.6.0",
@@ -1973,7 +1973,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59a81c221a1e4dad06cb9c9deb19aea1193a5eea084e8cd42d869068132bf876"
 dependencies = [
- "async-channel 2.3.1",
+ "async-channel 2.5.0",
  "document-features",
  "futures-util",
  "js-sys",
@@ -2198,9 +2198,9 @@ dependencies = [
 
 [[package]]
 name = "event-listener-strategy"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3e4e0dd3673c1139bf041f3008816d9cf2946bbfac2945c09e523b8d7b05b2"
+checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener 5.4.0",
  "pin-project-lite",
@@ -3836,7 +3836,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db6694555643da293dfb89e33c2880a13b62711d64b6588bc7df6ce4110b27f1"
 dependencies = [
  "ahash",
- "async-channel 2.3.1",
+ "async-channel 2.5.0",
  "async-stream",
  "async-task",
  "bincode",
@@ -6790,6 +6790,7 @@ dependencies = [
  "actix-web-lab",
  "actix-web-prom",
  "anyhow",
+ "async-channel 2.5.0",
  "config",
  "dotenvy",
  "env_logger",

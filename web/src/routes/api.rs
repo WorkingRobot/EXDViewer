@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr, sync::Arc};
+use std::{fmt::Display, str::FromStr};
 
 use actix_web::{
     HttpResponse, Result,
@@ -14,7 +14,7 @@ use actix_web_lab::header::{CacheControl, CacheDirective};
 use serde::Deserialize;
 use xiv_core::file::version::GameVersion;
 
-use crate::data::GameData;
+use crate::queue::MessageQueue;
 
 pub fn service() -> impl HttpServiceFactory {
     web::scope("/api")
@@ -71,19 +71,14 @@ struct FileQuery {
 
 #[get("/{version}/{path:.+}/")]
 async fn get_file(
-    data: web::Data<Arc<GameData>>,
+    data: web::Data<MessageQueue>,
     path: web::Path<FileQuery>,
 ) -> Result<HttpResponse> {
     let FileQuery { version, path } = path.into_inner();
 
     let resolved_ver = match &version {
-        QueryGameVersion::Latest => {
-            data.versions()
-                .await
-                .ok_or(ErrorBadRequest("No version info available"))?
-                .latest
-        }
-        QueryGameVersion::Specific(version) => version.clone(),
+        QueryGameVersion::Latest => None,
+        QueryGameVersion::Specific(version) => Some(version.clone()),
     };
     let file_name = path.split_at(path.rfind('/').unwrap_or(0) + 1).1;
 
@@ -95,7 +90,7 @@ async fn get_file(
         directives.push(CacheDirective::MaxAge(60 * 60 * 24));
     }
 
-    let data = data.get(resolved_ver, path.clone()).await;
+    let data = data.get_file(resolved_ver, path.clone()).await;
     match data {
         Ok(data) => Ok(HttpResponse::Ok()
             .insert_header(ContentDisposition::attachment(file_name))
@@ -107,7 +102,7 @@ async fn get_file(
 }
 
 #[get("/versions/")]
-async fn get_versions(data: web::Data<Arc<GameData>>) -> Result<HttpResponse> {
+async fn get_versions(data: web::Data<MessageQueue>) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(
         data.versions()
             .await

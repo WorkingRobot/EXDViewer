@@ -1,7 +1,9 @@
 mod blocking_stream;
 mod config;
 mod data;
+mod queue;
 mod routes;
+mod smart_bufreader;
 
 use ::config::{Config, Environment, File, FileFormat};
 use actix_cors::Cors;
@@ -17,6 +19,8 @@ use prometheus::Registry;
 use shadow_rs::shadow;
 use std::{io, num::ParseIntError, sync::Arc};
 use thiserror::Error;
+
+use crate::queue::MessageQueue;
 
 shadow!(build);
 
@@ -77,7 +81,7 @@ async fn main() -> Result<(), ServerError> {
                 .expect("Unknown error from prometheus builder")
         })?;
     let server_config = config.clone();
-    let server_game_data = game_data.clone();
+    let server_game_data = MessageQueue::new(game_data.clone(), 8)?;
 
     log::info!("Binding to {}", config.server_addr);
     let server = HttpServer::new(move || {
