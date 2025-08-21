@@ -47,6 +47,7 @@ async fn main() -> Result<(), ServerError> {
         _ = dotenvy::from_filename(".env");
         _ = dotenvy::from_filename(".secrets.env");
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
+        // console_subscriber::init();
     }
 
     let config: config::Config = Config::builder()
@@ -81,7 +82,7 @@ async fn main() -> Result<(), ServerError> {
                 .expect("Unknown error from prometheus builder")
         })?;
     let server_config = config.clone();
-    let server_game_data = MessageQueue::new(game_data.clone(), 8)?;
+    let server_game_data = MessageQueue::new(game_data.clone(), config.api_workers)?;
 
     log::info!("Binding to {}", config.server_addr);
     let server = HttpServer::new(move || {
@@ -112,6 +113,7 @@ async fn main() -> Result<(), ServerError> {
             .service(routes::api::service())
             .service(routes::assets::service())
     })
+    .workers(2)
     .bind(config.server_addr.clone())?
     .run();
 

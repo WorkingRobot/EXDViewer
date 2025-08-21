@@ -8,5 +8,5 @@ log_filter: debug,exdviewer_web=debug,tracing::span=warn,foyer_memory::raw=warn,
 server_addr: 0.0.0.0:3000
 cache:
   storage_directory: exd_cache
-  max_concurrent_downloads: 4
+  max_concurrent_downloads: 32
 file_readahead: 8388608 # 8 MiB

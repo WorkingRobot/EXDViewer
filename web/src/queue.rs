@@ -2,17 +2,14 @@ use std::sync::{Arc, OnceLock};
 
 use async_channel::Sender;
 use tokio::{
-    select,
-    sync::{
-        oneshot,
-    },
-    task::JoinHandle,
+    runtime::Handle, select, sync::oneshot, task::JoinHandle
 };
 use tokio_util::sync::CancellationToken;
 use xiv_core::file::version::GameVersion;
 
 use crate::data::{GameData, VersionInfo};
 
+#[derive(Debug, Clone)]
 pub enum RequestData {
     Versions,
     GetFile(Option<GameVersion>, String),
@@ -74,27 +71,46 @@ impl MessageQueue {
                                     None => return, // Queue has been dropped
                                 };
 
-                                let response = match request.data {
-                                    RequestData::Versions => {
-                                        Response::Versions(this.data.versions().await)
-                                    }
-                                    RequestData::GetFile(version, path) => {
-                                        let version = match version {
-                                            Some(v) => Ok(v),
-                                            None => {
-                                                this.data.versions().await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
-                                            }
-                                        };
-                                        let result = match version { 
-                                            Ok(version) => {
-                                                this.data.get(version, path).await
-                                            }
-                                            Err(e) => Err(e),
-                                        };
+                                let response = async {
+                                    match request.data.clone() {
+                                        RequestData::Versions => {
+                                            Response::Versions(this.data.versions().await)
+                                        }
+                                        RequestData::GetFile(version, path) => {
+                                            let version = match version {
+                                                Some(v) => Ok(v),
+                                                None => {
+                                                    this.data.versions().await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
+                                                }
+                                            };
+                                            let result = match version { 
+                                                Ok(version) => {
+                                                    this.data.get(version, path).await
+                                                }
+                                                Err(e) => Err(e),
+                                            };
 
-                                        Response::GetFile(result)
+                                            Response::GetFile(result)
+                                        }
                                     }
                                 };
+
+                                // let response = tokio::time::timeout(
+                                //     std::time::Duration::from_secs(15),
+                                //     response,
+                                // );
+
+                                let response = tokio::task::block_in_place(|| {
+                                    Handle::current().block_on(response)
+                                });
+
+                                // let response = match response {
+                                //     Ok(response) => response,
+                                //     Err(_) => {
+                                //         log::error!("Request timed out: {:?}", request.data);
+                                //         Response::GetFile(Err(std::io::Error::other("Request timed out").into()))
+                                //     }
+                                // };
 
                                 _ = request.tx.send(response);
                             }
@@ -103,6 +119,7 @@ impl MessageQueue {
                 })
             })
             .collect::<Vec<_>>();
+
 
         this.0.threads
             .set(

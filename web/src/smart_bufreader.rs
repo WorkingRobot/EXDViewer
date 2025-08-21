@@ -63,7 +63,8 @@ impl<R: Read + Seek> Seek for SmartBufReader<R> {
         let ret = self
             .inner
             .seek_relative(relative_pos)
-            .map(|_| current_pos + relative_pos as u64)?;
+            .map(|_| current_pos.checked_add_signed(relative_pos))?
+            .expect("Seek overflow");
         self.last_pos = ret;
         Ok(ret)
     }
