@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::{rc::Rc, str::FromStr};
+use std::rc::Rc;
 
 use crate::{
     excel::{boxed::BoxedExcelProvider, web::WebFileProvider},
@@ -38,8 +38,8 @@ impl Backend {
                     BoxedExcelProvider::new_worker(WorkerFileProvider::new(handle).await?).await?
                 }
 
-                InstallLocation::Web(base_url) => {
-                    BoxedExcelProvider::new_web(WebFileProvider::from_str(&base_url)?).await?
+                InstallLocation::Web(base_url, version) => {
+                    BoxedExcelProvider::new_web(WebFileProvider::new(&base_url, version)?).await?
                 }
             })
         };

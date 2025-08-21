@@ -4,7 +4,7 @@ use egui::ThemePreference;
 use ironworks::excel::Language;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::utils::{CodeTheme, ColorTheme};
+use crate::utils::{CodeTheme, ColorTheme, GameVersion};
 
 pub trait Keyable: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {}
 
@@ -255,7 +255,7 @@ pub enum InstallLocation {
     Sqpack(String),
     #[cfg(target_arch = "wasm32")]
     Worker(String),
-    Web(String),
+    Web(String, Option<GameVersion>),
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]

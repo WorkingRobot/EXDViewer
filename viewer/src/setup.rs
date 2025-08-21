@@ -3,12 +3,13 @@ use egui::{Frame, Layout, Modal, Sense, UiBuilder, Vec2, WidgetText};
 use crate::{
     DEFAULT_API_URL, DEFAULT_SCHEMA_URL,
     backend::Backend,
+    excel::web::{VersionInfo, WebFileProvider},
     settings::{BACKEND_CONFIG, BackendConfig, InstallLocation, SchemaLocation},
-    utils::{PromiseKind, UnsendPromise},
+    utils::{ConvertiblePromise, PromiseKind, TrackedPromise, UnsendPromise},
 };
 
 #[cfg(target_arch = "wasm32")]
-use crate::{utils::ConvertiblePromise, worker::WorkerDirectory};
+use crate::worker::WorkerDirectory;
 
 pub struct SetupWindow {
     location: InstallLocation,
@@ -20,6 +21,11 @@ pub struct SetupWindow {
     schema_promises: SetupPromises,
     setup_promise: Option<UnsendPromise<anyhow::Result<(Backend, BackendConfig)>>>,
     display_error: Option<anyhow::Error>,
+
+    web_version_promise: Option<(
+        String,
+        ConvertiblePromise<TrackedPromise<anyhow::Result<VersionInfo>>, Option<VersionInfo>>,
+    )>,
 }
 
 impl SetupWindow {
@@ -27,10 +33,13 @@ impl SetupWindow {
         #[cfg(not(target_arch = "wasm32"))]
         let location = ironworks::sqpack::Install::search()
             .and_then(|p| Some(InstallLocation::Sqpack(p.path().to_str()?.to_owned())))
-            .unwrap_or(InstallLocation::Web(super::DEFAULT_API_URL.to_string()));
+            .unwrap_or(InstallLocation::Web(
+                super::DEFAULT_API_URL.to_string(),
+                None,
+            ));
 
         #[cfg(target_arch = "wasm32")]
-        let location = InstallLocation::Web(super::DEFAULT_API_URL.to_string());
+        let location = InstallLocation::Web(super::DEFAULT_API_URL.to_string(), None);
 
         Self {
             location,
@@ -42,6 +51,7 @@ impl SetupWindow {
             schema_promises: Default::default(),
             setup_promise: None,
             display_error: None,
+            web_version_promise: None,
         }
     }
 
@@ -57,6 +67,7 @@ impl SetupWindow {
                 schema_promises: Default::default(),
                 setup_promise: None,
                 display_error: None,
+                web_version_promise: None,
             }
         } else {
             Self::from_blank(is_startup)
@@ -137,8 +148,13 @@ impl SetupWindow {
                                 self.location =
                                     InstallLocation::Worker("Select folder".to_string());
                             }
-                            if radio(ui, matches!(self.location, InstallLocation::Web(_)), "Web") {
-                                self.location = InstallLocation::Web(DEFAULT_API_URL.to_string());
+                            if radio(
+                                ui,
+                                matches!(self.location, InstallLocation::Web(_, _)),
+                                "Web",
+                            ) {
+                                self.location =
+                                    InstallLocation::Web(DEFAULT_API_URL.to_string(), None);
                             }
                         });
 
@@ -382,11 +398,27 @@ impl SetupWindow {
                         }
                     });
 
-                    ui.add_sized(
-                        Vec2::new(ui.available_size_before_wrap().x, 0.0),
-                        egui::Button::new("Go"),
-                    )
-                    .clicked()
+                    let can_go = {
+                        if matches!(self.location, InstallLocation::Web(_, _))
+                            && self
+                                .web_version_promise
+                                .as_ref()
+                                .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
+                        {
+                            false
+                        } else {
+                            true
+                        }
+                    };
+
+                    ui.add_enabled_ui(can_go, |ui| {
+                        ui.add_sized(
+                            Vec2::new(ui.available_size_before_wrap().x, 0.0),
+                            egui::Button::new("Go"),
+                        )
+                        .clicked()
+                    })
+                    .inner
                 })
                 .inner;
 

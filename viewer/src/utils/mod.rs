@@ -12,6 +12,7 @@ mod syntax_highlighting;
 pub mod tex_loader;
 mod tracked_promise;
 mod unsend_promise;
+mod version;
 mod yield_now;
 
 pub use cache::KeyedCache;
@@ -26,4 +27,5 @@ pub use shared_future::SharedFuture;
 pub use syntax_highlighting::{CodeTheme, highlight};
 pub use tracked_promise::{TrackedPromise, tick_promises};
 pub use unsend_promise::UnsendPromise;
+pub use version::GameVersion;
 pub use yield_now::yield_to_ui;

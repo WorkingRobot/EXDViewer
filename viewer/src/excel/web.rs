@@ -1,19 +1,68 @@
+use crate::utils::GameVersion;
+
 use super::{base::FileProvider, get_icon_path, get_xivapi_asset_url};
 use async_trait::async_trait;
 use ehttp::Request;
 use either::Either;
 use image::RgbaImage;
 use ironworks::file::File;
-use std::{io::Cursor, str::FromStr};
+use serde::Deserialize;
+use std::io::Cursor;
 use url::Url;
 
 pub struct WebFileProvider(Url);
 
-impl FromStr for WebFileProvider {
-    type Err = url::ParseError;
+#[derive(Debug, Clone, Deserialize)]
+pub struct VersionInfo {
+    pub latest: GameVersion,
+    pub versions: Vec<GameVersion>,
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self(Url::parse(s)?))
+impl WebFileProvider {
+    pub fn new(base_url: &str, version: Option<GameVersion>) -> anyhow::Result<Self> {
+        let mut base_url = Url::parse(base_url)?;
+
+        base_url
+            .path_segments_mut()
+            .map_err(|_| {
+                ironworks::Error::Invalid(
+                    ironworks::ErrorValue::Other("URL".to_string()),
+                    "path parsing error".to_string(),
+                )
+            })?
+            .push(&version.map_or_else(|| "latest".to_string(), |v| v.to_string()));
+
+        Ok(Self(base_url))
+    }
+
+    pub async fn get_versions(base_url: &str) -> anyhow::Result<VersionInfo> {
+        let mut url = Url::parse(base_url)?;
+
+        url.path_segments_mut()
+            .map_err(|_| {
+                ironworks::Error::Invalid(
+                    ironworks::ErrorValue::Other("URL".to_string()),
+                    "path parsing error".to_string(),
+                )
+            })?
+            .push("versions");
+
+        let resp = ehttp::fetch_async(Request::get(url))
+            .await
+            .map_err(|msg| anyhow::anyhow!("{msg}"))?;
+        if !resp.ok {
+            anyhow::bail!(
+                "Response not OK ({} {}): {}",
+                resp.status,
+                resp.status_text,
+                String::from_utf8_lossy(&resp.bytes)
+            );
+        }
+
+        let mut vers: VersionInfo = serde_json::from_slice(&resp.bytes)?;
+        vers.versions.sort();
+        vers.versions.reverse();
+        Ok(vers)
     }
 }
 
@@ -21,16 +70,15 @@ impl FromStr for WebFileProvider {
 impl FileProvider for WebFileProvider {
     async fn file<T: File>(&self, path: &str) -> anyhow::Result<T> {
         let mut url = self.0.clone();
-        {
-            let mut path_segments = url.path_segments_mut().map_err(|_| {
+
+        url.path_segments_mut()
+            .map_err(|_| {
                 ironworks::Error::Invalid(
                     ironworks::ErrorValue::Other("URL".to_string()),
                     "path parsing error".to_string(),
                 )
-            })?;
-            path_segments.push("latest");
-            path_segments.extend(path.split('/'));
-        }
+            })?
+            .extend(path.split('/'));
 
         let resp = ehttp::fetch_async(Request::get(url))
             .await
