@@ -19,7 +19,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
 
           - os-name: linux-arm64
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
 
           - os-name: win-x64
@@ -28,7 +28,7 @@ jobs:
             binary-ext: .exe
 
           - os-name: win-arm64
-            runs-on: windows-latest
+            runs-on: windows-11-arm
             target: aarch64-pc-windows-msvc
             binary-ext: .exe
 
