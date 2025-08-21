@@ -21,10 +21,10 @@ impl<R: AsyncRead + AsyncSeek + Unpin + Send + 'static> BlockingReader<R> {
 
 impl<R: AsyncRead + AsyncSeek + Unpin + Send + 'static> io::Read for BlockingReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // log::debug!(
-        //     "BlockingReader::read called with buffer of size {}",
-        //     buf.len()
-        // );
+        log::trace!(
+            "BlockingReader::read called with buffer of size {}",
+            buf.len()
+        );
         let ret = tokio::task::block_in_place(|| {
             Handle::current().block_on(async {
                 let mut read_buf = ReadBuf::new(buf);
@@ -33,23 +33,23 @@ impl<R: AsyncRead + AsyncSeek + Unpin + Send + 'static> io::Read for BlockingRea
                 Ok(read_buf.filled().len() - initial_filled)
             })
         });
-        // log::debug!(
-        //     "BlockingReader::read({}) returning {ret:?} bytes",
-        //     buf.len()
-        // );
+        log::trace!(
+            "BlockingReader::read({}) returning {ret:?} bytes",
+            buf.len()
+        );
         ret
     }
 }
 impl<R: AsyncRead + AsyncSeek + Unpin + Send + 'static> io::Seek for BlockingReader<R> {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        // log::debug!("BlockingReader::seek called with position {:?}", pos);
+        log::trace!("BlockingReader::seek called with position {:?}", pos);
         let seek_result = tokio::task::block_in_place(|| {
             Handle::current().block_on(async move {
                 Pin::new(&mut self.stream).start_seek(pos)?;
                 poll_fn(|cx| Pin::new(&mut self.stream).poll_complete(cx)).await
             })
         });
-        // log::debug!("BlockingReader::seek returning position {seek_result:?}");
+        log::trace!("BlockingReader::seek returning position {seek_result:?}");
         seek_result
     }
 }

@@ -113,7 +113,6 @@ async fn main() -> Result<(), ServerError> {
             .service(routes::api::service())
             .service(routes::assets::service())
     })
-    .workers(2)
     .bind(config.server_addr.clone())?
     .run();
 

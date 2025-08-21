@@ -95,22 +95,9 @@ impl MessageQueue {
                                     }
                                 };
 
-                                // let response = tokio::time::timeout(
-                                //     std::time::Duration::from_secs(15),
-                                //     response,
-                                // );
-
                                 let response = tokio::task::block_in_place(|| {
                                     Handle::current().block_on(response)
                                 });
-
-                                // let response = match response {
-                                //     Ok(response) => response,
-                                //     Err(_) => {
-                                //         log::error!("Request timed out: {:?}", request.data);
-                                //         Response::GetFile(Err(std::io::Error::other("Request timed out").into()))
-                                //     }
-                                // };
 
                                 _ = request.tx.send(response);
                             }
@@ -119,7 +106,6 @@ impl MessageQueue {
                 })
             })
             .collect::<Vec<_>>();
-
 
         this.0.threads
             .set(

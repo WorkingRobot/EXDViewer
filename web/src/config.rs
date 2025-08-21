@@ -48,7 +48,7 @@ impl Default for Config {
             assets: AssetCache::default(),
             slug: "4e9a232b".parse().unwrap(),
             file_readahead: 0x800000, // 8 MiB
-            api_workers: 16,
+            api_workers: 1,
         }
     }
 }
