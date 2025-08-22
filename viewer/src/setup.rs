@@ -1,6 +1,4 @@
-use egui::{
-    Frame, Label, Layout, Modal, RadioButton, Sense, TextEdit, UiBuilder, Vec2, WidgetText,
-};
+use egui::{Frame, Layout, Modal, Sense, TextEdit, UiBuilder, Vec2, WidgetText};
 
 use crate::{
     DEFAULT_API_URL,
@@ -329,7 +327,6 @@ impl SetupWindow {
                                 #[cfg(not(target_arch = "wasm32"))]
                                 if radio(
                                     col_0,
-                                    item(),
                                     matches!(self.schema, SchemaLocation::Local(_)),
                                     "Local",
                                 ) {
