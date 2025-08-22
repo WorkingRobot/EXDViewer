@@ -200,49 +200,58 @@ impl SetupWindow {
 
                             #[cfg(target_arch = "wasm32")]
                             InstallLocation::Worker(name) => {
-                                ui.horizontal(|ui| {
-                                    ui.label("Name:");
-                                    ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                                        if ui.button("Browse").clicked() {
-                                            use crate::excel::worker::WorkerFileProvider;
+                                use crate::excel::worker::WorkerFileProvider;
 
-                                            self.location_promises.open_folder_picker(
-                                                web_sys::FileSystemPermissionMode::Read,
-                                                WorkerFileProvider::add_folder,
-                                            );
-                                        }
-                                        egui::ComboBox::from_id_salt("install_folder")
-                                            .selected_text(name.as_str())
-                                            .width(ui.available_width())
-                                            .show_ui(ui, |ui| {
-                                                // I think this line causes rustfmt to shit itself
-                                                match self.location_promises.get_folder_list(
-                                                    crate::excel::worker::WorkerFileProvider::folders,
-                                                ) {
-                                                    None => {
-                                                        ui.label("Retrieving...");
-                                                    }
-                                                    Some(Err(e)) => {
-                                                        ui.label(format!("An error occured: {e}"));
-                                                    }
-                                                    Some(Ok(entries)) => {
-                                                        if entries.is_empty() {
-                                                            ui.label("None");
-                                                        }
-                                                        else {
-                                                            for entry in entries {
-                                                                ui.selectable_value(
-                                                                    name,
-                                                                    entry.0.name(),
-                                                                    entry.0.name(),
-                                                                );
+                                if !*IS_DIRECTORY_PICKER_SUPPORTED {
+                                    draw_unsupported_directory_picker(ui);
+                                } else {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Name:");
+                                        ui.with_layout(
+                                            Layout::right_to_left(egui::Align::Min),
+                                            |ui| {
+                                                if ui.button("Browse").clicked() {
+                                                    self.location_promises.open_folder_picker(
+                                                        web_sys::FileSystemPermissionMode::Read,
+                                                        WorkerFileProvider::add_folder,
+                                                    );
+                                                }
+                                                egui::ComboBox::from_id_salt("install_folder")
+                                                    .selected_text(name.as_str())
+                                                    .width(ui.available_width())
+                                                    .show_ui(ui, |ui| {
+                                                        match self
+                                                            .location_promises
+                                                            .get_folder_list(
+                                                                WorkerFileProvider::folders,
+                                                            ) {
+                                                            None => {
+                                                                ui.label("Retrieving...");
+                                                            }
+                                                            Some(Err(e)) => {
+                                                                ui.label(format!(
+                                                                    "An error occured: {e}"
+                                                                ));
+                                                            }
+                                                            Some(Ok(entries)) => {
+                                                                if entries.is_empty() {
+                                                                    ui.label("None");
+                                                                } else {
+                                                                    for entry in entries {
+                                                                        ui.selectable_value(
+                                                                            name,
+                                                                            entry.0.name(),
+                                                                            entry.0.name(),
+                                                                        );
+                                                                    }
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                }
-                                            });
+                                                    });
+                                            },
+                                        );
                                     });
-                                });
+                                }
                             }
 
                             InstallLocation::Web(url, version) => {
@@ -394,45 +403,52 @@ impl SetupWindow {
 
                             #[cfg(target_arch = "wasm32")]
                             SchemaLocation::Worker(name) => {
-                                ui.horizontal(|ui| {
-                                    ui.label("Name:");
-                                    ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                                        if ui.button("Browse").clicked() {
-                                            self.schema_promises.open_folder_picker(
+                                if !*IS_DIRECTORY_PICKER_SUPPORTED {
+                                    draw_unsupported_directory_picker(ui);
+                                } else {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Name:");
+                                        ui.with_layout(
+                                            Layout::right_to_left(egui::Align::Min),
+                                            |ui| {
+                                                if ui.button("Browse").clicked() {
+                                                    self.schema_promises.open_folder_picker(
                                                 web_sys::FileSystemPermissionMode::Readwrite,
                                                 crate::schema::worker::WorkerProvider::add_folder,
                                             );
-                                        }
-                                        egui::ComboBox::from_id_salt("schema_folder")
-                                            .selected_text(name.as_str())
-                                            .width(ui.available_width())
-                                            .show_ui(ui, |ui| {
-                                                match self.schema_promises.get_folder_list(
+                                                }
+                                                egui::ComboBox::from_id_salt("schema_folder")
+                                                    .selected_text(name.as_str())
+                                                    .width(ui.available_width())
+                                                    .show_ui(ui, |ui| {
+                                                        match self.schema_promises.get_folder_list(
                                                     crate::schema::worker::WorkerProvider::folders,
-                                                ) {
-                                                    None => {
-                                                        ui.label("Retrieving...");
-                                                    }
-                                                    Some(Err(e)) => {
-                                                        ui.label(format!("An error occured: {e}"));
-                                                    }
-                                                    Some(Ok(entries)) => {
-                                                        if entries.is_empty() {
-                                                            ui.label("None");
-                                                        } else {
-                                                            for entry in entries {
-                                                                ui.selectable_value(
-                                                                    name,
-                                                                    entry.0.name(),
-                                                                    entry.0.name(),
-                                                                );
+                                                        ) {
+                                                            None => {
+                                                                ui.label("Retrieving...");
+                                                            }
+                                                            Some(Err(e)) => {
+                                                                ui.label(format!("An error occured: {e}"));
+                                                            }
+                                                            Some(Ok(entries)) => {
+                                                                if entries.is_empty() {
+                                                                    ui.label("None");
+                                                                } else {
+                                                                    for entry in entries {
+                                                                        ui.selectable_value(
+                                                                            name,
+                                                                            entry.0.name(),
+                                                                            entry.0.name(),
+                                                                        );
+                                                                    }
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                }
-                                            });
+                                                    });
+                                            },
+                                        );
                                     });
-                                });
+                                }
                             }
 
                             SchemaLocation::Github((owner, repo), version) => {
@@ -535,7 +551,12 @@ impl SetupWindow {
                     });
 
                     let can_go = {
-                        if matches!(self.location, InstallLocation::Web(_, _))
+                        if !*IS_DIRECTORY_PICKER_SUPPORTED
+                            && (matches!(self.location, InstallLocation::Worker(_))
+                                || matches!(self.schema, SchemaLocation::Worker(_)))
+                        {
+                            false
+                        } else if matches!(self.location, InstallLocation::Web(_, _))
                             && self
                                 .web_version_promise
                                 .as_ref()
@@ -623,6 +644,28 @@ struct SetupPromises {
 }
 
 #[cfg(target_arch = "wasm32")]
+static IS_DIRECTORY_PICKER_SUPPORTED: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| SetupPromises::is_supported());
+
+#[cfg(target_arch = "wasm32")]
+fn draw_unsupported_directory_picker(ui: &mut egui::Ui) {
+    static TITLE: &str = "Your browser does not support the File System Access API.";
+    static LINK_DESC: &str = "At the moment, only Chromium-based browsers support it.";
+    static LINK: &str = "https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API#browser_compatibility";
+
+    ui.vertical_centered(|ui| {
+        ui.label(TITLE);
+        ui.add(
+            egui::Hyperlink::from_label_and_url(
+                egui::RichText::new(LINK_DESC).small().weak(),
+                LINK,
+            )
+            .open_in_new_tab(true),
+        );
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
 impl SetupPromises {
     fn take_folder(&mut self) -> Option<WorkerDirectory> {
         if let Some(result) = self.selected.take_if(|p| p.ready()) {
@@ -656,7 +699,7 @@ impl SetupPromises {
             let promise = web_sys::window()
                 .expect("no window")
                 .show_directory_picker_with_options(&opts);
-            let promise = promise.map_err(|e| anyhow::anyhow!("Error picking folder: {e:?}"))?;
+            let promise = promise.map_err(|e| anyhow::anyhow!("{e:?}"))?;
             let result = JsFuture::from(promise).await;
             match result {
                 Ok(handle) => {
@@ -684,5 +727,15 @@ impl SetupPromises {
             ));
         }
         self.list.as_mut().unwrap().get(|r| r)
+    }
+
+    fn is_supported() -> bool {
+        use web_sys::js_sys::Reflect;
+
+        Reflect::has(
+            &web_sys::window().expect("no window"),
+            &"showDirectoryPicker".into(),
+        )
+        .expect("Reflect::has failed")
     }
 }
