@@ -59,7 +59,7 @@ impl SchemaColumn {
                         ret,
                         column_placeholder,
                         column_lookups,
-                        scope.clone() + &format!("[{}]", i),
+                        scope.clone() + &format!("[{i}]"),
                         subfields,
                         pending_names,
                         true,
@@ -184,7 +184,7 @@ impl SchemaColumn {
 
     pub fn from_blank(column_count: u32) -> Vec<Self> {
         (0..column_count)
-            .map(|i| Self::new(format!("Column{}", i), SchemaColumnMeta::Scalar, None))
+            .map(|i| Self::new(format!("Column{i}"), SchemaColumnMeta::Scalar, None))
             .collect()
     }
 

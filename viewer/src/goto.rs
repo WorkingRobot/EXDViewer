@@ -53,10 +53,7 @@ impl GoToWindow {
     fn parse_string(string_buffer: &str) -> Option<(u32, Option<u16>)> {
         if string_buffer.contains(".") {
             // subrow case
-
-            let Some((row_id_text, subrow_id_text)) = string_buffer.split_once(".") else {
-                return None;
-            };
+            let (row_id_text, subrow_id_text) = string_buffer.split_once(".")?;
 
             Some((row_id_text.parse().ok()?, subrow_id_text.parse().ok()))
         } else {

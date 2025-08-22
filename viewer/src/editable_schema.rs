@@ -205,7 +205,7 @@ impl EditableSchema {
                                                 _ => "/",
                                             };
                                             ui.label(
-                                                RichText::new(format!("At {}", location)).strong(),
+                                                RichText::new(format!("At {location}")).strong(),
                                             );
                                             ui.indent(location, |ui| {
                                                 for error in errors {
@@ -398,15 +398,15 @@ impl EditableSchema {
             .set(Some(TrackedPromise::spawn_local(async move {
                 let mut dialog = rfd::AsyncFileDialog::new()
                     .set_title("Save Schema As")
-                    .set_file_name(format!("{}.yml", sheet_name));
+                    .set_file_name(format!("{sheet_name}.yml"));
                 if let Some(start_dir) = start_dir {
                     dialog = dialog.set_directory(start_dir);
                 }
                 if let Some(file) = dialog.save_file().await {
                     if let Err(e) = file.write(sheet_data.as_bytes()).await {
-                        log::error!("Failed to save schema: {}", e);
+                        log::error!("Failed to save schema: {e}");
                     } else {
-                        log::info!("Schema '{}' saved successfully", sheet_name);
+                        log::info!("Schema '{sheet_name}' saved successfully");
                     }
                 }
             })));

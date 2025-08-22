@@ -12,6 +12,9 @@ use crate::{
 #[cfg(target_arch = "wasm32")]
 use crate::worker::WorkerDirectory;
 
+type VersionPromise<T> = ConvertiblePromise<TrackedPromise<anyhow::Result<T>>, Option<T>>;
+type VersionPromiseHolder<K, T> = Option<(K, VersionPromise<T>)>;
+
 pub struct SetupWindow {
     location: InstallLocation,
     schema: SchemaLocation,
@@ -23,17 +26,8 @@ pub struct SetupWindow {
     setup_promise: Option<UnsendPromise<anyhow::Result<(Backend, BackendConfig)>>>,
     display_error: Option<anyhow::Error>,
 
-    web_version_promise: Option<(
-        String,
-        ConvertiblePromise<TrackedPromise<anyhow::Result<VersionInfo>>, Option<VersionInfo>>,
-    )>,
-    github_branch_promise: Option<(
-        (String, String),
-        ConvertiblePromise<
-            TrackedPromise<anyhow::Result<Vec<GameVersion>>>,
-            Option<Vec<GameVersion>>,
-        >,
-    )>,
+    web_version_promise: VersionPromiseHolder<String, VersionInfo>,
+    github_branch_promise: VersionPromiseHolder<(String, String), Vec<GameVersion>>,
 }
 
 impl SetupWindow {
@@ -264,10 +258,10 @@ impl SetupWindow {
                                 });
 
                                 if !url.is_empty()
-                                    && !self
+                                    && self
                                         .web_version_promise
                                         .as_ref()
-                                        .is_some_and(|v| v.0 == *url)
+                                        .is_none_or(|v| v.0 != *url)
                                 {
                                     let url = url.clone();
                                     self.web_version_promise = Some((
@@ -518,7 +512,7 @@ impl SetupWindow {
                                                     "setup_github_version",
                                                 )
                                                 .selected_text(version.as_ref().map_or_else(
-                                                    || format!("Latest"),
+                                                    || "Latest".to_string(),
                                                     |v| v.to_string(),
                                                 ))
                                                 .width(ui.available_width())
@@ -526,7 +520,7 @@ impl SetupWindow {
                                                     ui.selectable_value(
                                                         version,
                                                         None,
-                                                        format!("Latest"),
+                                                        "Latest".to_string(),
                                                     );
                                                     for entry in versions.iter() {
                                                         ui.selectable_value(
@@ -612,7 +606,7 @@ impl SetupWindow {
             && self
                 .web_version_promise
                 .as_ref()
-                .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
+                .is_none_or(|f| f.1.try_get().map_or(true, |v| v.is_none()))
         {
             return false;
         }
@@ -620,7 +614,7 @@ impl SetupWindow {
             && self
                 .github_branch_promise
                 .as_ref()
-                .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
+                .is_none_or(|f| f.1.try_get().map_or(true, |v| v.is_none()))
         {
             return false;
         }

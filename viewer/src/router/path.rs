@@ -111,10 +111,10 @@ impl std::fmt::Display for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.path)?;
         if let Some(query) = &self.query {
-            write!(f, "?{}", query)?;
+            write!(f, "?{query}")?;
         }
         if let Some(fragment) = &self.fragment {
-            write!(f, "#{}", fragment)?;
+            write!(f, "#{fragment}")?;
         }
         Ok(())
     }
