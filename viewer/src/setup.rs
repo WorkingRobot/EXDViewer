@@ -285,7 +285,10 @@ impl SetupWindow {
 
                                     if let Some((_, promise)) = &mut self.web_version_promise {
                                         if let Some(versions) = promise.get_mut(|r| match r {
-                                            Ok(vers) => Some(vers),
+                                            Ok(vers) => {
+                                                self.display_error = None;
+                                                Some(vers)
+                                            }
                                             Err(e) => {
                                                 log::error!("Error fetching versions: {e}");
                                                 self.display_error = Some(e);
@@ -403,6 +406,8 @@ impl SetupWindow {
 
                             #[cfg(target_arch = "wasm32")]
                             SchemaLocation::Worker(name) => {
+                                use crate::schema::worker::WorkerProvider;
+
                                 if !*IS_DIRECTORY_PICKER_SUPPORTED {
                                     draw_unsupported_directory_picker(ui);
                                 } else {
@@ -414,7 +419,7 @@ impl SetupWindow {
                                                 if ui.button("Browse").clicked() {
                                                     self.schema_promises.open_folder_picker(
                                                 web_sys::FileSystemPermissionMode::Readwrite,
-                                                crate::schema::worker::WorkerProvider::add_folder,
+                                                WorkerProvider::add_folder,
                                             );
                                                 }
                                                 egui::ComboBox::from_id_salt("schema_folder")
@@ -422,13 +427,15 @@ impl SetupWindow {
                                                     .width(ui.available_width())
                                                     .show_ui(ui, |ui| {
                                                         match self.schema_promises.get_folder_list(
-                                                    crate::schema::worker::WorkerProvider::folders,
+                                                            WorkerProvider::folders,
                                                         ) {
                                                             None => {
                                                                 ui.label("Retrieving...");
                                                             }
                                                             Some(Err(e)) => {
-                                                                ui.label(format!("An error occured: {e}"));
+                                                                ui.label(format!(
+                                                                    "An error occured: {e}"
+                                                                ));
                                                             }
                                                             Some(Ok(entries)) => {
                                                                 if entries.is_empty() {
@@ -496,7 +503,10 @@ impl SetupWindow {
 
                                     if let Some((_, promise)) = &mut self.github_branch_promise {
                                         if let Some(versions) = promise.get_mut(|r| match r {
-                                            Ok(vers) => Some(vers),
+                                            Ok(vers) => {
+                                                self.display_error = None;
+                                                Some(vers)
+                                            }
                                             Err(e) => {
                                                 log::error!("Error fetching versions: {e}");
                                                 self.display_error = Some(e);
@@ -550,32 +560,7 @@ impl SetupWindow {
                         }
                     });
 
-                    let can_go = {
-                        if !*IS_DIRECTORY_PICKER_SUPPORTED
-                            && (matches!(self.location, InstallLocation::Worker(_))
-                                || matches!(self.schema, SchemaLocation::Worker(_)))
-                        {
-                            false
-                        } else if matches!(self.location, InstallLocation::Web(_, _))
-                            && self
-                                .web_version_promise
-                                .as_ref()
-                                .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
-                        {
-                            false
-                        } else if matches!(self.schema, SchemaLocation::Github(_, _))
-                            && self
-                                .github_branch_promise
-                                .as_ref()
-                                .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
-                        {
-                            false
-                        } else {
-                            true
-                        }
-                    };
-
-                    ui.add_enabled_ui(can_go, |ui| {
+                    ui.add_enabled_ui(self.can_go(), |ui| {
                         ui.add_sized(
                             Vec2::new(ui.available_size_before_wrap().x, 0.0),
                             egui::Button::new("Go"),
@@ -612,6 +597,35 @@ impl SetupWindow {
                 .inner
             })
             .inner
+    }
+
+    fn can_go(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if !*IS_DIRECTORY_PICKER_SUPPORTED
+            && (matches!(self.location, InstallLocation::Worker(_))
+                || matches!(self.schema, SchemaLocation::Worker(_)))
+        {
+            return false;
+        }
+
+        if matches!(self.location, InstallLocation::Web(_, _))
+            && self
+                .web_version_promise
+                .as_ref()
+                .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
+        {
+            return false;
+        }
+        if matches!(self.schema, SchemaLocation::Github(_, _))
+            && self
+                .github_branch_promise
+                .as_ref()
+                .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
+        {
+            return false;
+        }
+
+        true
     }
 }
 
