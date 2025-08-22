@@ -1,11 +1,14 @@
-use egui::{Frame, Layout, Modal, Sense, UiBuilder, Vec2, WidgetText};
+use egui::{
+    Frame, Label, Layout, Modal, RadioButton, Sense, TextEdit, UiBuilder, Vec2, WidgetText,
+};
 
 use crate::{
-    DEFAULT_API_URL, DEFAULT_SCHEMA_URL,
+    DEFAULT_API_URL,
     backend::Backend,
     excel::web::{VersionInfo, WebFileProvider},
+    schema::web::WebProvider,
     settings::{BACKEND_CONFIG, BackendConfig, InstallLocation, SchemaLocation},
-    utils::{ConvertiblePromise, PromiseKind, TrackedPromise, UnsendPromise},
+    utils::{ConvertiblePromise, GameVersion, PromiseKind, TrackedPromise, UnsendPromise},
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -26,6 +29,13 @@ pub struct SetupWindow {
         String,
         ConvertiblePromise<TrackedPromise<anyhow::Result<VersionInfo>>, Option<VersionInfo>>,
     )>,
+    github_branch_promise: Option<(
+        (String, String),
+        ConvertiblePromise<
+            TrackedPromise<anyhow::Result<Vec<GameVersion>>>,
+            Option<Vec<GameVersion>>,
+        >,
+    )>,
 }
 
 impl SetupWindow {
@@ -43,7 +53,13 @@ impl SetupWindow {
 
         Self {
             location,
-            schema: SchemaLocation::Web(super::DEFAULT_SCHEMA_URL.to_string()),
+            schema: SchemaLocation::Github(
+                (
+                    super::DEFAULT_GITHUB_REPO.0.to_string(),
+                    super::DEFAULT_GITHUB_REPO.1.to_string(),
+                ),
+                None,
+            ),
             is_startup,
             #[cfg(target_arch = "wasm32")]
             location_promises: Default::default(),
@@ -52,6 +68,7 @@ impl SetupWindow {
             setup_promise: None,
             display_error: None,
             web_version_promise: None,
+            github_branch_promise: None,
         }
     }
 
@@ -68,6 +85,7 @@ impl SetupWindow {
                 setup_promise: None,
                 display_error: None,
                 web_version_promise: None,
+                github_branch_promise: None,
             }
         } else {
             Self::from_blank(is_startup)
@@ -126,36 +144,38 @@ impl SetupWindow {
                         });
 
                         ui.horizontal(|ui| {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            if radio(
-                                ui,
-                                matches!(self.location, InstallLocation::Sqpack(_)),
-                                "Local",
-                            ) {
-                                self.location = InstallLocation::Sqpack(
-                                    std::env::current_dir()
-                                        .ok()
-                                        .and_then(|p| Some(p.to_str()?.to_string()))
-                                        .unwrap_or("/".to_owned()),
-                                );
-                            }
-                            #[cfg(target_arch = "wasm32")]
-                            if radio(
-                                ui,
-                                matches!(self.location, InstallLocation::Worker(_)),
-                                "Local",
-                            ) {
-                                self.location =
-                                    InstallLocation::Worker("Select folder".to_string());
-                            }
-                            if radio(
-                                ui,
-                                matches!(self.location, InstallLocation::Web(_, _)),
-                                "Web",
-                            ) {
-                                self.location =
-                                    InstallLocation::Web(DEFAULT_API_URL.to_string(), None);
-                            }
+                            ui.columns_const(|[col_0, col_1]| {
+                                #[cfg(not(target_arch = "wasm32"))]
+                                if radio(
+                                    col_0,
+                                    matches!(self.location, InstallLocation::Sqpack(_)),
+                                    "Local",
+                                ) {
+                                    self.location = InstallLocation::Sqpack(
+                                        std::env::current_dir()
+                                            .ok()
+                                            .and_then(|p| Some(p.to_str()?.to_string()))
+                                            .unwrap_or("/".to_owned()),
+                                    );
+                                }
+                                #[cfg(target_arch = "wasm32")]
+                                if radio(
+                                    col_0,
+                                    matches!(self.location, InstallLocation::Worker(_)),
+                                    "Local",
+                                ) {
+                                    self.location =
+                                        InstallLocation::Worker("Select folder".to_string());
+                                }
+                                if radio(
+                                    col_1,
+                                    matches!(self.location, InstallLocation::Web(_, _)),
+                                    "Web",
+                                ) {
+                                    self.location =
+                                        InstallLocation::Web(DEFAULT_API_URL.to_string(), None);
+                                }
+                            })
                         });
 
                         match &mut self.location {
@@ -230,7 +250,10 @@ impl SetupWindow {
                             InstallLocation::Web(url, version) => {
                                 ui.horizontal(|ui| {
                                     ui.label("URL:");
-                                    ui.text_edit_singleline(url);
+                                    ui.add(
+                                        TextEdit::singleline(url)
+                                            .desired_width(ui.available_width()),
+                                    );
                                 });
 
                                 if !url.is_empty()
@@ -302,26 +325,52 @@ impl SetupWindow {
                             ui.heading("Schema");
                         });
                         ui.horizontal(|ui| {
-                            #[cfg(not(target_arch = "wasm32"))]
-                            if radio(ui, matches!(self.schema, SchemaLocation::Local(_)), "Local") {
-                                self.schema = SchemaLocation::Local(
-                                    std::env::current_dir()
-                                        .ok()
-                                        .and_then(|p| Some(p.to_str()?.to_string()))
-                                        .unwrap_or("/".to_owned()),
-                                );
-                            }
-                            #[cfg(target_arch = "wasm32")]
-                            if radio(
-                                ui,
-                                matches!(self.schema, SchemaLocation::Worker(_)),
-                                "Local",
-                            ) {
-                                self.schema = SchemaLocation::Worker("Select folder".to_string());
-                            }
-                            if radio(ui, matches!(self.schema, SchemaLocation::Web(_)), "Web") {
-                                self.schema = SchemaLocation::Web(DEFAULT_SCHEMA_URL.to_string());
-                            }
+                            ui.columns_const(|[col_0, col_1, col_2]| {
+                                #[cfg(not(target_arch = "wasm32"))]
+                                if radio(
+                                    col_0,
+                                    item(),
+                                    matches!(self.schema, SchemaLocation::Local(_)),
+                                    "Local",
+                                ) {
+                                    self.schema = SchemaLocation::Local(
+                                        std::env::current_dir()
+                                            .ok()
+                                            .and_then(|p| Some(p.to_str()?.to_string()))
+                                            .unwrap_or("/".to_owned()),
+                                    );
+                                }
+                                #[cfg(target_arch = "wasm32")]
+                                if radio(
+                                    col_0,
+                                    matches!(self.schema, SchemaLocation::Worker(_)),
+                                    "Local",
+                                ) {
+                                    self.schema =
+                                        SchemaLocation::Worker("Select folder".to_string());
+                                }
+                                if radio(
+                                    col_1,
+                                    matches!(self.schema, SchemaLocation::Github(_, _)),
+                                    "GitHub",
+                                ) {
+                                    self.schema = SchemaLocation::Github(
+                                        (
+                                            super::DEFAULT_GITHUB_REPO.0.to_string(),
+                                            super::DEFAULT_GITHUB_REPO.1.to_string(),
+                                        ),
+                                        None,
+                                    );
+                                }
+                                if radio(
+                                    col_2,
+                                    matches!(self.schema, SchemaLocation::Web(_)),
+                                    "Web",
+                                ) {
+                                    self.schema =
+                                        SchemaLocation::Web(super::DEFAULT_SCHEMA_URL.to_string());
+                                }
+                            })
                         });
 
                         match &mut self.schema {
@@ -389,10 +438,100 @@ impl SetupWindow {
                                 });
                             }
 
+                            SchemaLocation::Github((owner, repo), version) => {
+                                ui.horizontal(|ui| {
+                                    ui.columns_const(|[col_owner, col_repo]| {
+                                        col_owner.horizontal(|ui| {
+                                            ui.label("Owner:");
+                                            ui.add(
+                                                TextEdit::singleline(owner)
+                                                    .desired_width(ui.available_width()),
+                                            );
+                                        });
+                                        col_repo.horizontal(|ui| {
+                                            ui.label("Repo:");
+                                            ui.add(
+                                                TextEdit::singleline(repo)
+                                                    .desired_width(ui.available_width()),
+                                            );
+                                        });
+                                    });
+                                });
+
+                                if !owner.is_empty()
+                                    && !repo.is_empty()
+                                    && !self
+                                        .github_branch_promise
+                                        .as_ref()
+                                        .is_some_and(|v| &v.0.0 == owner && &v.0.1 == repo)
+                                {
+                                    let owner = owner.clone();
+                                    let repo = repo.clone();
+                                    self.github_branch_promise = Some((
+                                        (owner.clone(), repo.clone()),
+                                        ConvertiblePromise::new_promise(
+                                            TrackedPromise::spawn_local(async move {
+                                                WebProvider::fetch_github_repository(&owner, &repo)
+                                                    .await
+                                            }),
+                                        ),
+                                    ));
+                                }
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Version:");
+
+                                    if let Some((_, promise)) = &mut self.github_branch_promise {
+                                        if let Some(versions) = promise.get_mut(|r| match r {
+                                            Ok(vers) => Some(vers),
+                                            Err(e) => {
+                                                log::error!("Error fetching versions: {e}");
+                                                self.display_error = Some(e);
+                                                None
+                                            }
+                                        }) {
+                                            if let Some(versions) = versions {
+                                                egui::ComboBox::from_id_salt(
+                                                    "setup_github_version",
+                                                )
+                                                .selected_text(version.as_ref().map_or_else(
+                                                    || format!("Latest"),
+                                                    |v| v.to_string(),
+                                                ))
+                                                .width(ui.available_width())
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(
+                                                        version,
+                                                        None,
+                                                        format!("Latest"),
+                                                    );
+                                                    for entry in versions.iter() {
+                                                        ui.selectable_value(
+                                                            version,
+                                                            Some(entry.clone()),
+                                                            entry.to_string(),
+                                                        );
+                                                    }
+                                                });
+                                            } else {
+                                                ui.label("Failed to load versions");
+                                            }
+                                        } else {
+                                            ui.label("Loading versions...");
+                                        }
+                                    } else {
+                                        ui.label("No versions available");
+                                    }
+                                });
+                            }
+
                             SchemaLocation::Web(url) => {
                                 ui.horizontal(|ui| {
                                     ui.label("URL:");
-                                    ui.text_edit_singleline(url);
+                                    ui.add(
+                                        TextEdit::singleline(url)
+                                            .desired_width(ui.available_width()),
+                                    );
                                 });
                             }
                         }
@@ -402,6 +541,13 @@ impl SetupWindow {
                         if matches!(self.location, InstallLocation::Web(_, _))
                             && self
                                 .web_version_promise
+                                .as_ref()
+                                .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
+                        {
+                            false
+                        } else if matches!(self.schema, SchemaLocation::Github(_, _))
+                            && self
+                                .github_branch_promise
                                 .as_ref()
                                 .map_or(true, |f| f.1.try_get().map_or(true, |v| v.is_none()))
                         {
@@ -452,7 +598,9 @@ impl SetupWindow {
 }
 
 fn radio(ui: &mut egui::Ui, selected: bool, text: impl Into<WidgetText>) -> bool {
-    let mut resp = ui.radio(selected, text);
+    let mut resp = ui
+        .vertical_centered_justified(|ui| ui.radio(selected, text))
+        .inner;
     if resp.clicked() && !selected {
         resp.mark_changed();
         true

@@ -1,5 +1,8 @@
 use async_trait::async_trait;
 use ehttp::Request;
+use serde::Deserialize;
+
+use crate::utils::GameVersion;
 
 use super::provider::SchemaProvider;
 
@@ -7,9 +10,81 @@ pub struct WebProvider {
     base_url: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubCommit {
+    pub sha: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubBranch {
+    pub name: String,
+    pub commit: GithubCommit,
+    pub protected: bool,
+}
+
 impl WebProvider {
     pub fn new(base_url: String) -> Self {
         WebProvider { base_url }
+    }
+
+    pub fn new_github(owner: &str, repo: &str, version: Option<GameVersion>) -> Self {
+        WebProvider {
+            base_url: format!(
+                "https://raw.githubusercontent.com/{owner}/{repo}/refs/heads/{}",
+                version.map_or("latest".to_string(), |v| format!("ver/{v}"))
+            ),
+        }
+    }
+
+    fn is_valid_github_name(name: &str) -> bool {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    }
+
+    pub async fn fetch_github_repository(
+        owner: &str,
+        repo: &str,
+    ) -> anyhow::Result<Vec<GameVersion>> {
+        if !Self::is_valid_github_name(owner) || !Self::is_valid_github_name(repo) {
+            return Err(anyhow::anyhow!("Invalid GitHub repository format"));
+        }
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/branches?per_page=100");
+        let resp = ehttp::fetch_async(Request::get(url))
+            .await
+            .map_err(|msg| anyhow::anyhow!("{msg}"))?;
+
+        if !resp.ok {
+            anyhow::bail!(
+                "Response not OK ({} {}): {}",
+                resp.status,
+                resp.status_text,
+                String::from_utf8_lossy(&resp.bytes)
+            );
+        }
+
+        let branches: Vec<GithubBranch> = serde_json::from_slice(&resp.bytes)?;
+
+        let mut vers = Vec::new();
+        let mut has_latest = false;
+        for branch in branches {
+            if branch.name == "latest" {
+                has_latest = true;
+            } else if let Some(version_string) = branch.name.strip_prefix("ver/") {
+                vers.push(GameVersion::new(version_string)?);
+            }
+        }
+
+        if !has_latest {
+            anyhow::bail!("No 'latest' branch found in repository {owner}/{repo}");
+        }
+
+        vers.sort();
+        vers.reverse();
+
+        Ok(vers)
     }
 }
 

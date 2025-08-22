@@ -264,6 +264,7 @@ pub enum SchemaLocation {
     Local(String),
     #[cfg(target_arch = "wasm32")]
     Worker(String),
+    Github((String, String), Option<GameVersion>),
     Web(String),
 }
 
