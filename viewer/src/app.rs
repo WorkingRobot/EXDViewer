@@ -30,7 +30,8 @@ use crate::{
     settings::{
         ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, DISPLAY_FIELD_SHOWN,
         LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET,
-        SHEET_FILTERS, SHEETS_FILTER, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO,
+        SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW,
+        TEMP_SCROLL_TO,
     },
     setup::{self, SetupWindow},
     sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
@@ -163,6 +164,15 @@ impl App {
                                     .changed()
                                 {
                                     color_theme.apply(ui.ctx());
+                                    let solid_scrollbar = SOLID_SCROLLBAR.get(ctx);
+                                    ctx.all_styles_mut(|s| {
+                                        s.spacing.scroll = if solid_scrollbar {
+                                            ScrollStyle::solid()
+                                        } else {
+                                            ScrollStyle::default()
+                                        };
+                                    });
+
                                     COLOR_THEME.set(ui.ctx(), color_theme);
                                 }
                             }
@@ -193,16 +203,14 @@ impl App {
                         });
 
                         {
-                            let mut thick_scrollbar = ctx.options(|o| {
-                                o.dark_style.spacing.scroll == ScrollStyle::solid()
-                                    && o.light_style.spacing.scroll == ScrollStyle::solid()
-                            });
+                            let mut solid_scrollbar = SOLID_SCROLLBAR.get(ctx);
                             if ui
-                                .checkbox(&mut thick_scrollbar, "Solid Scrollbar")
+                                .checkbox(&mut solid_scrollbar, "Solid Scrollbar")
                                 .changed()
                             {
+                                SOLID_SCROLLBAR.set(ctx, solid_scrollbar);
                                 ctx.all_styles_mut(|s| {
-                                    s.spacing.scroll = if thick_scrollbar {
+                                    s.spacing.scroll = if solid_scrollbar {
                                         ScrollStyle::solid()
                                     } else {
                                         ScrollStyle::default()
@@ -822,6 +830,14 @@ impl App {
 
     fn setup_theme(ctx: &egui::Context) {
         COLOR_THEME.get(ctx).apply(ctx);
+        let solid_scrollbar = SOLID_SCROLLBAR.get(ctx);
+        ctx.all_styles_mut(|s| {
+            s.spacing.scroll = if solid_scrollbar {
+                ScrollStyle::solid()
+            } else {
+                ScrollStyle::default()
+            };
+        });
     }
 }
 

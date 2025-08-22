@@ -214,6 +214,7 @@ pub type TempDKey<K> = DefaultedKey<K, true>;
 
 pub const LOGGER_SHOWN: DKey<bool> = DKey::new("logger-shown", false);
 pub const SORTED_BY_OFFSET: DKey<bool> = DKey::new("sorted-by-offset", false);
+pub const SOLID_SCROLLBAR: DKey<bool> = DKey::new("solid-scrollbar", true);
 pub const ALWAYS_HIRES: DKey<bool> = DKey::new("always-hires", false);
 pub const DISPLAY_FIELD_SHOWN: DKey<bool> = DKey::new("display-field-shown", true);
 pub const BACKEND_CONFIG: DKey<Option<BackendConfig>> = DKey::new("backend-config", None);
