@@ -29,8 +29,7 @@ impl Vfs for DirectoryVfs {
 
     fn open(&self, path: impl AsRef<Path>) -> std::io::Result<Self::File> {
         let file_handle: File = self.0.get_file_handle(path)?;
-        let file =
-            SyncAccessFile::new(file_handle).map_err(|jserr| std::io::Error::other(jserr))?;
+        let file = SyncAccessFile::new(file_handle).map_err(std::io::Error::other)?;
         Ok(BufReader::with_capacity(0x800000, file))
     }
 }

@@ -59,7 +59,7 @@ impl SyncAccessFile {
 impl Read for SyncAccessFile {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.read_for(buf.len() as u64)
-            .map_err(|jserr| std::io::Error::new(std::io::ErrorKind::Other, jserr))
+            .map_err(std::io::Error::other)
             .and_then(|array| {
                 array.copy_to(buf.get_mut(..(array.length() as usize)).ok_or(
                     std::io::Error::new(std::io::ErrorKind::InvalidInput, "buffer is too small"),
@@ -69,9 +69,7 @@ impl Read for SyncAccessFile {
     }
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> std::io::Result<usize> {
-        let size = self
-            .get_size()
-            .map_err(|jserr| std::io::Error::new(std::io::ErrorKind::Other, jserr))?;
+        let size = self.get_size().map_err(std::io::Error::other)?;
         let offset = self.offset;
         if offset >= size {
             return Ok(0);
@@ -80,7 +78,7 @@ impl Read for SyncAccessFile {
         buf.reserve(more as usize);
 
         self.read_for(more)
-            .map_err(|jserr| std::io::Error::new(std::io::ErrorKind::Other, jserr))
+            .map_err(std::io::Error::other)
             .and_then(|array| {
                 let data = buf
                     .spare_capacity_mut()
@@ -124,7 +122,7 @@ impl Seek for SyncAccessFile {
             std::io::SeekFrom::End(v) => {
                 self.offset = self
                     .get_size()
-                    .map_err(|jserr| std::io::Error::new(std::io::ErrorKind::Other, jserr))?
+                    .map_err(std::io::Error::other)?
                     .checked_add_signed(v)
                     .ok_or_else(|| {
                         std::io::Error::new(

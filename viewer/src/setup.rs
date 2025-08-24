@@ -655,7 +655,7 @@ struct SetupPromises {
 
 #[cfg(target_arch = "wasm32")]
 static IS_DIRECTORY_PICKER_SUPPORTED: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| SetupPromises::is_supported());
+    std::sync::LazyLock::new(SetupPromises::is_supported);
 
 #[cfg(target_arch = "wasm32")]
 fn draw_unsupported_directory_picker(ui: &mut egui::Ui) {

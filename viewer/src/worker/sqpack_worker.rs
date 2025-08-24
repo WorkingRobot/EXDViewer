@@ -273,7 +273,7 @@ impl InstallInstance {
         let resource = VInstall::at_sqpack(
             DirectoryVfs::new(handle)
                 .await
-                .map_err(|jserr| std::io::Error::new(std::io::ErrorKind::Other, jserr))?,
+                .map_err(std::io::Error::other)?,
         );
         let resource = SqPack::new(resource);
         Ok(Self(Ironworks::new().with_resource(resource)))
