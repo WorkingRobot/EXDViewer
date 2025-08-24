@@ -195,6 +195,7 @@ impl SetupWindow {
                             #[cfg(target_arch = "wasm32")]
                             InstallLocation::Worker(name) => {
                                 use crate::excel::worker::WorkerFileProvider;
+                                use web_sys::FileSystemPermissionMode;
 
                                 if !*IS_DIRECTORY_PICKER_SUPPORTED {
                                     draw_unsupported_directory_picker(ui);
@@ -206,7 +207,7 @@ impl SetupWindow {
                                             |ui| {
                                                 if ui.button("Browse").clicked() {
                                                     self.location_promises.open_folder_picker(
-                                                        web_sys::FileSystemPermissionMode::Read,
+                                                        FileSystemPermissionMode::Read,
                                                         WorkerFileProvider::add_folder,
                                                     );
                                                 }
@@ -401,6 +402,7 @@ impl SetupWindow {
                             #[cfg(target_arch = "wasm32")]
                             SchemaLocation::Worker(name) => {
                                 use crate::schema::worker::WorkerProvider;
+                                use web_sys::FileSystemPermissionMode;
 
                                 if !*IS_DIRECTORY_PICKER_SUPPORTED {
                                     draw_unsupported_directory_picker(ui);
@@ -412,9 +414,9 @@ impl SetupWindow {
                                             |ui| {
                                                 if ui.button("Browse").clicked() {
                                                     self.schema_promises.open_folder_picker(
-                                                web_sys::FileSystemPermissionMode::Readwrite,
-                                                WorkerProvider::add_folder,
-                                            );
+                                                        FileSystemPermissionMode::Readwrite,
+                                                        WorkerProvider::add_folder,
+                                                    );
                                                 }
                                                 egui::ComboBox::from_id_salt("schema_folder")
                                                     .selected_text(name.as_str())
