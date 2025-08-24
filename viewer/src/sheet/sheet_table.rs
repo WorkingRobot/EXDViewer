@@ -173,7 +173,7 @@ impl SheetTable {
                         ManagedIcon::Loading => {
                             let (rect, _) =
                                 ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-                            ui.allocate_new_ui(
+                            ui.scope_builder(
                                 UiBuilder::new()
                                     .max_rect(rect)
                                     .layout(Layout::centered_and_justified(ui.layout().main_dir())),

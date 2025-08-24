@@ -19,7 +19,7 @@ fn copyable_label(ui: &mut egui::Ui, text: impl ToString) -> Response {
             resp.context_menu(|ui| {
                 if ui.button("Copy").clicked() {
                     ui.ctx().copy_text(text.to_string());
-                    ui.close_menu();
+                    ui.close();
                 }
             });
             resp

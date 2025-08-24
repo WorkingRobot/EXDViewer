@@ -2,13 +2,11 @@ use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc};
 
 use anyhow::Result;
 use egui::{
-    Button, CentralPanel, FontData, FontFamily, Label, Layout, RichText, ScrollArea, TextEdit,
-    Vec2, Widget,
+    Button, CentralPanel, FontData, FontFamily, Layout, ScrollArea, TextEdit, Vec2, Widget,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
     panel::Side,
     style::ScrollStyle,
 };
-use egui_alignments::{Alignable, Aligner};
 use egui_extras::install_image_loaders;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ironworks::excel::Language;
@@ -122,22 +120,22 @@ impl App {
                 egui::Frame::side_top_panel(&ctx.style()).fill(ctx.style().visuals.code_bg_color),
             )
             .show(ctx, |ui| {
-                egui::menu::bar(ui, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button("App", |ui| {
                         if ui.button("Configure").clicked() {
                             self.navigate("/");
-                            ui.close_menu();
+                            ui.close();
                         }
                         if !super::IS_WEB && ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
 
                     ui.menu_button("Navigate", |ui| {
                         if ui.button("To Row…").clicked() {
                             self.goto_window = Some(goto::GoToWindow::default());
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
 
@@ -150,7 +148,7 @@ impl App {
                                     .changed()
                             {
                                 LANGUAGE.set(ctx, lang);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -197,7 +195,7 @@ impl App {
                             let r =
                                 r.union(ui.selectable_value(&mut sorted_by_offset, false, "Index"));
                             if r.changed() {
-                                ui.close_menu();
+                                ui.close();
                                 SORTED_BY_OFFSET.set(ctx, sorted_by_offset);
                             }
                         });
@@ -216,7 +214,7 @@ impl App {
                                         ScrollStyle::default()
                                     };
                                 });
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
 
@@ -224,7 +222,7 @@ impl App {
                             let mut always_hires = ALWAYS_HIRES.get(ctx);
                             if ui.checkbox(&mut always_hires, "HD Icons").changed() {
                                 ALWAYS_HIRES.set(ctx, always_hires);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
 
@@ -235,7 +233,7 @@ impl App {
                                 .changed()
                             {
                                 DISPLAY_FIELD_SHOWN.set(ctx, display_field_shown);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
 
@@ -274,9 +272,10 @@ impl App {
             egui::TopBottomPanel::top("sheet_list_header").show_inside(ui, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    Label::new(RichText::new("Sheets").heading()).top(ui);
-                    Aligner::right()
-                        .show(ui, |ui| CollapsibleSidePanel::draw_arrow(ui, "sheet_list"));
+                    ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
+                        CollapsibleSidePanel::draw_arrow(ui, "sheet_list");
+                        ui.vertical_centered_justified(|ui| ui.heading("Sheets"));
+                    });
                 });
                 ui.add_space(4.0);
                 ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
@@ -326,12 +325,15 @@ impl App {
                                 .on_hover_text(
                                     modified_schemas.iter().map(|(name, _)| name).join("\n"),
                                 );
-                                let resp = Button::new(if modified_schemas.len() > 1 {
-                                    "Save All"
-                                } else {
-                                    "Save"
-                                })
-                                .right(ui);
+                                let resp = ui
+                                    .with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.button(if modified_schemas.len() > 1 {
+                                            "Save All"
+                                        } else {
+                                            "Save"
+                                        })
+                                    })
+                                    .inner;
                                 if resp.clicked() {
                                     self.command_save_all_schemas();
                                 }
@@ -383,7 +385,7 @@ impl App {
                                 .take(range.end - range.start)
                             {
                                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                                let resp = egui::SelectableLabel::new(
+                                let resp = Button::selectable(
                                     current_sheet.as_ref() == Some(sheet),
                                     sheet.as_str(),
                                 )
@@ -511,11 +513,12 @@ impl App {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if CollapsibleSidePanel::is_collapsed(ui.ctx(), "sheet_list") {
-                            Aligner::left_top()
-                                .show(ui, |ui| CollapsibleSidePanel::draw_arrow(ui, "sheet_list"));
+                            ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
+                                CollapsibleSidePanel::draw_arrow(ui, "sheet_list");
+                            });
                         }
 
-                        Aligner::center_top().show(ui, |ui| ui.heading(sheet_name.clone()));
+                        ui.vertical_centered_justified(|ui| ui.heading(sheet_name.clone()));
                     });
                     ui.add_space(4.0);
                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {

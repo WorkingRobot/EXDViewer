@@ -460,7 +460,7 @@ fn draw_icon(ctx: &GlobalContext, ui: &mut egui::Ui, icon_id: u32) -> egui::Resp
     resp.context_menu(|ui| {
         if ui.button("Copy").clicked() {
             ui.ctx().copy_text(icon_id.to_string());
-            ui.close_menu();
+            ui.close();
         }
         // ui.add_enabled_ui(image_source.is_some(), |ui| {
         //     if ui.button("Save").clicked() {
@@ -489,7 +489,7 @@ fn draw_color(ui: &mut egui::Ui, color: Color32) -> egui::Response {
     resp.context_menu(|ui| {
         if ui.button("Copy").clicked() {
             ui.ctx().copy_text(hex.to_string());
-            ui.close_menu();
+            ui.close();
         }
     });
     resp

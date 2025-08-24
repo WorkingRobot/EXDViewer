@@ -11,43 +11,42 @@ name = "worker"
 path = "src/worker/runner.rs"
 
 [dependencies]
-egui = "0.31"
-eframe = { version = "0.31", default-features = false, features = [
+egui = "0.32"
+eframe = { version = "0.32", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
     "persistence",   # Enable restoring app state when restarting the app.
     "wayland",       # To support Linux (and CI)
 ] }
-catppuccin-egui = { version = "5.5.0", default-features = false, features = [
-    "egui31",
+catppuccin-egui = { version = "5.6.0", default-features = false, features = [
+    "egui32",
 ] }
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 ironworks = { version = "0.4.1", features = ["excel", "sqpack", "tex"] }
 ehttp = { version = "0.5", features = ["streaming", "native-async"] }
-lru = "0.13"
+lru = "0.16"
 url = "2.5"
 fuzzy-matcher = "0.3"
 anyhow = "1.0"
 intmap = "3.1.0"
-binrw = "0.14"
+binrw = "0.15"
 num-traits = "0.2"
 itertools = "0.14"
 rfd = "0.15"
-egui_table = "0.3"
+egui_table = "0.4"
 # egui_router = "0.4" Terrible library, don't use
-egui_extras = { version = "0.31", features = ["http", "image"] }
-egui_alignments = "0.3"
+egui_extras = { version = "0.32", features = ["http", "image"] }
 syntect = { version = "5.2", default-features = false, features = [
     "default-fancy",
 ] }
 serde_yml = "0.0.12"
 serde_json = "1.0"
-jsonschema = { version = "0.29", default-features = false }
+jsonschema = { version = "0.32", default-features = false }
 async-trait = "0.1"
 futures-util = "0.3"
-egui_logger = "0.6"
+egui_logger = "0.8"
 image = { version = "0.25", default-features = false, features = ["png"] }
 image_dds = { version = "0.7", default-features = false, features = ["image"] }
 either = "1.15"

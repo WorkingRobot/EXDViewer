@@ -7,9 +7,9 @@ use crate::{
     utils::{TrackedPromise, highlight, shortcut},
 };
 use egui::{
-    CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers,
-    Response, RichText, TextBuffer, TopBottomPanel, collapsing_header::CollapsingState,
-    text::CursorRange,
+    CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, MenuBar,
+    Modifiers, Response, RichText, TextBuffer, TopBottomPanel, collapsing_header::CollapsingState,
+    epaint::text::cursor::LayoutCursor,
 };
 use itertools::Itertools;
 use jsonschema::output::{ErrorDescription, OutputUnit};
@@ -136,32 +136,32 @@ impl EditableSchema {
                             false,
                         );
 
-                        egui::menu::bar(ui, |ui| {
+                        MenuBar::new().ui(ui, |ui| {
                             ui.menu_button("File", |ui| {
                                 ui.add_enabled_ui(self.is_modified(), |ui| {
                                     if shortcut::button(ui, "Revert", &shortcut_revert).clicked() {
                                         self.command_revert();
                                         response.mark_changed();
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 });
                                 if shortcut::button(ui, "Clear", &shortcut_clear).clicked() {
                                     self.command_clear();
                                     response.mark_changed();
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                                 ui.add_enabled_ui(
                                     self.is_modified() && provider.can_save_schemas(),
                                     |ui| {
                                         if shortcut::button(ui, "Save", &shortcut_save).clicked() {
                                             self.command_save(provider);
-                                            ui.close_menu();
+                                            ui.close();
                                         }
                                     },
                                 );
                                 if shortcut::button(ui, "Save As", &shortcut_save_as).clicked() {
                                     self.command_save_as(provider);
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             });
 
@@ -169,7 +169,7 @@ impl EditableSchema {
                                 let mut word_wrap = SCHEMA_EDITOR_WORD_WRAP.get(ui.ctx());
                                 if ui.toggle_value(&mut word_wrap, "Word Wrap").changed() {
                                     SCHEMA_EDITOR_WORD_WRAP.set(ui.ctx(), word_wrap);
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             });
 
@@ -223,7 +223,7 @@ impl EditableSchema {
                     });
 
                 TopBottomPanel::bottom("status-panel").show_inside(ui, |ui| {
-                    egui::menu::bar(ui, |ui| {
+                    MenuBar::new().ui(ui, |ui| {
                         let validation_text: String = match &self.schema {
                             Ok(Ok(_)) => "Valid Schema".into(),
                             Ok(Err(e)) => format!(
@@ -235,11 +235,9 @@ impl EditableSchema {
                         };
                         ui.label(validation_text);
                         ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
-                            let cursor = ui
-                                .data(|d| {
-                                    d.get_temp::<CursorRange>(schema_editor_cursor_position_id)
-                                })
-                                .map(|range| range.primary.rcursor);
+                            let cursor = ui.data(|d| {
+                                d.get_temp::<LayoutCursor>(schema_editor_cursor_position_id)
+                            });
 
                             let mut add_separator = false;
                             if let Some(cursor) = cursor {
@@ -276,14 +274,20 @@ impl EditableSchema {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                             let theme = CODE_SYNTAX_THEME.get(ui.ctx());
 
-                            let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
-                                let mut layout_job =
-                                    highlight(ui.ctx(), ui.style(), &theme, string, "yaml");
-                                if SCHEMA_EDITOR_WORD_WRAP.get(ui.ctx()) {
-                                    layout_job.wrap.max_width = wrap_width;
-                                }
-                                ui.fonts(|f| f.layout_job(layout_job))
-                            };
+                            let mut layouter =
+                                |ui: &egui::Ui, buf: &dyn TextBuffer, wrap_width: f32| {
+                                    let mut layout_job = highlight(
+                                        ui.ctx(),
+                                        ui.style(),
+                                        &theme,
+                                        buf.as_str(),
+                                        "yaml",
+                                    );
+                                    if SCHEMA_EDITOR_WORD_WRAP.get(ui.ctx()) {
+                                        layout_job.wrap.max_width = wrap_width;
+                                    }
+                                    ui.fonts(|f| f.layout_job(layout_job))
+                                };
 
                             let ret = {
                                 let layout = (*ui.layout()).with_main_justify(true);
@@ -302,9 +306,9 @@ impl EditableSchema {
 
                             if let Some(range) = ret.cursor_range {
                                 ui.data_mut(|d| {
-                                    d.insert_temp::<CursorRange>(
+                                    d.insert_temp::<LayoutCursor>(
                                         schema_editor_cursor_position_id,
-                                        range,
+                                        ret.galley.layout_from_cursor(range.primary),
                                     )
                                 });
                             }
