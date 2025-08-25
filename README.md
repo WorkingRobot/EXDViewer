@@ -18,7 +18,7 @@ EXDViewer is a modern, fast, and user-friendly tool for exploring [Excel files](
 - **Easy Deployment:** Host your own web instance via Docker.
 - **Performance:** Efficiently handles all sheets, even huge ones like `Item`, `Action`, or `Quest`.
 - **EXDSchema Support:** Provides tight integration with [EXDSchema](https://github.com/xivdev/EXDSchema) for enhanced data exploration and dynamic in-viewer schema editing.
-- **Advanced Filtering:** Supports simple, fuzzy, and complex filtering to quickly find specific data.
+- **Advanced Filtering:** Supports simple, ~~fuzzy, and complex~~ (TBD) filtering to quickly find specific data.
 
 ## Quick Start
 
@@ -38,7 +38,7 @@ Deploy the website yourself with Docker:
 docker pull ghcr.io/workingrobot/exdviewer-web:main
 docker run -p 8080:80 ghcr.io/workingrobot/exdviewer-web:main
 ```
-Then open [http://localhost:8080](http://localhost:8080) in your browser. Give it a few minutes to download the latest game version, and set the API url to `http://localhost:8080/api` in the settings.
+Then open [http://localhost:8080](http://localhost:8080) in your browser. Give it a few seconds to load the latest game version, and set the API url to `http://localhost:8080/api` in the settings.
 
 ## What Are EXD Files?
 
