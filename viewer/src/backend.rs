@@ -39,7 +39,8 @@ impl Backend {
                 }
 
                 InstallLocation::Web(base_url, version) => {
-                    BoxedExcelProvider::new_web(WebFileProvider::new(&base_url, version)?).await?
+                    BoxedExcelProvider::new_web(WebFileProvider::new(&base_url, version).await?)
+                        .await?
                 }
             })
         };

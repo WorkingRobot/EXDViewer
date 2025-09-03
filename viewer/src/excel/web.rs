@@ -19,9 +19,24 @@ pub struct VersionInfo {
 }
 
 impl WebFileProvider {
-    pub fn new(base_url: &str, version: Option<GameVersion>) -> anyhow::Result<Self> {
-        let mut base_url = Url::parse(base_url)?;
+    pub async fn new(base_url: &str, version: Option<GameVersion>) -> anyhow::Result<Self> {
+        let version_info = Self::get_versions(base_url).await?;
 
+        let version = if let Some(v) = version {
+            if !version_info.versions.contains(&v) {
+                anyhow::bail!("Version {v} is not available");
+            } else {
+                v
+            }
+        } else {
+            log::info!(
+                "No version specified, using latest: {}",
+                version_info.latest
+            );
+            version_info.latest
+        };
+
+        let mut base_url = Url::parse(base_url)?;
         base_url
             .path_segments_mut()
             .map_err(|_| {
@@ -30,7 +45,7 @@ impl WebFileProvider {
                     "path parsing error".to_string(),
                 )
             })?
-            .push(&version.map_or_else(|| "latest".to_string(), |v| v.to_string()));
+            .push(&version.to_string());
 
         Ok(Self(base_url))
     }

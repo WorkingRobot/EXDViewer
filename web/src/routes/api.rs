@@ -85,7 +85,7 @@ async fn get_file(
     let mut directives = vec![CacheDirective::Public];
     if version != QueryGameVersion::Latest {
         directives.push(CacheDirective::Immutable);
-        directives.push(CacheDirective::MaxAge(60 * 60 * 24 * 30));
+        directives.push(CacheDirective::MaxAge(60 * 60 * 24 * 365));
     } else {
         directives.push(CacheDirective::MaxAge(60 * 60 * 24));
     }
