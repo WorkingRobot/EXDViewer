@@ -63,18 +63,17 @@ impl Display for QueryGameVersion {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct FileQuery {
-    pub version: QueryGameVersion,
-    pub path: String,
-}
-
-#[get("/{version}/{path:.+}/")]
+#[get("/{version}/{path:.*}/")]
 async fn get_file(
     data: web::Data<MessageQueue>,
-    path: web::Path<FileQuery>,
+    path_info: web::Path<(QueryGameVersion, String)>,
 ) -> Result<HttpResponse> {
-    let FileQuery { version, path } = path.into_inner();
+    let (version, path) = path_info.into_inner();
+
+    // Handle empty path case
+    if path.is_empty() {
+        return Err(ErrorBadRequest("File path cannot be empty"));
+    }
 
     let resolved_ver = match &version {
         QueryGameVersion::Latest => None,

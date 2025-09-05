@@ -50,7 +50,7 @@ async fn main() -> Result<(), ServerError> {
         // console_subscriber::init();
     }
 
-    let config: config::Config = Config::builder()
+    let mut config: config::Config = Config::builder()
         .add_source(File::new("config", FileFormat::Yaml).required(false))
         .add_source(Environment::default())
         .build()
@@ -62,6 +62,13 @@ async fn main() -> Result<(), ServerError> {
             .default_filter_or(config.log_filter.clone().unwrap_or("info".to_string())),
     );
 
+    let prometheus_registry = Registry::new();
+
+    config.cache = config
+        .cache
+        .prometheus_registry(prometheus_registry.clone());
+    let config = config;
+
     let game_data = Arc::new(
         GameData::new(
             config.cache.clone(),
@@ -71,8 +78,6 @@ async fn main() -> Result<(), ServerError> {
         )
         .await?,
     );
-
-    let prometheus_registry = Registry::new();
 
     let server_prometheus = PrometheusMetricsBuilder::new("public")
         .registry(prometheus_registry.clone())

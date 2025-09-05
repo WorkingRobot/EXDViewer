@@ -2,11 +2,16 @@
 # You can also set these as environment variables.
 # For example, server_addr can be set with the environment variable SERVER_ADDR.
 
-log_filter: debug,exdviewer_web=debug,tracing::span=warn,foyer_memory::raw=warn,hyper_util::client::legacy::pool=warn
+# This is a pretty sensible logging default.
+# See https://docs.rs/env_logger/latest/env_logger/#enabling-logging
+log_filter: debug,exdviewer_web=debug,tracing::span=warn,foyer_memory::raw=warn,hyper_util::client::legacy=warn,reqwest::connect=warn
 # The default is 0.0.0.0:80 to make docker bind to port 80.
-# vvv Except for this one vvv
 server_addr: 0.0.0.0:3000
+# Uncomment to enable the metrics server.
+# metrics_server_addr: 0.0.0.0:4000
 cache:
-  storage_directory: exd_cache
-  max_concurrent_downloads: 32
+  # Uncomment to enable on-disk caching of downloaded files.
+  # storage_directory: cache
+  # storage_capacity_bytes: 1073741824 # 1GiB
+# How much of a file to download at once. Larger values reduces amortized latency.
 file_readahead: 8388608 # 8 MiB
