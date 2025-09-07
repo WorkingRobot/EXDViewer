@@ -5,7 +5,10 @@ use std::{
 };
 
 use actix_files::{Files, NamedFile};
-use actix_web::{dev::HttpServiceFactory, get};
+use actix_web::{
+    HttpResponse,
+    dev::{HttpServiceFactory, ServiceRequest, ServiceResponse, fn_service},
+};
 
 static SERVICE_DIRECTORY: LazyLock<PathBuf> = LazyLock::new(|| {
     current_exe()
@@ -15,13 +18,15 @@ static SERVICE_DIRECTORY: LazyLock<PathBuf> = LazyLock::new(|| {
 });
 
 pub fn service() -> impl HttpServiceFactory {
-    (
-        index,
-        Files::new("/", SERVICE_DIRECTORY.clone()).index_file("index.html"),
-    )
-}
-
-#[get("/{tail:[^\\.]+}")]
-async fn index() -> actix_web::Result<NamedFile> {
-    Ok(NamedFile::open(SERVICE_DIRECTORY.join("index.html"))?)
+    Files::new("/", SERVICE_DIRECTORY.clone())
+        .index_file("index.html")
+        .default_handler(fn_service(|req: ServiceRequest| async {
+            if req.match_info().unprocessed().contains('.') {
+                return Ok(req.into_response(HttpResponse::NotFound().finish()));
+            }
+            let (req, _) = req.into_parts();
+            let file = NamedFile::open_async(SERVICE_DIRECTORY.join("index.html")).await?;
+            let res = file.into_response(&req);
+            Ok(ServiceResponse::new(req, res))
+        }))
 }

@@ -10,6 +10,7 @@ server_addr: 0.0.0.0:3000
 # Uncomment to enable the metrics server.
 # metrics_server_addr: 0.0.0.0:4000
 cache:
+  max_concurrent_downloads: 8
   # Uncomment to enable on-disk caching of downloaded files.
   # storage_directory: cache
   # storage_capacity_bytes: 1073741824 # 1GiB
