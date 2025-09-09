@@ -176,13 +176,12 @@ impl SetupWindow {
                                 ui.horizontal(|ui| {
                                     ui.label("Path:");
                                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                                        if ui.button("Browse").clicked() {
-                                            if let Some(picked_path) = rfd::FileDialog::new()
+                                        if ui.button("Browse").clicked()
+                                            && let Some(picked_path) = rfd::FileDialog::new()
                                                 .pick_folder()
                                                 .and_then(|d| d.to_str().map(|s| s.to_owned()))
-                                            {
-                                                *path = picked_path;
-                                            }
+                                        {
+                                            *path = picked_path;
                                         }
                                         ui.add(
                                             egui::TextEdit::singleline(path)
@@ -383,14 +382,14 @@ impl SetupWindow {
                                 ui.horizontal(|ui| {
                                     ui.label("Path:");
                                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                                        if ui.button("Browse").clicked() {
-                                            if let Some(picked_path) = rfd::FileDialog::new()
+                                        if ui.button("Browse").clicked()
+                                            && let Some(picked_path) = rfd::FileDialog::new()
                                                 .pick_folder()
                                                 .and_then(|d| d.to_str().map(|s| s.to_owned()))
-                                            {
-                                                *path = picked_path;
-                                            }
+                                        {
+                                            *path = picked_path;
                                         }
+
                                         ui.add(
                                             egui::TextEdit::singleline(path)
                                                 .desired_width(ui.available_width()),

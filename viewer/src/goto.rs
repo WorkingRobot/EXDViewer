@@ -8,6 +8,9 @@ use egui::{
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use itertools::{EitherOrBoth, Itertools};
 
+type PatternMatch<'a> = EitherOrBoth<Vec<&'a str>, (u32, Option<u16>)>;
+type GoToMatch = EitherOrBoth<String, (u32, Option<u16>)>;
+
 #[derive(Default)]
 pub struct GoToWindow {
     requested_focused: bool,
@@ -36,7 +39,7 @@ impl GoToWindow {
         ctx: &egui::Context,
         sheet_matcher: &SkimMatcherV2,
         sheet_list: &[&str],
-    ) -> Result<Option<EitherOrBoth<String, (u32, Option<u16>)>>, Self> {
+    ) -> Result<Option<GoToMatch>, Self> {
         let mut ret = None;
         Modal::default_area("goto-modal".into())
             .order(egui::Order::Middle)
@@ -44,6 +47,9 @@ impl GoToWindow {
                 Frame::window(ui.style()).show(ui, |ui| {
                     ui.heading("Go To…");
                     ui.separator();
+
+                    // Thank you to https://github.com/JakeHandsome/egui_autocomplete/blob/master/src/lib.rs
+                    // for a lot of the reference material.
 
                     let up_pressed =
                         ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::ArrowUp));
@@ -250,7 +256,7 @@ impl GoToWindow {
         pattern: &str,
         sheet_matcher: &SkimMatcherV2,
         sheet_list: &[&'a str],
-    ) -> anyhow::Result<EitherOrBoth<Vec<&'a str>, (u32, Option<u16>)>> {
+    ) -> anyhow::Result<PatternMatch<'a>> {
         if let Some((sheet_pattern, row_pattern)) = pattern.split_once(":") {
             if !sheet_pattern.is_empty() {
                 let sheets = Self::match_sheet(sheet_pattern, sheet_matcher, sheet_list);
@@ -282,10 +288,10 @@ impl GoToWindow {
             vec![]
         } else {
             sheet_list
-                .into_iter()
+                .iter()
                 .filter_map(|sheet| {
                     sheet_matcher
-                        .fuzzy_match(sheet, &pattern)
+                        .fuzzy_match(sheet, pattern)
                         .map(|score| (score, sheet))
                 })
                 .sorted_unstable_by_key(|(score, _)| -score)

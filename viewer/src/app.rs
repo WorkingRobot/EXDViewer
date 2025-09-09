@@ -608,12 +608,11 @@ impl App {
                 });
 
                 let resp = editor.draw(ui, backend.schema());
-                if resp.changed() {
-                    if let Some(schema) = editor.get_schema() {
-                        if let Err(e) = table.context().set_schema(Some(schema.clone())) {
-                            log::error!("Failed to set schema: {:?}", e);
-                        }
-                    }
+                if resp.changed()
+                    && let Some(schema) = editor.get_schema()
+                    && let Err(e) = table.context().set_schema(Some(schema.clone()))
+                {
+                    log::error!("Failed to set schema: {:?}", e);
                 }
 
                 let scroll_to = TEMP_SCROLL_TO.take(ctx);

@@ -368,17 +368,16 @@ impl SheetTable {
 
     fn get_filtered_row_count(&mut self) -> usize {
         if let Some(current_filter) = &self.current_filter {
-            if let Some(filter_value) = self.filtered_rows.get_mut().get(current_filter) {
-                if let Ok(filter_output) = &filter_value.filter_result {
-                    return filter_output.filtered_rows.len();
-                }
+            if let Some(filter_value) = self.filtered_rows.get_mut().get(current_filter)
+                && let Ok(filter_output) = &filter_value.filter_result
+            {
+                return filter_output.filtered_rows.len();
             }
-            if let Some(last_filter) = &self.last_filter {
-                if let Some(filter_value) = self.filtered_rows.get_mut().get(last_filter) {
-                    if let Ok(filter_output) = &filter_value.filter_result {
-                        return filter_output.filtered_rows.len();
-                    }
-                }
+            if let Some(last_filter) = &self.last_filter
+                && let Some(filter_value) = self.filtered_rows.get_mut().get(last_filter)
+                && let Ok(filter_output) = &filter_value.filter_result
+            {
+                return filter_output.filtered_rows.len();
             }
         }
         self.context.sheet().subrow_count() as usize
@@ -386,25 +385,20 @@ impl SheetTable {
 
     fn get_filtered_row_nr(&self, filtered_row_nr: u64) -> u64 {
         if let Some(current_filter) = &self.current_filter {
-            if let Some(filter_value) = self.filtered_rows.borrow_mut().get(current_filter) {
-                if let Ok(filter_output) = &filter_value.filter_result {
-                    if let Some(&filtered_row_nr) =
-                        filter_output.filtered_rows.get(filtered_row_nr as usize)
-                    {
-                        return filtered_row_nr.into();
-                    }
-                }
+            if let Some(filter_value) = self.filtered_rows.borrow_mut().get(current_filter)
+                && let Ok(filter_output) = &filter_value.filter_result
+                && let Some(&filtered_row_nr) =
+                    filter_output.filtered_rows.get(filtered_row_nr as usize)
+            {
+                return filtered_row_nr.into();
             }
-            if let Some(last_filter) = &self.last_filter {
-                if let Some(filter_value) = self.filtered_rows.borrow_mut().get(last_filter) {
-                    if let Ok(filter_output) = &filter_value.filter_result {
-                        if let Some(&filtered_row_nr) =
-                            filter_output.filtered_rows.get(filtered_row_nr as usize)
-                        {
-                            return filtered_row_nr.into();
-                        }
-                    }
-                }
+            if let Some(last_filter) = &self.last_filter
+                && let Some(filter_value) = self.filtered_rows.borrow_mut().get(last_filter)
+                && let Ok(filter_output) = &filter_value.filter_result
+                && let Some(&filtered_row_nr) =
+                    filter_output.filtered_rows.get(filtered_row_nr as usize)
+            {
+                return filtered_row_nr.into();
             }
         }
 
