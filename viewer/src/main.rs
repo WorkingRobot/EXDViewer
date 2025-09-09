@@ -9,6 +9,9 @@
 
 mod combined_log;
 
+#[cfg(target_arch = "wasm32")]
+mod shortcuts;
+
 use combined_log::CombinedLogger;
 use viewer::App;
 
@@ -65,13 +68,46 @@ fn main() {
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .expect("the_canvas_id was not a HtmlCanvasElement");
 
-        let start_result = eframe::WebRunner::new()
-            .start(
-                canvas,
-                web_options,
-                Box::new(|cc| Ok(Box::new(App::new(cc)))),
+        let runner = eframe::WebRunner::new();
+
+        let start_result = async {
+            runner
+                .start(
+                    canvas.clone(),
+                    web_options,
+                    Box::new(|cc| Ok(Box::new(App::new(cc)))),
+                )
+                .await?;
+
+            // Override certain key handling to prevent browser defaults.
+            runner.add_event_listener(
+                &canvas,
+                "keydown",
+                move |event: web_sys::KeyboardEvent, _| {
+                    use crate::shortcuts::*;
+
+                    // https://github.com/emilk/egui/blob/802d307e4a2835cf4cf184d1cc99bea525b0c959/crates/eframe/src/web/input.rs#L152
+                    let modifiers = egui::Modifiers {
+                        alt: event.alt_key(),
+                        ctrl: event.ctrl_key(),
+                        shift: event.shift_key(),
+                        mac_cmd: event.meta_key(),
+                        command: event.ctrl_key() || event.meta_key(),
+                    };
+                    let key = egui::Key::from_name(&event.key());
+                    if let Some(key) = key {
+                        for shortcut in &[GOTO_ROW, GOTO_SHEET] {
+                            if modifiers.matches_logically(shortcut.modifiers)
+                                && key == shortcut.logical_key
+                            {
+                                event.prevent_default(); // Prevent browser default
+                            }
+                        }
+                    }
+                },
             )
-            .await;
+        }
+        .await;
 
         // Remove the loading text and spinner:
         if let Some(loading_text) = document.get_element_by_id("loading_text") {

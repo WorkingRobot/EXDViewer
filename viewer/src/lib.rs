@@ -16,6 +16,7 @@ mod schema;
 mod settings;
 mod setup;
 mod sheet;
+mod shortcuts;
 pub mod stopwatch;
 mod utils;
 #[cfg(target_arch = "wasm32")]

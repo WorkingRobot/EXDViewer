@@ -10,7 +10,7 @@ use egui::{
 use egui_extras::install_image_loaders;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ironworks::excel::Language;
-use itertools::Itertools;
+use itertools::{EitherOrBoth, Itertools};
 use lru::LruCache;
 use matchit::Params;
 use zip::{ZipWriter, write::SimpleFileOptions};
@@ -33,9 +33,10 @@ use crate::{
     },
     setup::{self, SetupWindow},
     sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
+    shortcuts::{GOTO_ROW, GOTO_SHEET},
     utils::{
         CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, IconManager,
-        TrackedPromise, tick_promises,
+        TrackedPromise, shortcut, tick_promises,
     },
 };
 
@@ -78,7 +79,13 @@ impl App {
         self.router
             .get_or_init(|| create_router(ctx.clone()).unwrap());
 
-        self.draw_goto(ctx);
+        if shortcut::consume(ctx, GOTO_ROW) {
+            self.goto_window = Some(goto::GoToWindow::to_row());
+        }
+        if shortcut::consume(ctx, GOTO_SHEET) {
+            self.goto_window = Some(goto::GoToWindow::to_sheet());
+        }
+
         self.draw_menubar(ctx);
         self.draw_logger(ctx);
 
@@ -100,15 +107,50 @@ impl App {
     }
 
     fn draw_goto(&mut self, ctx: &egui::Context) {
-        if let Some(window) = &mut self.goto_window {
-            window.draw(ctx);
-        }
+        if let Some(window) = self.goto_window.take() {
+            let misc_sheets_shown = MISC_SHEETS_SHOWN.get(ctx);
+            match window.draw(
+                ctx,
+                &self.sheet_matcher,
+                &self.backend.as_ref().map_or(vec![], |b| {
+                    b.excel()
+                        .get_entries()
+                        .iter()
+                        .filter(|(_, id)| misc_sheets_shown || **id >= 0)
+                        .map(|(s, _)| s.as_str())
+                        .collect()
+                }),
+            ) {
+                Ok(Some(data)) => {
+                    let sheet = match &data {
+                        EitherOrBoth::Left(sheet_name) | EitherOrBoth::Both(sheet_name, _) => {
+                            Some(sheet_name.clone())
+                        }
+                        EitherOrBoth::Right(_) => SELECTED_SHEET.get(ctx),
+                    };
+                    let location = match &data {
+                        EitherOrBoth::Left(_) => None,
+                        EitherOrBoth::Right(loc) | EitherOrBoth::Both(_, loc) => Some(loc),
+                    };
 
-        if let Some(window) = &self.goto_window {
-            if let Some(link) = &window.link {
-                if let Some(selected_sheet) = SELECTED_SHEET.get(ctx) {
-                    self.navigate(format!("/sheet/{selected_sheet}{link}"));
-                    self.goto_window = None;
+                    if let Some(sheet_name) = sheet {
+                        if let Some((row, subrow)) = location {
+                            self.navigate(format!(
+                                "/sheet/{sheet_name}#R{row}{}",
+                                if let Some(subrow) = subrow {
+                                    format!(".{subrow}")
+                                } else {
+                                    "".to_string()
+                                }
+                            ));
+                        } else {
+                            self.navigate(format!("/sheet/{sheet_name}"));
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(window) => {
+                    self.goto_window = Some(window);
                 }
             }
         }
@@ -132,9 +174,13 @@ impl App {
                         }
                     });
 
-                    ui.menu_button("Navigate", |ui| {
-                        if ui.button("To Row…").clicked() {
-                            self.goto_window = Some(goto::GoToWindow::default());
+                    ui.menu_button("Go", |ui| {
+                        if shortcut::button(ui, "Go to Row…", GOTO_ROW).clicked() {
+                            self.goto_window = Some(goto::GoToWindow::to_row());
+                            ui.close();
+                        }
+                        if shortcut::button(ui, "Go to Sheet…", GOTO_SHEET).clicked() {
+                            self.goto_window = Some(goto::GoToWindow::to_sheet());
                             ui.close();
                         }
                     });
@@ -352,12 +398,7 @@ impl App {
                 .get_entries()
                 .iter()
                 .sorted_by_key(|(sheet, _)| *sheet)
-                .filter(|(_, id)| {
-                    if misc_sheets_shown {
-                        return true;
-                    }
-                    misc_sheets_shown || **id >= 0
-                })
+                .filter(|(_, id)| misc_sheets_shown || **id >= 0)
                 .filter_map(|(sheet, id)| {
                     if sheets_filter.is_empty() {
                         return Some((0, sheet, id));
@@ -709,10 +750,14 @@ impl App {
     }
 
     fn draw_unnamed_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
+        self.draw_goto(ui.ctx());
+
         self.draw_sheet_list(ui.ctx());
     }
 
     fn draw_named_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
+        self.draw_goto(ui.ctx());
+
         self.draw_sheet_list(ui.ctx());
         self.draw_sheet_data(ui.ctx());
     }
@@ -853,11 +898,6 @@ impl eframe::App for App {
 
 fn add_links(ui: &mut egui::Ui) {
     ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
-        ui.add(
-            egui::Hyperlink::from_label_and_url("Support me on Ko-fi!", "https://ko-fi.com/camora")
-                .open_in_new_tab(true),
-        );
-        ui.label("/");
         ui.add(
             egui::Hyperlink::from_label_and_url(
                 "Contibute to EXDSchema",

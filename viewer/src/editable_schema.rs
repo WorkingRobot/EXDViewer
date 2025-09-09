@@ -4,12 +4,12 @@ use crate::{
         CODE_SYNTAX_THEME, SCHEMA_EDITOR_ERRORS_SHOWN, SCHEMA_EDITOR_VISIBLE,
         SCHEMA_EDITOR_WORD_WRAP,
     },
+    shortcuts::{SCHEMA_CLEAR, SCHEMA_REVERT, SCHEMA_SAVE, SCHEMA_SAVE_AS},
     utils::{TrackedPromise, highlight, shortcut},
 };
 use egui::{
-    CentralPanel, CornerRadius, Frame, Id, Key, KeyboardShortcut, Layout, Margin, MenuBar,
-    Modifiers, Response, RichText, TextBuffer, TopBottomPanel, collapsing_header::CollapsingState,
-    epaint::text::cursor::LayoutCursor,
+    CentralPanel, CornerRadius, Frame, Id, Layout, Margin, MenuBar, Response, RichText, TextBuffer,
+    TopBottomPanel, collapsing_header::CollapsingState, epaint::text::cursor::LayoutCursor,
 };
 use itertools::Itertools;
 use jsonschema::output::{ErrorDescription, OutputUnit};
@@ -99,26 +99,21 @@ impl EditableSchema {
                 ..Default::default()
             }))
             .show(ui.ctx(), |ui| {
-                let shortcut_revert = KeyboardShortcut::new(Modifiers::CTRL, Key::R);
-                let shortcut_clear = KeyboardShortcut::new(Modifiers::CTRL, Key::N);
-                let shortcut_save = KeyboardShortcut::new(Modifiers::CTRL, Key::S);
-                let shortcut_save_as =
-                    KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::S);
                 let schema_editor_id = Id::new("schema-editor");
                 let schema_editor_cursor_position_id = schema_editor_id.with("position");
 
-                if shortcut::consume(ui, &shortcut_revert) && self.is_modified() {
+                if shortcut::consume_ui(ui, SCHEMA_REVERT) && self.is_modified() {
                     self.command_revert();
                     response.mark_changed();
                 }
-                if shortcut::consume(ui, &shortcut_clear) {
+                if shortcut::consume_ui(ui, SCHEMA_CLEAR) {
                     self.command_clear();
                     response.mark_changed();
                 }
-                if shortcut::consume(ui, &shortcut_save) && provider.can_save_schemas() {
+                if shortcut::consume_ui(ui, SCHEMA_SAVE) && provider.can_save_schemas() {
                     self.command_save(provider);
                 }
-                if shortcut::consume(ui, &shortcut_save_as) {
+                if shortcut::consume_ui(ui, SCHEMA_SAVE_AS) {
                     self.command_save_as(provider);
                 }
 
@@ -139,13 +134,13 @@ impl EditableSchema {
                         MenuBar::new().ui(ui, |ui| {
                             ui.menu_button("File", |ui| {
                                 ui.add_enabled_ui(self.is_modified(), |ui| {
-                                    if shortcut::button(ui, "Revert", &shortcut_revert).clicked() {
+                                    if shortcut::button(ui, "Revert", SCHEMA_REVERT).clicked() {
                                         self.command_revert();
                                         response.mark_changed();
                                         ui.close();
                                     }
                                 });
-                                if shortcut::button(ui, "Clear", &shortcut_clear).clicked() {
+                                if shortcut::button(ui, "Clear", SCHEMA_CLEAR).clicked() {
                                     self.command_clear();
                                     response.mark_changed();
                                     ui.close();
@@ -153,13 +148,13 @@ impl EditableSchema {
                                 ui.add_enabled_ui(
                                     self.is_modified() && provider.can_save_schemas(),
                                     |ui| {
-                                        if shortcut::button(ui, "Save", &shortcut_save).clicked() {
+                                        if shortcut::button(ui, "Save", SCHEMA_SAVE).clicked() {
                                             self.command_save(provider);
                                             ui.close();
                                         }
                                     },
                                 );
-                                if shortcut::button(ui, "Save As", &shortcut_save_as).clicked() {
+                                if shortcut::button(ui, "Save As", SCHEMA_SAVE_AS).clicked() {
                                     self.command_save_as(provider);
                                     ui.close();
                                 }

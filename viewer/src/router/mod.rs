@@ -1,12 +1,14 @@
 use std::cell::RefCell;
 
-use egui::{Key, KeyboardShortcut, Modifiers};
 use history::History;
 use matchit::{InsertError, Match, Params};
 use path::Path;
 use route::RouteResponse;
 
-use crate::utils::shortcut;
+use crate::{
+    shortcuts::{NAV_BACK, NAV_FORWARD},
+    utils::shortcut,
+};
 
 pub mod history;
 pub mod path;
@@ -78,14 +80,12 @@ impl<T, H: History> Router<T, H> {
     }
 
     pub fn ui(&self, state: &mut T, ui: &mut egui::Ui) {
-        let shortcut_back = KeyboardShortcut::new(Modifiers::ALT, Key::ArrowLeft);
-        let shortcut_forward = KeyboardShortcut::new(Modifiers::ALT, Key::ArrowRight);
-        if shortcut::consume(ui, &shortcut_back) {
+        if shortcut::consume_ui(ui, NAV_BACK) {
             if let Err(e) = self.back() {
                 log::error!("Failed to navigate back: {}", e);
             }
         }
-        if shortcut::consume(ui, &shortcut_forward) {
+        if shortcut::consume_ui(ui, NAV_FORWARD) {
             if let Err(e) = self.forward() {
                 log::error!("Failed to navigate forward: {}", e);
             }
