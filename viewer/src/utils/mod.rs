@@ -6,6 +6,7 @@ mod convertible_promise;
 mod icon_manager;
 #[cfg(target_arch = "wasm32")]
 mod jserror;
+mod matcher;
 mod shared_future;
 pub mod shortcut;
 mod syntax_highlighting;
@@ -23,6 +24,7 @@ pub use convertible_promise::{ConvertiblePromise, PromiseKind};
 pub use icon_manager::{IconManager, ManagedIcon};
 #[cfg(target_arch = "wasm32")]
 pub use jserror::{JsErr, JsResult};
+pub use matcher::FuzzyMatcher;
 pub use shared_future::SharedFuture;
 pub use syntax_highlighting::{CodeTheme, highlight};
 pub use tracked_promise::{TrackedPromise, tick_promises};

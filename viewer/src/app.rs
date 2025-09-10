@@ -8,7 +8,6 @@ use egui::{
     style::ScrollStyle,
 };
 use egui_extras::install_image_loaders;
-use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ironworks::excel::Language;
 use itertools::{EitherOrBoth, Itertools};
 use lru::LruCache;
@@ -35,7 +34,7 @@ use crate::{
     sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
     shortcuts::{GOTO_ROW, GOTO_SHEET},
     utils::{
-        CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, IconManager,
+        CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, FuzzyMatcher, IconManager,
         TrackedPromise, shortcut, tick_promises,
     },
 };
@@ -60,7 +59,7 @@ pub struct App {
     backend: Option<Backend>,
     sheet_data: LruCache<CachedSheetEntry, ConvertibleSheetPromise>,
     schema_data: LruCache<CachedSchemaEntry, ConvertibleSchemaPromise>,
-    sheet_matcher: SkimMatcherV2,
+    sheet_matcher: FuzzyMatcher,
     save_promise: Option<TrackedPromise<()>>,
     goto_window: Option<goto::GoToWindow>,
 }
@@ -398,18 +397,10 @@ impl App {
                 .get_entries()
                 .iter()
                 .sorted_by_key(|(sheet, _)| *sheet)
-                .filter(|(_, id)| misc_sheets_shown || **id >= 0)
-                .filter_map(|(sheet, id)| {
-                    if sheets_filter.is_empty() {
-                        return Some((0, sheet, id));
-                    }
-                    self.sheet_matcher
-                        .fuzzy_match(sheet.as_str(), &sheets_filter)
-                        .map(|score| (score, sheet, id))
-                })
-                .sorted_unstable_by_key(|(score, _, _)| -score)
-                .map(|(_, a, b)| (a, b))
-                .collect_vec();
+                .filter(|(_, id)| misc_sheets_shown || **id >= 0);
+            let sheets = self
+                .sheet_matcher
+                .match_list_indirect(&sheets_filter, sheets, |s| s.0);
 
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 let row_height = ui.text_style_height(&egui::TextStyle::Button);
@@ -842,7 +833,7 @@ impl App {
             backend: None,
             sheet_data: LruCache::new(NonZero::new(32).unwrap()),
             schema_data: LruCache::unbounded(),
-            sheet_matcher: SkimMatcherV2::default(),
+            sheet_matcher: FuzzyMatcher::new(),
             save_promise: None,
             goto_window: None,
         }

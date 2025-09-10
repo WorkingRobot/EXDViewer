@@ -28,7 +28,7 @@ ironworks = { version = "0.4.1", features = ["excel", "sqpack", "tex"] }
 ehttp = { version = "0.5", features = ["streaming", "native-async"] }
 lru = "0.16"
 url = "2.5"
-fuzzy-matcher = "0.3"
+nucleo-matcher = "0.3.1"
 anyhow = "1.0"
 intmap = "3.1.0"
 binrw = "0.15"

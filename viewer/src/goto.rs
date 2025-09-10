@@ -5,8 +5,9 @@ use egui::{
     text::{CCursor, CCursorRange},
     text_edit::TextEditOutput,
 };
-use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
-use itertools::{EitherOrBoth, Itertools};
+use itertools::EitherOrBoth;
+
+use crate::utils::FuzzyMatcher;
 
 type PatternMatch<'a> = EitherOrBoth<Vec<&'a str>, (u32, Option<u16>)>;
 type GoToMatch = EitherOrBoth<String, (u32, Option<u16>)>;
@@ -37,7 +38,7 @@ impl GoToWindow {
     pub fn draw(
         mut self,
         ctx: &egui::Context,
-        sheet_matcher: &SkimMatcherV2,
+        sheet_matcher: &FuzzyMatcher,
         sheet_list: &[&str],
     ) -> Result<Option<GoToMatch>, Self> {
         let mut ret = None;
@@ -254,8 +255,8 @@ impl GoToWindow {
     /// Errors with a human readable string if the input is invalid.
     fn match_string<'a>(
         pattern: &str,
-        sheet_matcher: &SkimMatcherV2,
-        sheet_list: &[&'a str],
+        sheet_matcher: &FuzzyMatcher,
+        sheet_list: &'a [&'a str],
     ) -> anyhow::Result<PatternMatch<'a>> {
         if let Some((sheet_pattern, row_pattern)) = pattern.split_once(":") {
             if !sheet_pattern.is_empty() {
@@ -281,23 +282,10 @@ impl GoToWindow {
 
     fn match_sheet<'a>(
         pattern: &str,
-        sheet_matcher: &SkimMatcherV2,
-        sheet_list: &[&'a str],
+        sheet_matcher: &FuzzyMatcher,
+        sheet_list: &'a [&'a str],
     ) -> Vec<&'a str> {
-        if pattern.is_empty() {
-            vec![]
-        } else {
-            sheet_list
-                .iter()
-                .filter_map(|sheet| {
-                    sheet_matcher
-                        .fuzzy_match(sheet, pattern)
-                        .map(|score| (score, sheet))
-                })
-                .sorted_unstable_by_key(|(score, _)| -score)
-                .map(|(_, a)| *a)
-                .collect_vec()
-        }
+        sheet_matcher.match_list(pattern, sheet_list)
     }
 
     fn match_location(string_buffer: &str) -> Option<(u32, Option<u16>)> {
