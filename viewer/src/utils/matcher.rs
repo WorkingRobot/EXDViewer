@@ -21,16 +21,21 @@ impl FuzzyMatcher {
         })))
     }
 
-    pub fn match_list<'a>(&self, pattern: &str, items: &[&'a str]) -> Vec<&'a str> {
+    pub fn match_list<'a>(&self, pattern: Option<&str>, items: &[&'a str]) -> Vec<&'a str> {
         self.match_list_indirect(pattern, items.iter().copied(), |s| s)
     }
 
     pub fn match_list_indirect<T>(
         &self,
-        pattern: &str,
+        pattern: Option<&str>,
         items: impl Iterator<Item = T>,
         converter: impl Fn(&T) -> &str,
     ) -> Vec<T> {
+        let pattern = if let Some(p) = pattern {
+            p
+        } else {
+            return items.collect();
+        };
         if pattern.is_empty() {
             vec![]
         } else {

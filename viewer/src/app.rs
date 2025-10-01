@@ -398,9 +398,11 @@ impl App {
                 .iter()
                 .sorted_by_key(|(sheet, _)| *sheet)
                 .filter(|(_, id)| misc_sheets_shown || **id >= 0);
-            let sheets = self
-                .sheet_matcher
-                .match_list_indirect(&sheets_filter, sheets, |s| s.0);
+            let sheets = self.sheet_matcher.match_list_indirect(
+                (!sheets_filter.is_empty()).then_some(&sheets_filter),
+                sheets,
+                |s| s.0,
+            );
 
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 let row_height = ui.text_style_height(&egui::TextStyle::Button);

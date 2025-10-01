@@ -285,7 +285,7 @@ impl GoToWindow {
         sheet_matcher: &FuzzyMatcher,
         sheet_list: &'a [&'a str],
     ) -> Vec<&'a str> {
-        sheet_matcher.match_list(pattern, sheet_list)
+        sheet_matcher.match_list(Some(pattern), sheet_list)
     }
 
     fn match_location(string_buffer: &str) -> Option<(u32, Option<u16>)> {
