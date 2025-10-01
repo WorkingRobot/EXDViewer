@@ -265,7 +265,7 @@ impl<'a> Cell<'a> {
                         self.sheet_column.offset() as u32,
                         self.sheet_column.kind(),
                     )?;
-                    let [a, r, g, b] = color.to_le_bytes();
+                    let [r, g, b, a] = color.to_be_bytes();
                     let color = Color32::from_rgba_unmultiplied(r, g, b, a);
                     CellValue::Color(color)
                 }
