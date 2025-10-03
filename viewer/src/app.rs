@@ -26,9 +26,9 @@ use crate::{
     schema::provider::SchemaProvider,
     settings::{
         ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, DISPLAY_FIELD_SHOWN,
-        LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET,
-        SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW,
-        TEMP_SCROLL_TO,
+        EVALUATE_STRINGS, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE,
+        SELECTED_SHEET, SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR, SORTED_BY_OFFSET,
+        TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO,
     },
     setup::{self, SetupWindow},
     sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
@@ -268,6 +268,16 @@ impl App {
                             if ui.checkbox(&mut always_hires, "HD Icons").changed() {
                                 ALWAYS_HIRES.set(ctx, always_hires);
                                 ui.close();
+                            }
+                        }
+
+                        {
+                            let mut evaluate_strings = EVALUATE_STRINGS.get(ctx);
+                            if ui
+                                .checkbox(&mut evaluate_strings, "Evaluate SeStrings")
+                                .changed()
+                            {
+                                EVALUATE_STRINGS.set(ctx, evaluate_strings);
                             }
                         }
 

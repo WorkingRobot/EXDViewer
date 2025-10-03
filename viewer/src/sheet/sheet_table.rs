@@ -85,9 +85,11 @@ impl SheetTable {
             let _stop = Stopwatch::new(format!("Sizing - {}", sheet.name()));
             let mut sizing_ui = ui.new_child(UiBuilder::new().sizing_pass());
             for (row_id, subrow_id) in sheet.get_subrow_ids() {
-                row_sizes.push(
-                    context.size_row(sheet.get_subrow(row_id, subrow_id).unwrap(), &mut sizing_ui),
-                );
+                row_sizes.push(context.size_row(
+                    sheet.get_subrow(row_id, subrow_id).unwrap(),
+                    &mut sizing_ui,
+                    (row_id, sheet.has_subrows().then_some(subrow_id)),
+                ));
             }
         }
 

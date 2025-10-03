@@ -54,6 +54,7 @@ replace_with = "0.1"
 pinned = "0.1"
 matchit = "0.8"
 zip = { version = "5.0", default-features = false }
+base64 = "0.22"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

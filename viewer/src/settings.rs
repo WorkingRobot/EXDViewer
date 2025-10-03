@@ -217,6 +217,7 @@ pub const SORTED_BY_OFFSET: DKey<bool> = DKey::new("sorted-by-offset", false);
 pub const SOLID_SCROLLBAR: DKey<bool> = DKey::new("solid-scrollbar", true);
 pub const ALWAYS_HIRES: DKey<bool> = DKey::new("always-hires", false);
 pub const DISPLAY_FIELD_SHOWN: DKey<bool> = DKey::new("display-field-shown", true);
+pub const EVALUATE_STRINGS: DKey<bool> = DKey::new("evaluate-strings", false);
 pub const BACKEND_CONFIG: DKey<Option<BackendConfig>> = DKey::new("backend-config", None);
 pub const LANGUAGE: DKey<Language> = DKey::new("language", Language::English);
 pub const SHEETS_FILTER: DKey<String> = DKey::new("sheets-filter", String::new());

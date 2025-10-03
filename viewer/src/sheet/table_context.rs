@@ -237,10 +237,15 @@ impl TableContext {
         Some(self.cell_by_offset(row, self.0.display_column_idx.get()?))
     }
 
-    pub fn size_row(&self, row: ExcelRow<'_>, ui: &mut egui::Ui) -> f32 {
+    pub fn size_row(
+        &self,
+        row: ExcelRow<'_>,
+        ui: &mut egui::Ui,
+        row_location: (u32, Option<u16>),
+    ) -> f32 {
         let size = (0..self.sheet().columns().len())
             .filter_map(|column_idx| self.cell_by_offset(row, column_idx as u32).ok())
-            .map(|c| c.size(ui))
+            .map(|c| c.size(ui, row_location))
             .reduce(|a, b| a.max(b));
         size.unwrap_or_default() + 4.0
     }
@@ -274,7 +279,11 @@ impl TableContext {
 
     fn filter_value(value: &CellValue, filter: &str) -> (bool, bool) {
         let resp = match value {
-            CellValue::String(s) => s.to_lowercase().contains(&filter.to_lowercase()),
+            CellValue::String(s) => s
+                .macro_string()
+                .unwrap_or_default()
+                .to_lowercase()
+                .contains(&filter.to_lowercase()),
             CellValue::Integer(i) => i.to_string().contains(&filter.to_lowercase()),
             CellValue::Float(f) => f.to_string().contains(&filter.to_lowercase()),
             CellValue::Boolean(b) => b.to_string().contains(&filter.to_lowercase()),

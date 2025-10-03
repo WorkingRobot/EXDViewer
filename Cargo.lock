@@ -6472,6 +6472,7 @@ version = "1.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "binrw",
  "catppuccin-egui",
  "eframe",

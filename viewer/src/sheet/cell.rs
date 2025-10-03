@@ -4,14 +4,15 @@ use egui::{
     color_picker::show_color_at, ecolor::HexColor,
 };
 use either::Either;
-use ironworks::file::exh::ColumnKind;
+use ironworks::{file::exh::ColumnKind, sestring::SeString};
 
 use crate::{
     excel::{
         get_icon_path,
         provider::{ExcelProvider, ExcelRow, ExcelSheet},
     },
-    settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN},
+    settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS},
+    sheet::string_label,
     utils::{ManagedIcon, TrackedPromise},
 };
 
@@ -45,7 +46,7 @@ pub enum CellResponse {
 }
 
 pub enum CellValue {
-    String(String),
+    String(SeString<'static>),
     Integer(i128),
     Float(f32),
     Boolean(bool),
@@ -125,6 +126,7 @@ impl<'a> Cell<'a> {
                             self.row,
                             self.sheet_column.offset() as u32,
                             self.sheet_column.kind(),
+                            ui,
                         )?;
                         self.size_text_multiline(ui, text)
                     } else {
@@ -160,9 +162,13 @@ impl<'a> Cell<'a> {
         })
     }
 
-    pub fn size(&self, ui: &mut egui::Ui) -> f32 {
+    pub fn size(&self, ui: &mut egui::Ui, row_location: (u32, Option<u16>)) -> f32 {
         self.size_internal(ui).unwrap_or_else(|err| {
-            log::error!("Failed to size cell: {:?}", err);
+            log::error!(
+                "Failed to size cell (row {row_location:?}, col {}): {:?}",
+                self.sheet_column.id,
+                err
+            );
             self.size_text(ui)
         })
     }
@@ -301,7 +307,7 @@ impl<'a> Cell<'a> {
 
 fn read_scalar(row: ExcelRow<'_>, offset: u32, kind: ColumnKind) -> anyhow::Result<CellValue> {
     Ok(match kind {
-        ColumnKind::String => CellValue::String(row.read_string(offset)?.format()?),
+        ColumnKind::String => CellValue::String(row.read_string(offset)?.as_owned()),
         ColumnKind::Bool => CellValue::Boolean(row.read_bool(offset)?),
         ColumnKind::Int8 => CellValue::Integer(i128::from(row.read::<i8>(offset)?)),
         ColumnKind::UInt8 => CellValue::Integer(i128::from(row.read::<u8>(offset)?)),
@@ -326,9 +332,18 @@ fn read_scalar(row: ExcelRow<'_>, offset: u32, kind: ColumnKind) -> anyhow::Resu
     })
 }
 
-fn read_string(row: ExcelRow<'_>, offset: u32, kind: ColumnKind) -> anyhow::Result<String> {
+fn read_string(
+    row: ExcelRow<'_>,
+    offset: u32,
+    kind: ColumnKind,
+    ui: &mut egui::Ui,
+) -> anyhow::Result<String> {
     match read_scalar(row, offset, kind)? {
-        CellValue::String(s) => Ok(s),
+        CellValue::String(s) => Ok(if EVALUATE_STRINGS.get(ui.ctx()) {
+            s.format()
+        } else {
+            s.macro_string()
+        }?),
         CellValue::Boolean(b) => Ok(b.to_string()),
         CellValue::Integer(i) => Ok(i.to_string()),
         CellValue::Float(f) => Ok(f.to_string()),
@@ -356,7 +371,7 @@ fn read_integer<T: num_traits::NumCast>(
 impl CellValue {
     pub fn show(self, ui: &mut egui::Ui, ctx: &GlobalContext) -> InnerResponse<CellResponse> {
         let resp = match self {
-            CellValue::String(value) => copyable_label(ui, value),
+            CellValue::String(value) => string_label(ui, value),
             CellValue::Integer(value) => copyable_label(ui, value),
             CellValue::Float(value) => copyable_label(ui, value),
             CellValue::Boolean(value) => copyable_label(ui, value),
