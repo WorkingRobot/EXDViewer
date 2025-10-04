@@ -172,10 +172,10 @@ impl SchemaColumn {
         Ok((ret, display_idx))
     }
 
-    pub fn from_blank(column_count: u32) -> Vec<Self> {
-        (0..column_count)
-            .map(|i| Self::new(format!("Column{i}"), SchemaColumnMeta::Scalar, None))
-            .collect()
+    pub fn from_blank(column_count: usize) -> Vec<Self> {
+        Self::from_schema(&Schema::from_blank("Blank", column_count))
+            .unwrap()
+            .0
     }
 
     pub fn new(name: String, meta: SchemaColumnMeta, comment: Option<String>) -> Self {

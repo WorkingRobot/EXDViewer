@@ -41,9 +41,11 @@ pub struct TableContextImpl {
 }
 
 impl TableContext {
-    pub fn new(global: GlobalContext, sheet: BaseSheet, schema: Option<Schema>) -> Self {
+    pub fn new(global: GlobalContext, sheet: BaseSheet, schema: Option<&Schema>) -> Self {
         let sheet_columns = SheetColumnDefinition::from_sheet(&sheet);
-        let schema_columns = SchemaColumn::from_blank(sheet_columns.len() as u32);
+        let (schema_columns, display_column_idx) = schema
+            .and_then(|s| SchemaColumn::from_schema(s).ok())
+            .unwrap_or_else(|| (SchemaColumn::from_blank(sheet_columns.len()), None));
         let column_ordering = sheet_columns
             .iter()
             .enumerate()
@@ -51,19 +53,15 @@ impl TableContext {
             .map(|(i, _p)| i as u32)
             .collect_vec();
 
-        let ret = Self(Rc::new(TableContextImpl {
+        Self(Rc::new(TableContextImpl {
             global,
             sheet,
             column_ordering,
             sheet_columns,
             schema_columns: RefCell::new(schema_columns),
-            display_column_idx: std::cell::Cell::new(None),
+            display_column_idx: std::cell::Cell::new(display_column_idx),
             referenced_sheets: RefCell::new(HashMap::new()),
-        }));
-        if let Err(e) = ret.set_schema(schema) {
-            log::error!("Failed to set schema: {:?}", e);
-        }
-        ret
+        }))
     }
 
     pub fn sheet(&self) -> &BaseSheet {
@@ -125,29 +123,25 @@ impl TableContext {
         self.get_column_by_offset(self.convert_column_index_to_offset_index(column_idx)?)
     }
 
-    pub fn set_schema(&self, schema: Option<Schema>) -> anyhow::Result<()> {
-        let ret = schema
-            .map(|s| SchemaColumn::from_schema(&s, true, true))
-            .map(|s| {
-                s.and_then(|r| {
-                    if r.0.len() != self.0.sheet_columns.len() {
-                        bail!(
-                            "Schema column count does not match sheet column count: {} != {}",
-                            r.0.len(),
-                            self.0.sheet_columns.len()
-                        )
-                    }
-                    Ok(r)
-                })
-            })
-            .unwrap_or_else(|| {
-                Ok((
-                    SchemaColumn::from_blank(self.0.sheet_columns.len() as u32),
-                    None,
-                ))
-            })?;
-        self.0.schema_columns.replace(ret.0);
-        self.0.display_column_idx.replace(ret.1);
+    pub fn set_schema(&self, schema: Option<&Schema>) -> anyhow::Result<()> {
+        let schema = schema.map(SchemaColumn::from_schema).unwrap_or_else(|| {
+            SchemaColumn::from_schema(&Schema::from_blank(
+                self.0.sheet.name(),
+                self.0.sheet_columns.len(),
+            ))
+        });
+        let (columns, display_column_idx) = schema.and_then(|r| {
+            if r.0.len() != self.0.sheet_columns.len() {
+                bail!(
+                    "Schema column count does not match sheet column count: {} != {}",
+                    r.0.len(),
+                    self.0.sheet_columns.len()
+                )
+            }
+            Ok(r)
+        })?;
+        self.0.schema_columns.replace(columns);
+        self.0.display_column_idx.replace(display_column_idx);
         Ok(())
     }
 
@@ -173,7 +167,9 @@ impl TableContext {
         entry
             .get_mut(|result| {
                 result
-                    .map(|(sheet, schema)| TableContext::new(self.0.global.clone(), sheet, schema))
+                    .map(|(sheet, schema)| {
+                        TableContext::new(self.0.global.clone(), sheet, schema.as_ref())
+                    })
                     .map_err(|e| e.into())
             })
             .map(|result| result.as_ref().cloned().map_err(|e| e.clone().into()))

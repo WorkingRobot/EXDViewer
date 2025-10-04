@@ -494,64 +494,101 @@ impl App {
                     }))
                 });
 
-                let data = sheet_data.get_mut_with(schema_data, |sheet, schema| {
-                    let mut converter =
-                        |sheet: Result<BaseSheet>,
-                         schema: Option<Result<String>>|
-                         -> Result<(SheetTable, EditableSchema)> {
-                            let sheet = sheet?;
-                            let sheet_name = sheet.name().to_owned();
-                            let editor = match schema {
-                                Some(Ok(schema)) => EditableSchema::new(sheet_name, schema),
-                                Some(Err(error)) => {
-                                    // Soft-fail on schema retrieval/parsing errors
-                                    log::error!("Failed to get schema: {:?}", error);
-                                    EditableSchema::from_blank(sheet_name, sheet.columns().len())?
-                                }
-                                None => EditableSchema::from_miscellaneous(sheet_name)?,
-                            };
-                            let table = SheetTable::new(
-                                TableContext::new(
-                                    GlobalContext::new(
-                                        ui.ctx().clone(),
-                                        backend.clone(),
-                                        language,
-                                        self.icon_manager.clone(),
-                                    ),
-                                    sheet.clone(),
-                                    editor.get_schema().cloned(),
-                                ),
-                                ui,
-                            );
-                            Ok((table, editor))
-                        };
+                let schema_loading = !schema_data.should_swap();
+                let sheet_loading = !sheet_data.should_swap();
 
-                    let result = converter(sheet, schema);
-                    match result {
-                        Ok((table, editor)) => (Ok(table), Ok(editor)),
-                        Err(err) => {
-                            log::error!("Failed to create sheet table: {:?}", err);
-                            let editor_err = anyhow::anyhow!("{:?}", err);
-                            (Err(err), Err(editor_err))
-                        }
-                    }
+                let combined_result = sheet_data.get_mut_with(schema_data, |sheet, schema| {
+                    let editor = schema.either(
+                        |schema| match schema {
+                            Some(Ok(schema)) => Ok(EditableSchema::new(&sheet_name, schema)),
+                            Some(Err(error)) => {
+                                // Soft-fail on schema retrieval/parsing errors
+                                log::error!("Failed to get schema: {:?}", error);
+                                let column_count = sheet.as_ref().either(
+                                    |sheet| sheet.as_ref().map(|sheet| sheet.columns().len()),
+                                    |sheet| {
+                                        sheet
+                                            .as_ref()
+                                            .map(|sheet| sheet.context().sheet().columns().len())
+                                    },
+                                );
+                                if let Ok(column_count) = column_count {
+                                    EditableSchema::from_blank(&sheet_name, column_count)
+                                } else {
+                                    Err(anyhow::anyhow!(
+                                        "Failed to load sheet to create blank schema"
+                                    ))
+                                }
+                            }
+                            None => EditableSchema::from_miscellaneous(&sheet_name),
+                        },
+                        |schema| schema,
+                    );
+
+                    let table = sheet.either(
+                        |sheet| {
+                            sheet.and_then(|sheet| {
+                                let schema = editor.as_ref().map(|e| e.get_schema());
+                                if let Ok(schema) = schema {
+                                    Ok(SheetTable::new(
+                                        TableContext::new(
+                                            GlobalContext::new(
+                                                ui.ctx().clone(),
+                                                backend.clone(),
+                                                language,
+                                                self.icon_manager.clone(),
+                                            ),
+                                            sheet,
+                                            schema,
+                                        ),
+                                        ui,
+                                    ))
+                                } else {
+                                    Err(anyhow::anyhow!("Failed to load schema to create table"))
+                                }
+                            })
+                        },
+                        |table| table,
+                    );
+
+                    (table, editor)
                 });
 
-                let (sheet_data, schema_data) = match data {
-                    Some(data) => data,
-                    None => {
-                        ui.label("Loading...");
+                let (table, editor) = match combined_result {
+                    None if schema_loading && sheet_loading => {
+                        ui.label("Loading sheet and schema...");
                         return;
                     }
+                    None if schema_loading => {
+                        ui.label("Loading schema...");
+                        return;
+                    }
+                    None if sheet_loading => {
+                        ui.label("Loading sheet...");
+                        return;
+                    }
+                    None => {
+                        ui.label("Preparing sheet and schema...");
+                        return;
+                    }
+                    Some((Err(err), Err(err2))) => {
+                        ui.label("Failed to load sheet and schema");
+                        ui.label(err.to_string());
+                        ui.label(err2.to_string());
+                        return;
+                    }
+                    Some((Err(err), _)) => {
+                        ui.label("Failed to load sheet");
+                        ui.label(err.to_string());
+                        return;
+                    }
+                    Some((_, Err(err))) => {
+                        ui.label("Failed to load schema");
+                        ui.label(err.to_string());
+                        return;
+                    }
+                    Some((Ok(table), Ok(editor))) => (table, editor),
                 };
-
-                if let Some(err) = sheet_data.as_ref().err().or(schema_data.as_ref().err()) {
-                    ui.label("Failed to load sheet");
-                    ui.label(err.to_string());
-                    return;
-                }
-
-                let (table, editor) = (sheet_data.as_mut().unwrap(), schema_data.as_mut().unwrap());
 
                 egui::TopBottomPanel::top("sheet_data_header").show_inside(ui, |ui| {
                     ui.add_space(4.0);
@@ -613,7 +650,7 @@ impl App {
                 let resp = editor.draw(ui, backend.schema());
                 if resp.changed()
                     && let Some(schema) = editor.get_schema()
-                    && let Err(e) = table.context().set_schema(Some(schema.clone()))
+                    && let Err(e) = table.context().set_schema(Some(schema))
                 {
                     log::error!("Failed to set schema: {:?}", e);
                 }
