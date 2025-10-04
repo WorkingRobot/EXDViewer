@@ -21,9 +21,13 @@ fn build_frontend() {
     let dist_dir = get_output_directory().join("static");
     let mut command = Command::new("trunk");
     command
-        .env("CARGO_TARGET_DIR", "../target/frontend")
+        .env("CARGO_TARGET_DIR", "target/frontend")
+        // Remove encoded rustflags from the outer build to avoid clobbering target-specific
+        // rustflags defined in .cargo/config.toml when spawning a nested cargo via trunk.
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .current_dir("..")
         .arg("build")
-        .args(["--config", "../viewer"])
+        .args(["--config", "viewer"])
         .args([OsStr::new("-d"), dist_dir.as_os_str()]);
     if std::env::var("PROFILE").unwrap() == "release" {
         command.arg("--release").args(["-M", "true"]);
