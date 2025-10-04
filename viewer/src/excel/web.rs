@@ -1,8 +1,7 @@
-use crate::utils::GameVersion;
+use crate::utils::{GameVersion, fetch_url};
 
 use super::{base::FileProvider, get_icon_path, get_xivapi_asset_url};
 use async_trait::async_trait;
-use ehttp::Request;
 use either::Either;
 use image::RgbaImage;
 use ironworks::file::File;
@@ -62,19 +61,9 @@ impl WebFileProvider {
             })?
             .push("versions");
 
-        let resp = ehttp::fetch_async(Request::get(url))
-            .await
-            .map_err(|msg| anyhow::anyhow!("{msg}"))?;
-        if !resp.ok {
-            anyhow::bail!(
-                "Response not OK ({} {}): {}",
-                resp.status,
-                resp.status_text,
-                String::from_utf8_lossy(&resp.bytes)
-            );
-        }
+        let resp = fetch_url(url).await?;
 
-        let mut vers: VersionInfo = serde_json::from_slice(&resp.bytes)?;
+        let mut vers: VersionInfo = serde_json::from_slice(&resp)?;
         vers.versions.sort();
         vers.versions.reverse();
         Ok(vers)
@@ -95,18 +84,9 @@ impl FileProvider for WebFileProvider {
             })?
             .extend(path.split('/'));
 
-        let resp = ehttp::fetch_async(Request::get(url))
-            .await
-            .map_err(|msg| anyhow::anyhow!("{msg}"))?;
-        if !resp.ok {
-            anyhow::bail!(
-                "Response not OK ({} {}): {}",
-                resp.status,
-                resp.status_text,
-                String::from_utf8_lossy(&resp.bytes)
-            );
-        }
-        Ok(T::read(Cursor::new(resp.bytes))?)
+        let resp = fetch_url(url).await?;
+
+        Ok(T::read(Cursor::new(resp))?)
     }
 
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {

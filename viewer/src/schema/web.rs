@@ -1,8 +1,7 @@
 use async_trait::async_trait;
-use ehttp::Request;
 use serde::Deserialize;
 
-use crate::utils::GameVersion;
+use crate::utils::{GameVersion, fetch_url, fetch_url_str};
 
 use super::provider::SchemaProvider;
 
@@ -52,20 +51,9 @@ impl WebProvider {
             return Err(anyhow::anyhow!("Invalid GitHub repository format"));
         }
         let url = format!("https://api.github.com/repos/{owner}/{repo}/branches?per_page=100");
-        let resp = ehttp::fetch_async(Request::get(url))
-            .await
-            .map_err(|msg| anyhow::anyhow!("{msg}"))?;
+        let resp = fetch_url(url).await?;
 
-        if !resp.ok {
-            anyhow::bail!(
-                "Response not OK ({} {}): {}",
-                resp.status,
-                resp.status_text,
-                String::from_utf8_lossy(&resp.bytes)
-            );
-        }
-
-        let branches: Vec<GithubBranch> = serde_json::from_slice(&resp.bytes)?;
+        let branches: Vec<GithubBranch> = serde_json::from_slice(&resp)?;
 
         let mut vers = Vec::new();
         let mut has_latest = false;
@@ -91,20 +79,7 @@ impl WebProvider {
 #[async_trait(?Send)]
 impl SchemaProvider for WebProvider {
     async fn get_schema_text(&self, name: &str) -> anyhow::Result<String> {
-        let resp = ehttp::fetch_async(Request::get(format!("{}/{name}.yml", self.base_url)))
-            .await
-            .map_err(|msg| anyhow::anyhow!("Schema request failed: {msg}"))?;
-        if !resp.ok {
-            return Err(anyhow::anyhow!(
-                "Schema request failed: {} ({})",
-                resp.status_text,
-                resp.status
-            ));
-        }
-        Ok(resp
-            .text()
-            .ok_or_else(|| anyhow::anyhow!("Schema request failed: Could not decode data"))?
-            .to_owned())
+        fetch_url_str(format!("{}/{name}.yml", self.base_url)).await
     }
 
     fn can_save_schemas(&self) -> bool {

@@ -14,6 +14,7 @@ pub mod tex_loader;
 mod tracked_promise;
 mod unsend_promise;
 mod version;
+mod webreq;
 mod yield_now;
 
 pub use cache::KeyedCache;
@@ -30,4 +31,5 @@ pub use syntax_highlighting::{CodeTheme, highlight};
 pub use tracked_promise::{TrackedPromise, tick_promises};
 pub use unsend_promise::UnsendPromise;
 pub use version::GameVersion;
+pub use webreq::{fetch_url, fetch_url_str};
 pub use yield_now::yield_to_ui;
