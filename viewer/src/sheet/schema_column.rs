@@ -34,18 +34,17 @@ impl SchemaColumn {
         column_lookups: &mut Vec<String>,
         scope: String,
         fields: &[Field],
-        pending_names: bool,
         is_array: bool,
     ) -> anyhow::Result<()> {
         for field in fields {
             let mut scope = scope.clone();
             if is_array {
-                if let Some(name) = field.name(pending_names) {
+                if let Some(name) = &field.name {
                     scope.push('.');
                     scope.push_str(name);
                 }
             } else {
-                scope.push_str(field.name(pending_names).unwrap_or("Unk"));
+                scope.push_str(field.name.as_deref().unwrap_or("Unk"));
             }
 
             if field.r#type == FieldType::Array {
@@ -61,7 +60,6 @@ impl SchemaColumn {
                         column_lookups,
                         scope.clone() + &format!("[{i}]"),
                         subfields,
-                        pending_names,
                         true,
                     )?;
                 }
@@ -147,15 +145,8 @@ impl SchemaColumn {
         Ok(())
     }
 
-    pub fn from_schema(
-        schema: &Schema,
-        pending_fields: bool,
-        pending_names: bool,
-    ) -> anyhow::Result<(Vec<Self>, Option<u32>)> {
-        let fields = pending_fields
-            .then_some(())
-            .and(schema.pending_fields.as_ref())
-            .unwrap_or(&schema.fields);
+    pub fn from_schema(schema: &Schema) -> anyhow::Result<(Vec<Self>, Option<u32>)> {
+        let fields = &schema.fields;
 
         let mut ret = vec![];
         let mut column_placeholder = 0;
@@ -166,7 +157,6 @@ impl SchemaColumn {
             &mut column_lookups,
             "".to_string(),
             fields,
-            pending_names,
             false,
         )?;
         Self::resolve_placeholders(&mut ret, &column_lookups)?;

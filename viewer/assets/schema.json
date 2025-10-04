@@ -27,15 +27,6 @@
                 "$ref": "#/$defs/namedField"
             }
         },
-        "pendingFields": {
-            "description": "A list of new fields in the sheet, ordered by offset. When a new release is made, fields will be replaced with pendingFields.",
-            "type": "array",
-            "uniqueItems": true,
-            "minItems": 1,
-            "items": {
-                "$ref": "#/$defs/namedField"
-            }
-        },
         "relations": {
             "$ref": "#/$defs/relations"
         }
@@ -265,11 +256,6 @@
             "properties": {
                 "name": {
                     "description": "Name of the field",
-                    "type": "string",
-                    "pattern": "^\\w+$"
-                },
-                "pendingName": {
-                    "description": "New name of the field. If specified, the old name will be considered deprecated.",
                     "type": "string",
                     "pattern": "^\\w+$"
                 }

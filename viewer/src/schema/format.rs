@@ -17,8 +17,6 @@ pub struct Schema {
     pub display_field: Option<String>,
     pub fields: Vec<Field>,
     #[serde(skip_serializing_if = "is_default")]
-    pub pending_fields: Option<Vec<Field>>,
-    #[serde(skip_serializing_if = "is_default")]
     pub relations: Option<HashMap<String, Vec<String>>>,
 }
 
@@ -27,8 +25,6 @@ pub struct Schema {
 pub struct Field {
     #[serde(skip_serializing_if = "is_default")]
     pub name: Option<String>,
-    #[serde(skip_serializing_if = "is_default")]
-    pub pending_name: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "is_default")]
     pub r#type: FieldType,
@@ -128,16 +124,6 @@ impl Schema {
                 },
             ],
             ..Default::default()
-        }
-    }
-}
-
-impl Field {
-    pub fn name(&self, pending: bool) -> Option<&str> {
-        if pending {
-            self.pending_name.as_deref().or(self.name.as_deref())
-        } else {
-            self.name.as_deref()
         }
     }
 }
