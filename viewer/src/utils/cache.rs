@@ -14,11 +14,11 @@ impl<T> Cache<T> {
     }
 
     pub fn get(&self) -> Option<&T> {
-        self.0.get().map(|(_, v)| v)
+        self.0.get().map(|((), v)| v)
     }
 
     pub fn get_mut(&mut self) -> Option<&mut T> {
-        self.0.get_mut().map(|(_, v)| v)
+        self.0.get_mut().map(|((), v)| v)
     }
 
     pub fn get_or_set_ref(
@@ -27,7 +27,7 @@ impl<T> Cache<T> {
         value_factory: impl FnOnce() -> T,
     ) -> &mut T {
         self.0
-            .get_or_set_ref_indirect(|_, t| matches(t), || ((), value_factory()))
+            .get_or_set_ref_indirect(|(), t| matches(t), || ((), value_factory()))
     }
 
     pub fn try_get_or_set_ref<E>(
@@ -36,7 +36,7 @@ impl<T> Cache<T> {
         value_factory: impl FnOnce() -> Result<T, E>,
     ) -> Result<&mut T, E> {
         self.0
-            .try_get_or_set_ref_indirect(|_, t| matches(t), || Ok(((), value_factory()?)))
+            .try_get_or_set_ref_indirect(|(), t| matches(t), || Ok(((), value_factory()?)))
     }
 }
 

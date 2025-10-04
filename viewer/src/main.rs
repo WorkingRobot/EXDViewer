@@ -84,6 +84,7 @@ fn main() {
                 &canvas,
                 "keydown",
                 move |event: web_sys::KeyboardEvent, _| {
+                    #[allow(clippy::wildcard_imports)]
                     use crate::shortcuts::*;
 
                     // https://github.com/emilk/egui/blob/802d307e4a2835cf4cf184d1cc99bea525b0c959/crates/eframe/src/web/input.rs#L152
@@ -112,7 +113,7 @@ fn main() {
         // Remove the loading text and spinner:
         if let Some(loading_text) = document.get_element_by_id("loading_text") {
             match start_result {
-                Ok(_) => {
+                Ok(()) => {
                     loading_text.remove();
                 }
                 Err(e) => {

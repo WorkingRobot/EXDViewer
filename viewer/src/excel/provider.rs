@@ -68,14 +68,14 @@ impl ExcelPage {
     fn get_range(&self, offset: u32, size: u32) -> anyhow::Result<&[u8]> {
         self.data
             .get((offset - self.data_offset) as usize..(offset - self.data_offset + size) as usize)
-            .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {} in row", offset))
+            .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {offset} in row"))
     }
 
     fn get_cursor(&self, offset: u32) -> anyhow::Result<Cursor<&[u8]>> {
         let data = self
             .data
             .get((offset - self.data_offset) as usize..)
-            .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {} in row", offset))?;
+            .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {offset} in row"))?;
         Ok(Cursor::new(data))
     }
 

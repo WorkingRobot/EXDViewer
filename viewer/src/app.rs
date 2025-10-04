@@ -98,11 +98,11 @@ impl App {
     }
 
     fn navigate(&self, path: impl Into<Path>) {
-        self.router.get().unwrap().navigate(path).unwrap()
+        self.router.get().unwrap().navigate(path).unwrap();
     }
 
     fn navigate_replace(&self, path: impl Into<Path>) {
-        self.router.get().unwrap().replace(path).unwrap()
+        self.router.get().unwrap().replace(path).unwrap();
     }
 
     fn draw_goto(&mut self, ctx: &egui::Context) {
@@ -139,7 +139,7 @@ impl App {
                                 if let Some(subrow) = subrow {
                                     format!(".{subrow}")
                                 } else {
-                                    "".to_string()
+                                    String::new()
                                 }
                             ));
                         } else {
@@ -401,7 +401,7 @@ impl App {
 
             let sheets_filter = SHEETS_FILTER.get(ctx);
             let misc_sheets_shown = MISC_SHEETS_SHOWN.get(ctx);
-            let backend = self.backend.as_ref().cloned().unwrap();
+            let backend = self.backend.clone().unwrap();
             let sheets = backend
                 .excel()
                 .get_entries()
@@ -480,7 +480,7 @@ impl App {
                         .excel()
                         .get_entries()
                         .get(&sheet_name)
-                        .cloned()
+                        .copied()
                         .unwrap_or_default()
                         < 0;
                     let schema = backend.schema().clone();
@@ -503,7 +503,7 @@ impl App {
                             Some(Ok(schema)) => Ok(EditableSchema::new(&sheet_name, schema)),
                             Some(Err(error)) => {
                                 // Soft-fail on schema retrieval/parsing errors
-                                log::error!("Failed to get schema: {:?}", error);
+                                log::error!("Failed to get schema: {error:?}");
                                 let column_count = sheet.as_ref().either(
                                     |sheet| sheet.as_ref().map(|sheet| sheet.columns().len()),
                                     |sheet| {
@@ -610,7 +610,7 @@ impl App {
                             .excel()
                             .get_entries()
                             .get(&sheet_name)
-                            .cloned()
+                            .copied()
                             .unwrap_or_default()
                             < 0;
 
@@ -652,7 +652,7 @@ impl App {
                     && let Some(schema) = editor.get_schema()
                     && let Err(e) = table.context().set_schema(Some(schema))
                 {
-                    log::error!("Failed to set schema: {:?}", e);
+                    log::error!("Failed to set schema: {e:?}");
                 }
 
                 let scroll_to = TEMP_SCROLL_TO.take(ctx);
@@ -670,7 +670,7 @@ impl App {
                             if let Some(subrow_id) = subrow_id {
                                 format!(".{subrow_id}")
                             } else {
-                                "".to_string()
+                                String::new()
                             }
                         ));
                     }
@@ -680,7 +680,7 @@ impl App {
                             if let Some(subrow_id) = subrow_id {
                                 format!(".{subrow_id}")
                             } else {
-                                "".to_string()
+                                String::new()
                             }
                         ));
                         ui.ctx().copy_text(self.router.get().unwrap().full_url());
@@ -763,14 +763,14 @@ impl App {
 
         if let Some(mut fragment) = path.fragment() {
             let mut col_nr: Option<u16> = None;
-            if let Some((rest, col_str)) = fragment.rsplit_once("C") {
+            if let Some((rest, col_str)) = fragment.rsplit_once('C') {
                 col_nr = col_str.parse::<u16>().ok();
                 fragment = rest;
             }
 
             let mut row_pos: Option<(u32, Option<u16>)> = None;
-            if let Some((_rest, row_str)) = fragment.rsplit_once("R") {
-                if let Some((row_str, subrow_str)) = row_str.split_once(".") {
+            if let Some((_rest, row_str)) = fragment.rsplit_once('R') {
+                if let Some((row_str, subrow_str)) = row_str.split_once('.') {
                     let row = row_str.parse::<u32>().ok();
                     let subrow = subrow_str.parse::<u16>().ok();
                     if let Some(row) = row {
@@ -845,7 +845,7 @@ impl App {
             let archive = match create_archive() {
                 Ok(archive) => archive,
                 Err(e) => {
-                    log::error!("Failed to create schema archive: {}", e);
+                    log::error!("Failed to create schema archive: {e}");
                     return;
                 }
             };
@@ -859,7 +859,7 @@ impl App {
                 }
                 if let Some(file) = dialog.save_file().await {
                     if let Err(e) = file.write(&archive).await {
-                        log::error!("Failed to save schemas: {}", e);
+                        log::error!("Failed to save schemas: {e}");
                     } else {
                         log::info!("Saved all saved successfully");
                     }

@@ -222,7 +222,7 @@ pub const BACKEND_CONFIG: DKey<Option<BackendConfig>> = DKey::new("backend-confi
 pub const LANGUAGE: DKey<Language> = DKey::new("language", Language::English);
 pub const SHEETS_FILTER: DKey<String> = DKey::new("sheets-filter", String::new());
 pub const SHEET_FILTERS: FKey<HashMap<String, String>> =
-    FKey::new("sheet-filters", |_, _| HashMap::new());
+    FKey::new("sheet-filters", |_, ()| HashMap::new());
 pub const SELECTED_SHEET: DKey<Option<String>> = DKey::new("selected-sheet", None);
 pub const MISC_SHEETS_SHOWN: DKey<bool> = DKey::new("misc-sheets-shown", false);
 pub const SCHEMA_EDITOR_VISIBLE: DKey<bool> = DKey::new("schema-editor-visible", false);

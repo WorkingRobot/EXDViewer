@@ -207,7 +207,7 @@ impl BaseHeader {
         let languages = header
             .languages()
             .iter()
-            .flat_map(|l| match Language::try_from(*l) {
+            .filter_map(|l| match Language::try_from(*l) {
                 Ok(lang) => Some(lang),
                 Err(e) => {
                     log::error!("Unknown language: {}", e.number);
@@ -328,7 +328,7 @@ impl BaseSheet {
                     }
                     None => {
                         current_row_range =
-                            Some((row_lookup.len() as u32, row_def.id..row_def.id + 1))
+                            Some((row_lookup.len() as u32, row_def.id..row_def.id + 1));
                     }
                 }
                 row_lookup.insert(row_def.id, location);

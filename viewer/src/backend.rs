@@ -103,9 +103,7 @@ pub mod worker {
 
     thread_local! {
         static WORKER: LazyCell<WorkerBridge<SqpackWorker>> = LazyCell::new(|| {
-            if WORKER_FLAG.swap(true, Ordering::SeqCst) {
-                panic!("Worker already initialized");
-            }
+            assert!(!WORKER_FLAG.swap(true, Ordering::SeqCst), "Worker already initialized");
             SqpackWorker::spawner()
                 .encoding::<PreservingCodec>()
                 .spawn("./worker.js")

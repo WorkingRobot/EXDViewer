@@ -139,7 +139,7 @@ impl Seek for SyncAccessFile {
                     )
                 })?;
             }
-        };
+        }
         Ok(self.offset)
     }
 }

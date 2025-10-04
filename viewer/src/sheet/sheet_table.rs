@@ -145,7 +145,7 @@ impl SheetTable {
                     table = table.scroll_to_column(col_nr as usize, Some(Align::Center));
                 }
             }
-            table.show(ui, self)
+            table.show(ui, self);
         });
 
         if let Some(icon_id) = &self.modal_image {
@@ -224,12 +224,12 @@ impl SheetTable {
         }
     }
 
-    fn get_filtered_row_offset(&self, filtered_row_nr: u64) -> anyhow::Result<f32> {
+    fn get_filtered_row_offset(&self, filtered_row_nr: u64) -> f32 {
         let row_offsets = self.get_row_offsets();
 
         let mut row_offsets = row_offsets.borrow_mut();
         if let Some(offset) = row_offsets.get(filtered_row_nr as usize) {
-            return Ok(*offset);
+            return *offset;
         }
 
         let (len, mut last_size) = (
@@ -243,7 +243,7 @@ impl SheetTable {
             last_size += self.row_sizes[self.get_filtered_row_nr(i) as usize];
         }
         row_offsets.push(last_size);
-        Ok(row_offsets[filtered_row_nr as usize])
+        row_offsets[filtered_row_nr as usize]
     }
 
     fn is_display_column(&self, column_idx: Option<usize>, sorted_by_offset: bool) -> bool {
@@ -256,8 +256,7 @@ impl SheetTable {
             } else {
                 self.context
                     .convert_column_index_to_offset_index(column_idx as u32)
-                    .map(|idx| idx == display_idx)
-                    .unwrap_or_default()
+                    .is_ok_and(|idx| idx == display_idx)
             };
         }
         is_display_column
@@ -275,23 +274,19 @@ impl SheetTable {
         if self
             .current_filter
             .as_ref()
-            .map(|f| self.filtered_rows.get_mut().get(f).is_some())
-            .unwrap_or(true)
+            .is_none_or(|f| self.filtered_rows.get_mut().get(f).is_some())
         {
             self.last_filter = self.current_filter.clone();
         }
 
-        self.current_filter = filter.clone();
+        self.current_filter.clone_from(&filter);
         if let Some(token) = &self.current_filter_cancel_token {
             token.set(true);
         }
         self.current_filter_cancel_token.take();
         self.current_filter_promise.take();
 
-        let filter = match filter {
-            Some(f) => f,
-            None => return,
-        };
+        let Some(filter) = filter else { return };
         if self.filtered_rows.get_mut().get(&filter).is_some() {
             return;
         }
@@ -588,12 +583,6 @@ impl TableDelegate for SheetTable {
     }
 
     fn row_top_offset(&self, _ctx: &egui::Context, _table_id: Id, row_nr: u64) -> f32 {
-        match self.get_filtered_row_offset(row_nr) {
-            Ok(size) => size,
-            Err(error) => {
-                log::error!("Failed to size row {}: {:?}", row_nr, error);
-                0.0
-            }
-        }
+        self.get_filtered_row_offset(row_nr)
     }
 }

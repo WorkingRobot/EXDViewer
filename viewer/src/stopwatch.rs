@@ -20,6 +20,7 @@ impl Stopwatch {
         ret
     }
 
+    #[must_use]
     pub fn elapsed(&self) -> Duration {
         self.start.elapsed()
     }

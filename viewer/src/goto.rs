@@ -162,7 +162,7 @@ impl GoToWindow {
                                     if let Some(subrow_id) = subrow_id {
                                         format!(", Subrow {subrow_id}")
                                     } else {
-                                        "".to_string()
+                                        String::new()
                                     }
                                 ))
                                 .strong(),
@@ -210,7 +210,7 @@ impl GoToWindow {
                         let index = self.selected_index.unwrap_or_default();
                         let r = match_results
                             .as_ref()
-                            .map(|r| r.as_ref().map_left(|s| s.get(index).cloned()))
+                            .map(|r| r.as_ref().map_left(|s| s.get(index).copied()))
                             .ok();
                         ret = Some(match r {
                             None | Some(EitherOrBoth::Left(None)) => None,
@@ -234,10 +234,12 @@ impl GoToWindow {
     fn set_sheet_name(&mut self, sheet_name: &str, ctx: &egui::Context, output: &TextEditOutput) {
         self.string_buffer = self
             .string_buffer
-            .split_once(":")
+            .split_once(':')
             .map(|(_, row_part)| row_part)
-            .map(|row_part| format!("{}:{}", sheet_name, row_part))
-            .unwrap_or_else(|| sheet_name.to_string());
+            .map_or_else(
+                || sheet_name.to_string(),
+                |row_part| format!("{sheet_name}:{row_part}"),
+            );
         self.selected_index = None;
         Self::set_cursor_position(ctx, output, sheet_name.len());
     }
@@ -258,7 +260,7 @@ impl GoToWindow {
         sheet_matcher: &FuzzyMatcher,
         sheet_list: &'a [&'a str],
     ) -> anyhow::Result<PatternMatch<'a>> {
-        if let Some((sheet_pattern, row_pattern)) = pattern.split_once(":") {
+        if let Some((sheet_pattern, row_pattern)) = pattern.split_once(':') {
             if !sheet_pattern.is_empty() {
                 let sheets = Self::match_sheet(sheet_pattern, sheet_matcher, sheet_list);
                 let location = Self::match_location(row_pattern)
@@ -289,9 +291,9 @@ impl GoToWindow {
     }
 
     fn match_location(string_buffer: &str) -> Option<(u32, Option<u16>)> {
-        if string_buffer.contains(".") {
+        if string_buffer.contains('.') {
             // subrow case
-            let (row_id_text, subrow_id_text) = string_buffer.split_once(".")?;
+            let (row_id_text, subrow_id_text) = string_buffer.split_once('.')?;
 
             Some((row_id_text.parse().ok()?, subrow_id_text.parse().ok()))
         } else {

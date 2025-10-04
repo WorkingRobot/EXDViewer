@@ -220,7 +220,7 @@ impl Worker for SqpackWorker {
                             Err(e) => {
                                 scope.respond(id, WorkerResponse::SchemaRequestGet(Err(e)));
                             }
-                        };
+                        }
                     }
                 });
             }
@@ -240,7 +240,7 @@ impl Worker for SqpackWorker {
                             Err(e) => {
                                 scope.respond(id, WorkerResponse::SchemaRequestStore(Err(e)));
                             }
-                        };
+                        }
                     }
                 });
             }

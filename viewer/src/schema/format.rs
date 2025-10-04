@@ -88,7 +88,7 @@ impl Schema {
                         "Schema Error: {} at path {}",
                         error.error_description(),
                         error.instance_location()
-                    )
+                    );
                 }
                 Ok(Err(errors))
             }

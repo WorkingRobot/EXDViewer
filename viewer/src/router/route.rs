@@ -50,6 +50,6 @@ impl<T> Route<T> {
     }
 
     pub fn render(&self, state: &mut T, ui: &mut egui::Ui, path: &Path, params: &Params<'_, '_>) {
-        (self.on_render)(state, ui, path, params)
+        (self.on_render)(state, ui, path, params);
     }
 }

@@ -102,12 +102,12 @@ impl<P: PromiseKind, T> ConvertiblePromise<P, T> {
 
         // Convert both at the same time
         replace_with::replace_with_or_abort(&mut self.0, |this| {
-            let this_input = this.map_left(|t| t.block_and_take());
+            let this_input = this.map_left(PromiseKind::block_and_take);
 
             let mut converted_this_val = None;
 
             replace_with::replace_with_or_abort(&mut other.0, |other| {
-                let other_input = other.map_left(|t| t.block_and_take());
+                let other_input = other.map_left(PromiseKind::block_and_take);
 
                 let (converted_this, converted_other) = converter(this_input, other_input);
 

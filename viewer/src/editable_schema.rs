@@ -304,7 +304,7 @@ impl EditableSchema {
                                     d.insert_temp::<LayoutCursor>(
                                         schema_editor_cursor_position_id,
                                         ret.galley.layout_from_cursor(range.primary),
-                                    )
+                                    );
                                 });
                             }
 
@@ -375,9 +375,9 @@ impl EditableSchema {
         self.save_promise
             .set(Some(TrackedPromise::spawn_local(async move {
                 if let Err(e) = provider.save_schema(&sheet_name, &sheet_data).await {
-                    log::error!("Failed to save schema: {}", e);
+                    log::error!("Failed to save schema: {e}");
                 } else {
-                    log::info!("Schema '{}' saved successfully", sheet_name);
+                    log::info!("Schema '{sheet_name}' saved successfully");
                     original.replace(sheet_data);
                     is_modified.set(false);
                 }

@@ -18,8 +18,7 @@ impl WorkerFileProvider {
         match worker::transact(WorkerRequest::DataSetup(handle)).await {
             WorkerResponse::DataSetup(Ok(())) => Ok(Self(())),
             WorkerResponse::DataSetup(Err(e)) => Err(anyhow::anyhow!(
-                "WorkerFileProvider: failed to setup folder: {}",
-                e
+                "WorkerFileProvider: failed to setup folder: {e}"
             )),
             _ => Err(anyhow::anyhow!("WorkerFileProvider: invalid response")),
         }
@@ -29,8 +28,7 @@ impl WorkerFileProvider {
         match worker::transact(WorkerRequest::DataGet()).await {
             WorkerResponse::DataGet(Ok(folders)) => Ok(folders),
             WorkerResponse::DataGet(Err(e)) => Err(anyhow::anyhow!(
-                "WorkerFileProvider: failed to get folders: {}",
-                e
+                "WorkerFileProvider: failed to get folders: {e}"
             )),
             _ => Err(anyhow::anyhow!("WorkerFileProvider: invalid response")),
         }
@@ -40,8 +38,7 @@ impl WorkerFileProvider {
         match worker::transact(WorkerRequest::DataStore(handle)).await {
             WorkerResponse::DataStore(Ok(())) => Ok(()),
             WorkerResponse::DataStore(Err(e)) => Err(anyhow::anyhow!(
-                "WorkerFileProvider: failed to add folder: {}",
-                e
+                "WorkerFileProvider: failed to add folder: {e}"
             )),
             _ => Err(anyhow::anyhow!("WorkerFileProvider: invalid response")),
         }
@@ -51,8 +48,7 @@ impl WorkerFileProvider {
         match worker::transact(WorkerRequest::VerifyFolder((handle, false))).await {
             WorkerResponse::VerifyFolder(Ok(())) => Ok(()),
             WorkerResponse::VerifyFolder(Err(e)) => Err(anyhow::anyhow!(
-                "WorkerFileProvider: failed to verify folder: {}",
-                e
+                "WorkerFileProvider: failed to verify folder: {e}"
             )),
             _ => Err(anyhow::anyhow!("WorkerFileProvider: invalid response")),
         }
@@ -62,7 +58,7 @@ impl WorkerFileProvider {
 #[async_trait(?Send)]
 impl FileProvider for WorkerFileProvider {
     async fn file<T: File>(&self, path: &str) -> anyhow::Result<T> {
-        log::info!("WorkerFileProvider: requesting file {:?}", path);
+        log::info!("WorkerFileProvider: requesting file {path:?}");
         if let WorkerResponse::DataRequestFile(result) =
             worker::transact(WorkerRequest::DataRequestFile(path.to_string())).await
         {
@@ -77,13 +73,13 @@ impl FileProvider for WorkerFileProvider {
     }
 
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
-        log::info!("WorkerFileProvider: requesting icon {}, {}", icon_id, hires);
+        log::info!("WorkerFileProvider: requesting icon {icon_id}, {hires}");
         let path = get_icon_path(icon_id, hires);
         if let WorkerResponse::DataRequestTexture(result) =
             worker::transact(WorkerRequest::DataRequestTexture(path.to_string())).await
         {
             let file = result
-                .map_err(|e| anyhow::anyhow!("WorkerFileProvider: failed to get texture: {}", e))
+                .map_err(|e| anyhow::anyhow!("WorkerFileProvider: failed to get texture: {e}"))
                 .and_then(|(width, height, data)| {
                     RgbaImage::from_vec(width, height, data).ok_or_else(|| {
                         anyhow::anyhow!("WorkerFileProvider: failed to create image from data")

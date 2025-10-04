@@ -9,11 +9,7 @@ pub async fn fetch_url(url: impl ToString) -> anyhow::Result<Vec<u8>> {
         anyhow::bail!(
             "Response not OK ({}{}{}): {}",
             resp.status,
-            if !resp.status_text.is_empty() {
-                " "
-            } else {
-                ""
-            },
+            if resp.status_text.is_empty() { "" } else { " " },
             resp.status_text,
             String::from_utf8_lossy(&resp.bytes)
         );

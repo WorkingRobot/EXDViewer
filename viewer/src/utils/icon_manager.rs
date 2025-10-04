@@ -44,7 +44,7 @@ impl IconManager {
     }
 
     pub fn clear(&self) {
-        self.0.lock().clear()
+        self.0.lock().clear();
     }
 
     // None = not loaded, Some(None) = loaded but failed/doesn't exist, Some(Some) = loaded successfully

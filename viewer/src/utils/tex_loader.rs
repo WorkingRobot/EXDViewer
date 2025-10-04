@@ -37,7 +37,7 @@ pub fn read<R: Resource>(ironworks: &Ironworks<R>, path: &str) -> Result<Dynamic
         tex::Format::Bc7Unorm => read_texture_bc(texture, image_dds::ImageFormat::BC7RgbaUnorm)?,
 
         other => {
-            anyhow::bail!("unsupported texture format {:?} for path {path}", other);
+            anyhow::bail!("unsupported texture format {other:?} for path {path}");
         }
     };
 

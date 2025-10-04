@@ -124,12 +124,15 @@ impl TableContext {
     }
 
     pub fn set_schema(&self, schema: Option<&Schema>) -> anyhow::Result<()> {
-        let schema = schema.map(SchemaColumn::from_schema).unwrap_or_else(|| {
-            SchemaColumn::from_schema(&Schema::from_blank(
-                self.0.sheet.name(),
-                self.0.sheet_columns.len(),
-            ))
-        });
+        let schema = schema.map_or_else(
+            || {
+                SchemaColumn::from_schema(&Schema::from_blank(
+                    self.0.sheet.name(),
+                    self.0.sheet_columns.len(),
+                ))
+            },
+            SchemaColumn::from_schema,
+        );
         let (columns, display_column_idx) = schema.and_then(|r| {
             if r.0.len() != self.0.sheet_columns.len() {
                 bail!(
@@ -195,7 +198,7 @@ impl TableContext {
                     }
                 }
                 Some(Err(err)) => {
-                    log::error!("Failed to retrieve linked sheet: {:?}", err);
+                    log::error!("Failed to retrieve linked sheet: {err:?}");
                     None
                 }
             })
@@ -242,7 +245,7 @@ impl TableContext {
         let size = (0..self.sheet().columns().len())
             .filter_map(|column_idx| self.cell_by_offset(row, column_idx as u32).ok())
             .map(|c| c.size(ui, row_location))
-            .reduce(|a, b| a.max(b));
+            .reduce(f32::max);
         size.unwrap_or_default() + 4.0
     }
 

@@ -31,9 +31,7 @@ impl FuzzyMatcher {
         items: impl Iterator<Item = T>,
         converter: impl Fn(&T) -> &str,
     ) -> Vec<T> {
-        let pattern = if let Some(p) = pattern {
-            p
-        } else {
+        let Some(pattern) = pattern else {
             return items.collect();
         };
         if pattern.is_empty() {

@@ -29,7 +29,7 @@ impl History for MemoryHistory {
     }
 
     fn base_url(&self) -> String {
-        "".to_string()
+        String::new()
     }
 
     fn active_route(&self) -> Path {
@@ -40,9 +40,7 @@ impl History for MemoryHistory {
                     let position = Self::position(d);
                     if *position >= history_len {
                         log::warn!(
-                            "Position {} is out of bounds for history length {}",
-                            position,
-                            history_len
+                            "Position {position} is out of bounds for history length {history_len}"
                         );
                         *position = history_len - 1;
                     }

@@ -99,17 +99,14 @@ impl Highlighter {
     }
 
     fn highlight_impl(&self, theme: &CodeTheme, text: &str, language: &str) -> Option<LayoutJob> {
-        use syntect::easy::HighlightLines;
-        use syntect::highlighting::FontStyle;
-        use syntect::util::LinesWithEndings;
+        use egui::text::{LayoutSection, TextFormat};
+        use syntect::{easy::HighlightLines, highlighting::FontStyle, util::LinesWithEndings};
 
         let syntax = SYNTAX_SET
             .find_syntax_by_name(language)
             .or_else(|| SYNTAX_SET.find_syntax_by_extension(language))?;
 
         let mut h = HighlightLines::new(syntax, THEME_SET.themes.get(&theme.theme)?);
-
-        use egui::text::{LayoutSection, TextFormat};
 
         let mut job = LayoutJob {
             text: text.into(),

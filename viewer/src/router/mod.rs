@@ -83,12 +83,12 @@ impl<T, H: History> Router<T, H> {
         if shortcut::consume_ui(ui, NAV_BACK)
             && let Err(e) = self.back()
         {
-            log::error!("Failed to navigate back: {}", e);
+            log::error!("Failed to navigate back: {e}");
         }
         if shortcut::consume_ui(ui, NAV_FORWARD)
             && let Err(e) = self.forward()
         {
-            log::error!("Failed to navigate forward: {}", e);
+            log::error!("Failed to navigate forward: {e}");
         }
 
         let path = self.current_path();
@@ -115,7 +115,7 @@ impl<T, H: History> Router<T, H> {
                 }
                 RouteResponse::Redirect(path) => {
                     if let Err(e) = self.replace(path) {
-                        log::error!("Failed to navigate: {}", e);
+                        log::error!("Failed to navigate: {e}");
                     } else {
                         self.ui(state, ui);
                     }

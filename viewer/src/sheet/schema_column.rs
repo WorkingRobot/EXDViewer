@@ -83,7 +83,7 @@ impl SchemaColumn {
                             *column_placeholder += 1;
                             ret
                         } else {
-                            bail!("Link field missing targets or condition: {:?}", field);
+                            bail!("Link field missing targets or condition: {field:?}");
                         }
                     }
                     FieldType::Array => unreachable!(),
@@ -100,32 +100,26 @@ impl SchemaColumn {
         for i in 0..ret.len() {
             let column = &ret[i];
             if let SchemaColumnMeta::ConditionalLink { column_idx, .. } = column.meta() {
-                let switch_name = match column_lookups.get(*column_idx as usize) {
-                    Some(name) => name,
-                    None => {
-                        bail!(
-                            "Failed to find column lookup name for {}'s conditional link: {}",
-                            column.name(),
-                            *column_idx
-                        );
-                    }
+                let Some(switch_name) = column_lookups.get(*column_idx as usize) else {
+                    bail!(
+                        "Failed to find column lookup name for {}'s conditional link: {}",
+                        column.name(),
+                        *column_idx
+                    );
                 };
 
-                let resolved_column_idx = match ret.iter().enumerate().find_map(|(i, c)| {
+                let Some(resolved_column_idx) = ret.iter().enumerate().find_map(|(i, c)| {
                     if c.name() == *switch_name {
                         Some(i as u32)
                     } else {
                         None
                     }
-                }) {
-                    Some(idx) => idx,
-                    None => {
-                        bail!(
-                            "Failed to find column index for {}'s conditional link: {}",
-                            column.name(),
-                            switch_name
-                        );
-                    }
+                }) else {
+                    bail!(
+                        "Failed to find column index for {}'s conditional link: {}",
+                        column.name(),
+                        switch_name
+                    );
                 };
 
                 if matches!(ret[i].meta(), SchemaColumnMeta::ConditionalLink { .. }) {
@@ -155,7 +149,7 @@ impl SchemaColumn {
             &mut ret,
             &mut column_placeholder,
             &mut column_lookups,
-            "".to_string(),
+            String::new(),
             fields,
             false,
         )?;

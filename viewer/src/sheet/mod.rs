@@ -5,6 +5,8 @@ mod sheet_column;
 mod sheet_table;
 mod table_context;
 
+use std::fmt::Write;
+
 use base64::{Engine, prelude::BASE64_STANDARD};
 pub use cell::CellResponse;
 use egui::{Align, Color32, Direction, Label, Layout, Response, Sense};
@@ -15,14 +17,15 @@ pub use table_context::TableContext;
 
 use crate::settings::EVALUATE_STRINGS;
 
-fn copyable_label(ui: &mut egui::Ui, text: impl ToString) -> Response {
+fn copyable_label(ui: &mut egui::Ui, text: &impl ToString) -> Response {
     ui.with_layout(
         Layout::centered_and_justified(Direction::LeftToRight).with_main_align(Align::Min),
         |ui| {
-            let resp = ui.add(Label::new(text.to_string()).sense(Sense::click()));
+            let text = text.to_string();
+            let resp = ui.add(Label::new(&text).sense(Sense::click()));
             resp.context_menu(|ui| {
                 if ui.button("Copy").clicked() {
-                    ui.ctx().copy_text(text.to_string());
+                    ui.ctx().copy_text(text);
                     ui.close();
                 }
             });
@@ -32,7 +35,7 @@ fn copyable_label(ui: &mut egui::Ui, text: impl ToString) -> Response {
     .inner
 }
 
-fn string_label(ui: &mut egui::Ui, text: SeString<'static>) -> Response {
+fn string_label(ui: &mut egui::Ui, text: &SeString<'static>) -> Response {
     let value = if EVALUATE_STRINGS.get(ui.ctx()) {
         text.format()
     } else {
@@ -64,13 +67,11 @@ fn string_label(ui: &mut egui::Ui, text: SeString<'static>) -> Response {
                 ui.close();
             }
             if ui.button("Copy Raw (hex)").clicked() {
-                ui.ctx().copy_text(
-                    text.as_bytes()
-                        .iter()
-                        .map(|b| format!("{b:02X}"))
-                        .collect::<Vec<_>>()
-                        .join(""),
-                );
+                ui.ctx()
+                    .copy_text(text.as_bytes().iter().fold(String::new(), |mut output, b| {
+                        let _ = write!(output, "{b:02X}");
+                        output
+                    }));
                 ui.close();
             }
         });

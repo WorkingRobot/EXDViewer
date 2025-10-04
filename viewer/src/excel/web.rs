@@ -24,9 +24,8 @@ impl WebFileProvider {
         let version = if let Some(v) = version {
             if !version_info.versions.contains(&v) {
                 anyhow::bail!("Version {v} is not available");
-            } else {
-                v
             }
+            v
         } else {
             log::info!(
                 "No version specified, using latest: {}",
@@ -38,7 +37,7 @@ impl WebFileProvider {
         let mut base_url = Url::parse(base_url)?;
         base_url
             .path_segments_mut()
-            .map_err(|_| {
+            .map_err(|()| {
                 ironworks::Error::Invalid(
                     ironworks::ErrorValue::Other("URL".to_string()),
                     "path parsing error".to_string(),
@@ -53,7 +52,7 @@ impl WebFileProvider {
         let mut url = Url::parse(base_url)?;
 
         url.path_segments_mut()
-            .map_err(|_| {
+            .map_err(|()| {
                 ironworks::Error::Invalid(
                     ironworks::ErrorValue::Other("URL".to_string()),
                     "path parsing error".to_string(),
@@ -76,7 +75,7 @@ impl FileProvider for WebFileProvider {
         let mut url = self.0.clone();
 
         url.path_segments_mut()
-            .map_err(|_| {
+            .map_err(|()| {
                 ironworks::Error::Invalid(
                     ironworks::ErrorValue::Other("URL".to_string()),
                     "path parsing error".to_string(),

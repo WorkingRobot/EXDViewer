@@ -103,7 +103,7 @@ impl SetupWindow {
             ui.separator();
 
             let enabled: bool;
-            match self.setup_promise.take().map(|p| p.try_take()) {
+            match self.setup_promise.take().map(PromiseKind::try_take) {
                 None => {
                     enabled = true;
                 }
@@ -167,7 +167,7 @@ impl SetupWindow {
                                     self.location =
                                         InstallLocation::Web(DEFAULT_API_URL.to_string(), None);
                                 }
-                            })
+                            });
                         });
 
                         match &mut self.location {
@@ -302,7 +302,7 @@ impl SetupWindow {
                                                             None,
                                                             format!("Latest ({})", versions.latest),
                                                         );
-                                                        for entry in versions.versions.iter() {
+                                                        for entry in &versions.versions {
                                                             ui.selectable_value(
                                                                 version,
                                                                 Some(entry.clone()),
@@ -373,7 +373,7 @@ impl SetupWindow {
                                     self.schema =
                                         SchemaLocation::Web(super::DEFAULT_SCHEMA_URL.to_string());
                                 }
-                            })
+                            });
                         });
 
                         match &mut self.schema {
@@ -718,7 +718,7 @@ impl SetupPromises {
                             anyhow::anyhow!("Error casting to FileSystemDirectoryHandle")
                         })?;
                     let handle = WorkerDirectory(handle);
-                    store_folder(handle.clone()).await.map(|_| handle)
+                    store_folder(handle.clone()).await.map(|()| handle)
                 }
                 Err(e) => Err(anyhow::anyhow!("Error picking folder: {e:?}")),
             }

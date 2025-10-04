@@ -183,7 +183,7 @@ impl<'a> Cell<'a> {
         match self.draw(ui) {
             Ok(resp) => resp,
             Err(err) => {
-                log::error!("Failed to draw cell: {:?}", err);
+                log::error!("Failed to draw cell: {err:?}");
                 let resp = ui
                     .colored_label(Color32::LIGHT_RED, "⚠")
                     .on_hover_text(err.to_string());
@@ -364,17 +364,17 @@ fn read_integer<T: num_traits::NumCast>(
                 std::any::type_name::<T>()
             )
         }),
-        _ => bail!("Invalid column kind for integer: {:?}", kind),
+        _ => bail!("Invalid column kind for integer: {kind:?}"),
     }
 }
 
 impl CellValue {
     pub fn show(self, ui: &mut egui::Ui, ctx: &GlobalContext) -> InnerResponse<CellResponse> {
         let resp = match self {
-            CellValue::String(value) => string_label(ui, value),
-            CellValue::Integer(value) => copyable_label(ui, value),
-            CellValue::Float(value) => copyable_label(ui, value),
-            CellValue::Boolean(value) => copyable_label(ui, value),
+            CellValue::String(value) => string_label(ui, &value),
+            CellValue::Integer(value) => copyable_label(ui, &value),
+            CellValue::Float(value) => copyable_label(ui, &value),
+            CellValue::Boolean(value) => copyable_label(ui, &value),
             CellValue::Icon(icon_id) => {
                 let resp = draw_icon(ctx, ui, icon_id).on_hover_cursor(CursorIcon::PointingHand);
                 if resp.clicked() {
@@ -398,11 +398,11 @@ impl CellValue {
                         format!("{skeleton}, {model}, {variant}, {stain}")
                     },
                 );
-                copyable_label(ui, label)
+                copyable_label(ui, &label)
             }
             CellValue::Color(color) => draw_color(ui, color),
-            CellValue::InProgressLink(row_id) => copyable_label(ui, format!("...#{row_id}")),
-            CellValue::InvalidLink(row_id) => copyable_label(ui, format!("???#{row_id}")),
+            CellValue::InProgressLink(row_id) => copyable_label(ui, &format!("...#{row_id}")),
+            CellValue::InvalidLink(row_id) => copyable_label(ui, &format!("???#{row_id}")),
             CellValue::ValidLink {
                 sheet_name,
                 row_id,
@@ -418,7 +418,7 @@ impl CellValue {
                     }
                     resp.response
                 } else {
-                    copyable_label(ui, format!("{sheet_name}#{row_id}"))
+                    copyable_label(ui, &format!("{sheet_name}#{row_id}"))
                 }
                 .on_hover_cursor(CursorIcon::Alias);
 
