@@ -1,8 +1,14 @@
 
-[build]
+# [build]
+# rustflags = [
+#     # "--cfg",
+#     # "tokio_unstable"
+# ]
+
+[target.wasm32-unknown-unknown]
 rustflags = [
-    "--cfg",
-    "web_sys_unstable_apis",
-    # "--cfg",
-    # "tokio_unstable"
+    '--cfg',
+    'web_sys_unstable_apis',
+    '--cfg',
+    'getrandom_backend="wasm_js"',
 ]
