@@ -28,14 +28,14 @@ use crate::{
         ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, DISPLAY_FIELD_SHOWN,
         EVALUATE_STRINGS, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE,
         SELECTED_SHEET, SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR, SORTED_BY_OFFSET,
-        TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO,
+        TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES, TEXT_WRAP_WIDTH,
     },
     setup::{self, SetupWindow},
     sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
     shortcuts::{GOTO_ROW, GOTO_SHEET},
     utils::{
         CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, FuzzyMatcher, IconManager,
-        TrackedPromise, shortcut, tick_promises,
+        TrackedPromise, opt_slider, shortcut, tick_promises,
     },
 };
 
@@ -245,6 +245,44 @@ impl App {
                             }
                         });
 
+                        ui.menu_button("Text Wrapping", |ui| {
+                            let r = opt_slider(
+                                ui,
+                                TEXT_WRAP_WIDTH.get(ctx).map(|e| e.into()),
+                                50..=1000,
+                                "Max Width",
+                                "No Wrap",
+                                "px",
+                            );
+
+                            let r2 = opt_slider(
+                                ui,
+                                TEXT_MAX_LINES.get(ctx).map(|e| e.into()),
+                                1..=20,
+                                "Max Lines",
+                                "No Limit",
+                                "",
+                            );
+
+                            if r.response.changed() || r2.response.changed() {
+                                TEXT_WRAP_WIDTH.set(
+                                    ctx,
+                                    r.inner.map(|e| NonZero::new(e.get() as u16).unwrap()),
+                                );
+
+                                TEXT_MAX_LINES.set(
+                                    ctx,
+                                    r2.inner.map(|e| NonZero::new(e.get() as u8).unwrap()),
+                                );
+
+                                for sheet in &mut self.sheet_data {
+                                    if let Ok(Ok(s)) = sheet.1.try_get_mut() {
+                                        s.invalidate_sizes(ui);
+                                    }
+                                }
+                            }
+                        });
+
                         {
                             let mut solid_scrollbar = SOLID_SCROLLBAR.get(ctx);
                             if ui
@@ -278,6 +316,12 @@ impl App {
                                 .changed()
                             {
                                 EVALUATE_STRINGS.set(ctx, evaluate_strings);
+
+                                for sheet in &mut self.sheet_data {
+                                    if let Ok(Ok(s)) = sheet.1.try_get_mut() {
+                                        s.invalidate_sizes(ui);
+                                    }
+                                }
                             }
                         }
 

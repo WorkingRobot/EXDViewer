@@ -7,6 +7,7 @@ mod icon_manager;
 #[cfg(target_arch = "wasm32")]
 mod jserror;
 mod matcher;
+mod opt_slider;
 mod shared_future;
 pub mod shortcut;
 mod syntax_highlighting;
@@ -26,6 +27,7 @@ pub use icon_manager::{IconManager, ManagedIcon};
 #[cfg(target_arch = "wasm32")]
 pub use jserror::{JsErr, JsResult};
 pub use matcher::FuzzyMatcher;
+pub use opt_slider::opt_slider;
 pub use shared_future::SharedFuture;
 pub use syntax_highlighting::{CodeTheme, highlight};
 pub use tracked_promise::{TrackedPromise, tick_promises};

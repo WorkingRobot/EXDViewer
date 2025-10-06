@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZero, sync::Arc};
 
 use egui::ThemePreference;
 use ironworks::excel::Language;
@@ -218,6 +218,9 @@ pub const SOLID_SCROLLBAR: DKey<bool> = DKey::new("solid-scrollbar", true);
 pub const ALWAYS_HIRES: DKey<bool> = DKey::new("always-hires", false);
 pub const DISPLAY_FIELD_SHOWN: DKey<bool> = DKey::new("display-field-shown", true);
 pub const EVALUATE_STRINGS: DKey<bool> = DKey::new("evaluate-strings", false);
+pub const TEXT_WRAP_WIDTH: DKey<Option<NonZero<u16>>> =
+    DKey::new("text-wrap-width", NonZero::new(600));
+pub const TEXT_MAX_LINES: DKey<Option<NonZero<u8>>> = DKey::new("text-max-lines", NonZero::new(5));
 pub const BACKEND_CONFIG: DKey<Option<BackendConfig>> = DKey::new("backend-config", None);
 pub const LANGUAGE: DKey<Language> = DKey::new("language", Language::English);
 pub const SHEETS_FILTER: DKey<String> = DKey::new("sheets-filter", String::new());

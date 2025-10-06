@@ -80,23 +80,10 @@ impl SheetTable {
             None
         };
 
-        let mut row_sizes = Vec::with_capacity(sheet.subrow_count() as usize);
-        {
-            let _stop = Stopwatch::new(format!("Sizing - {}", sheet.name()));
-            let mut sizing_ui = ui.new_child(UiBuilder::new().sizing_pass());
-            for (row_id, subrow_id) in sheet.get_subrow_ids() {
-                row_sizes.push(context.size_row(
-                    sheet.get_subrow(row_id, subrow_id).unwrap(),
-                    &mut sizing_ui,
-                    (row_id, sheet.has_subrows().then_some(subrow_id)),
-                ));
-            }
-        }
-
-        Self {
+        let mut ret = Self {
             context,
             subrow_lookup,
-            row_sizes,
+            row_sizes: Vec::new(),
             modal_image: None,
             clicked_cell: None,
             filtered_rows,
@@ -105,7 +92,11 @@ impl SheetTable {
             current_filter: None,
             current_filter_promise: None,
             current_filter_cancel_token: None,
-        }
+        };
+
+        ret.size_all_rows(ui);
+
+        ret
     }
 
     pub fn draw(
@@ -427,6 +418,36 @@ impl SheetTable {
                 },
             );
         }
+    }
+
+    fn size_all_rows(&mut self, ui: &mut egui::Ui) {
+        let sheet = self.context.sheet();
+
+        self.row_sizes.clear();
+        self.row_sizes.reserve(sheet.subrow_count() as usize);
+        {
+            let _stop = Stopwatch::new(format!("Sizing - {}", sheet.name()));
+            let mut sizing_ui = ui.new_child(UiBuilder::new().sizing_pass());
+            for (row_id, subrow_id) in sheet.get_subrow_ids() {
+                self.row_sizes.push(self.context.size_row(
+                    sheet.get_subrow(row_id, subrow_id).unwrap(),
+                    &mut sizing_ui,
+                    (row_id, sheet.has_subrows().then_some(subrow_id)),
+                ));
+            }
+        }
+    }
+
+    fn clear_offsets(&mut self) {
+        self.unfiltered_row_offsets.borrow_mut().clear();
+        for filter_value in self.filtered_rows.get_mut().iter_mut() {
+            filter_value.1.row_offsets.borrow_mut().clear();
+        }
+    }
+
+    pub fn invalidate_sizes(&mut self, ui: &mut egui::Ui) {
+        self.clear_offsets();
+        self.size_all_rows(ui);
     }
 }
 

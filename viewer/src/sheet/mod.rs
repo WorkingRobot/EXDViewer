@@ -15,7 +15,7 @@ use ironworks::sestring::SeString;
 pub use sheet_table::{FilterKey, SheetTable};
 pub use table_context::TableContext;
 
-use crate::settings::EVALUATE_STRINGS;
+use crate::settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_WRAP_WIDTH};
 
 fn copyable_label(ui: &mut egui::Ui, text: &impl ToString) -> Response {
     ui.with_layout(
@@ -35,13 +35,14 @@ fn copyable_label(ui: &mut egui::Ui, text: &impl ToString) -> Response {
     .inner
 }
 
-fn string_label(ui: &mut egui::Ui, text: &SeString<'static>) -> Response {
-    let value = if EVALUATE_STRINGS.get(ui.ctx()) {
-        text.format()
+fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Response {
+    let text = if EVALUATE_STRINGS.get(ui.ctx()) {
+        value.format()
     } else {
-        text.macro_string()
+        value.macro_string()
     };
-    let value = match value {
+
+    let text = match text {
         Ok(v) => v,
         Err(e) => {
             log::error!("Failed to format string: {e:?}");
@@ -55,28 +56,78 @@ fn string_label(ui: &mut egui::Ui, text: &SeString<'static>) -> Response {
         }
     };
 
-    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-        let resp = ui.add(Label::new(&value).sense(Sense::click()));
-        resp.context_menu(|ui| {
-            if ui.button("Copy").clicked() {
-                ui.ctx().copy_text(value);
-                ui.close();
+    let line_count = wrap_string_lines(ui, &text);
+    let resp = ui
+        .with_layout(Layout::left_to_right(Align::Center), |ui| {
+            let draw = |ui: &mut egui::Ui, text| {
+                let mut label = egui::Label::new(text);
+                if let Some(max_width) = TEXT_WRAP_WIDTH.get(ui.ctx()) {
+                    ui.set_max_width(max_width.get().into());
+                    label = label.wrap();
+                }
+                ui.add(label)
+            };
+
+            let max_lines = TEXT_MAX_LINES.get(ui.ctx());
+            if let Some(max_lines) = max_lines
+                && line_count > max_lines.get().into()
+            {
+                let max_height =
+                    ui.text_style_height(&egui::TextStyle::Body) * f32::from(max_lines.get());
+                ui.style_mut().spacing.item_spacing.y = 0.0;
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .max_height(max_height)
+                    .min_scrolled_height(max_height)
+                    .show(ui, |ui| draw(ui, &text))
+                    .inner
+            } else {
+                draw(ui, &text)
             }
-            if ui.button("Copy Raw (base64)").clicked() {
-                ui.ctx().copy_text(BASE64_STANDARD.encode(text.as_bytes()));
-                ui.close();
-            }
-            if ui.button("Copy Raw (hex)").clicked() {
-                ui.ctx()
-                    .copy_text(text.as_bytes().iter().fold(String::new(), |mut output, b| {
+        })
+        .inner;
+
+    resp.context_menu(|ui| {
+        if ui.button("Copy").clicked() {
+            ui.ctx().copy_text(text);
+            ui.close();
+        }
+        if ui.button("Copy Raw (base64)").clicked() {
+            ui.ctx().copy_text(BASE64_STANDARD.encode(value.as_bytes()));
+            ui.close();
+        }
+        if ui.button("Copy Raw (hex)").clicked() {
+            ui.ctx().copy_text(
+                value
+                    .as_bytes()
+                    .iter()
+                    .fold(String::new(), |mut output, b| {
                         let _ = write!(output, "{b:02X}");
                         output
-                    }));
-                ui.close();
-            }
-        });
+                    }),
+            );
+            ui.close();
+        }
+    });
 
-        resp
+    resp
+}
+
+/// Wraps the string to fit within a maximum width in pixels, returning line count.
+fn wrap_string_lines(ui: &egui::Ui, text: &str) -> usize {
+    let max_width = TEXT_WRAP_WIDTH.get(ui.ctx());
+    let Some(max_width) = max_width else {
+        return text.lines().count();
+    };
+
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    ui.fonts(|fonts| {
+        let galley = fonts.layout(
+            text.to_owned(),
+            font_id.clone(),
+            egui::Color32::PLACEHOLDER,
+            max_width.get().into(),
+        );
+        galley.rows.len()
     })
-    .inner
 }

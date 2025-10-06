@@ -11,8 +11,8 @@ use crate::{
         get_icon_path,
         provider::{ExcelProvider, ExcelRow, ExcelSheet},
     },
-    settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS},
-    sheet::string_label,
+    settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, TEXT_MAX_LINES},
+    sheet::{string_label_wrapped, wrap_string_lines},
     utils::{ManagedIcon, TrackedPromise},
 };
 
@@ -87,7 +87,12 @@ impl<'a> Cell<'a> {
     }
 
     fn size_text_multiline(&self, ui: &mut egui::Ui, text: String) -> f32 {
-        self.size_text(ui) * text.split('\n').count() as f32
+        let max_lines = TEXT_MAX_LINES.get(ui.ctx());
+        let mut line_count = wrap_string_lines(ui, &text);
+        if let Some(max_lines) = max_lines {
+            line_count = line_count.min(max_lines.get().into());
+        }
+        self.size_text(ui) * line_count as f32
     }
 
     fn size_internal_link(&self, ui: &mut egui::Ui, sheets: &[String]) -> anyhow::Result<f32> {
@@ -371,7 +376,7 @@ fn read_integer<T: num_traits::NumCast>(
 impl CellValue {
     pub fn show(self, ui: &mut egui::Ui, ctx: &GlobalContext) -> InnerResponse<CellResponse> {
         let resp = match self {
-            CellValue::String(value) => string_label(ui, &value),
+            CellValue::String(value) => string_label_wrapped(ui, &value),
             CellValue::Integer(value) => copyable_label(ui, &value),
             CellValue::Float(value) => copyable_label(ui, &value),
             CellValue::Boolean(value) => copyable_label(ui, &value),
