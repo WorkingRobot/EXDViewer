@@ -5,17 +5,20 @@ mod sheet_column;
 mod sheet_table;
 mod table_context;
 
-use std::fmt::Write;
+use std::{fmt::Write, sync::Arc};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 pub use cell::CellResponse;
-use egui::{Align, Color32, Direction, Label, Layout, Response, Sense};
+use egui::{
+    Align, Color32, Direction, FontSelection, Galley, Label, Layout, Response, Sense,
+    text::LayoutJob,
+};
 pub use global_context::GlobalContext;
 use ironworks::sestring::SeString;
 pub use sheet_table::{FilterKey, SheetTable};
 pub use table_context::TableContext;
 
-use crate::settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_WRAP_WIDTH};
+use crate::settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH};
 
 fn copyable_label(ui: &mut egui::Ui, text: &impl ToString) -> Response {
     ui.with_layout(
@@ -56,20 +59,16 @@ fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Respons
         }
     };
 
-    let line_count = wrap_string_lines(ui, &text);
+    let line_count = wrap_string_lines(ui, text.clone());
     let resp = ui
         .with_layout(Layout::left_to_right(Align::Center), |ui| {
-            let draw = |ui: &mut egui::Ui, text| {
-                let mut label = egui::Label::new(text);
-                if let Some(max_width) = TEXT_WRAP_WIDTH.get(ui.ctx()) {
-                    ui.set_max_width(max_width.get().into());
-                    label = label.wrap();
-                }
-                ui.add(label)
+            let draw = |ui: &mut egui::Ui, text: &String| {
+                let galley = create_galley(ui, text.clone(), !TEXT_USE_SCROLL.get(ui.ctx()));
+                ui.label(galley)
             };
 
-            let max_lines = TEXT_MAX_LINES.get(ui.ctx());
-            if let Some(max_lines) = max_lines
+            if TEXT_USE_SCROLL.get(ui.ctx())
+                && let Some(max_lines) = TEXT_MAX_LINES.get(ui.ctx())
                 && line_count > max_lines.get().into()
             {
                 let max_height =
@@ -113,21 +112,32 @@ fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Respons
     resp
 }
 
-/// Wraps the string to fit within a maximum width in pixels, returning line count.
-fn wrap_string_lines(ui: &egui::Ui, text: &str) -> usize {
-    let max_width = TEXT_WRAP_WIDTH.get(ui.ctx());
-    let Some(max_width) = max_width else {
-        return text.lines().count();
-    };
+fn create_galley(ui: &egui::Ui, text: String, try_elide: bool) -> Arc<Galley> {
+    let max_width = TEXT_WRAP_WIDTH
+        .get(ui.ctx())
+        .map(|w| w.get().into())
+        .unwrap_or(f32::INFINITY);
+    let mut layout = LayoutJob::simple(
+        text.clone(),
+        FontSelection::default().resolve(ui.style()),
+        Color32::PLACEHOLDER,
+        max_width,
+    );
+    if try_elide && let Some(max_lines) = TEXT_MAX_LINES.get(ui.ctx()) {
+        layout.wrap.max_rows = max_lines.get().into();
+        if max_lines.get() == 1 {
+            layout.wrap.break_anywhere = true;
+        }
+    }
 
-    let font_id = egui::TextStyle::Body.resolve(ui.style());
-    ui.fonts(|fonts| {
-        let galley = fonts.layout(
-            text.to_owned(),
-            font_id.clone(),
-            egui::Color32::PLACEHOLDER,
-            max_width.get().into(),
-        );
-        galley.rows.len()
-    })
+    ui.fonts(|fonts| fonts.layout_job(layout))
+}
+
+/// Wraps the string to fit within a maximum width in pixels, returning line count.
+fn wrap_string_lines(ui: &egui::Ui, text: String) -> usize {
+    if TEXT_WRAP_WIDTH.get(ui.ctx()).is_none() {
+        return text.lines().count();
+    }
+
+    create_galley(ui, text, false).rows.len()
 }

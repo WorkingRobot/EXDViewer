@@ -221,6 +221,7 @@ pub const EVALUATE_STRINGS: DKey<bool> = DKey::new("evaluate-strings", false);
 pub const TEXT_WRAP_WIDTH: DKey<Option<NonZero<u16>>> =
     DKey::new("text-wrap-width", NonZero::new(600));
 pub const TEXT_MAX_LINES: DKey<Option<NonZero<u8>>> = DKey::new("text-max-lines", NonZero::new(5));
+pub const TEXT_USE_SCROLL: DKey<bool> = DKey::new("text-use-scroll", false);
 pub const BACKEND_CONFIG: DKey<Option<BackendConfig>> = DKey::new("backend-config", None);
 pub const LANGUAGE: DKey<Language> = DKey::new("language", Language::English);
 pub const SHEETS_FILTER: DKey<String> = DKey::new("sheets-filter", String::new());

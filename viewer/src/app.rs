@@ -28,7 +28,7 @@ use crate::{
         ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, DISPLAY_FIELD_SHOWN,
         EVALUATE_STRINGS, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE,
         SELECTED_SHEET, SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR, SORTED_BY_OFFSET,
-        TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES, TEXT_WRAP_WIDTH,
+        TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH,
     },
     setup::{self, SetupWindow},
     sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
@@ -281,6 +281,21 @@ impl App {
                                     }
                                 }
                             }
+
+                            let mut use_scroll = TEXT_USE_SCROLL.get(ctx);
+                            let text = if use_scroll { "Scrollbar" } else { "Tooltip" };
+                            ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.style_mut().spacing.item_spacing.x /= 2.0;
+                                ui.set_max_width(
+                                    ui.spacing().slider_width + ui.spacing().interact_size.x,
+                                );
+                                ui.label("Show ");
+                                if ui.selectable_label(use_scroll, text).clicked() {
+                                    use_scroll = !use_scroll;
+                                    TEXT_USE_SCROLL.set(ctx, use_scroll);
+                                }
+                                ui.label(" on overflow");
+                            })
                         });
 
                         {
