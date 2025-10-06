@@ -257,6 +257,10 @@ impl SheetTable {
         ui.painter().rect_filled(ui.max_rect(), 0.0, color);
     }
 
+    pub fn has_filter(&self) -> bool {
+        self.current_filter.is_some()
+    }
+
     pub fn set_filter(&mut self, filter: Option<FilterKey>) {
         if self.current_filter == filter {
             return;

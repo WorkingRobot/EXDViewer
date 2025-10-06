@@ -689,6 +689,8 @@ impl App {
                                 TextEdit::singleline(&mut filter).hint_text("Filter"),
                             )
                             .changed()
+                            // Update filter if changed or has filter on initialization
+                            || table.has_filter() == filter.is_empty()
                         {
                             table.set_filter(if filter.is_empty() {
                                 None
