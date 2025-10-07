@@ -12,7 +12,7 @@ use crate::{
         provider::{ExcelProvider, ExcelRow, ExcelSheet},
     },
     settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, TEXT_MAX_LINES},
-    sheet::{string_label_wrapped, wrap_string_lines},
+    sheet::{should_ignore_clicks, string_label_wrapped, wrap_string_lines},
     utils::{ManagedIcon, TrackedPromise},
 };
 
@@ -381,7 +381,7 @@ impl CellValue {
             CellValue::Boolean(value) => copyable_label(ui, &value),
             CellValue::Icon(icon_id) => {
                 let resp = draw_icon(ctx, ui, icon_id).on_hover_cursor(CursorIcon::PointingHand);
-                if resp.clicked() {
+                if resp.clicked() && !should_ignore_clicks(ui) {
                     return InnerResponse::new(CellResponse::Icon(icon_id), resp);
                 }
                 resp
@@ -426,7 +426,7 @@ impl CellValue {
                 }
                 .on_hover_cursor(CursorIcon::Alias);
 
-                if resp.clicked() {
+                if resp.clicked() && !should_ignore_clicks(ui) {
                     return InnerResponse::new(
                         CellResponse::Link((sheet_name, (row_id, None))),
                         resp,

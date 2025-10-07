@@ -15,6 +15,7 @@ use web_time::{Duration, Instant};
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
+    sheet::should_ignore_clicks,
     stopwatch::Stopwatch,
     utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_to_ui},
 };
@@ -135,6 +136,10 @@ impl SheetTable {
                 if let Some(col_nr) = column_nr {
                     table = table.scroll_to_column(col_nr as usize, Some(Align::Center));
                 }
+            }
+
+            if should_ignore_clicks(ui) {
+                ui.style_mut().interaction.selectable_labels = false;
             }
             table.show(ui, self);
         });

@@ -10,7 +10,7 @@ use std::{fmt::Write, sync::Arc};
 use base64::{Engine, prelude::BASE64_STANDARD};
 pub use cell::CellResponse;
 use egui::{
-    Align, Color32, Direction, FontSelection, Galley, Label, Layout, Response, Sense,
+    Align, Color32, Direction, FontSelection, Galley, Label, Layout, Response, RichText, Sense,
     text::LayoutJob,
 };
 pub use global_context::GlobalContext;
@@ -51,8 +51,10 @@ fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Respons
             log::error!("Failed to format string: {e:?}");
             let resp = ui
                 .with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.colored_label(Color32::LIGHT_RED, "⚠")
-                        .on_hover_text(e.to_string())
+                    ui.add(
+                        Label::new(RichText::new("⚠").color(Color32::LIGHT_RED)).selectable(false),
+                    )
+                    .on_hover_text(e.to_string())
                 })
                 .inner;
             return resp;
@@ -140,4 +142,8 @@ fn wrap_string_lines(ui: &egui::Ui, text: String) -> usize {
     }
 
     create_galley(ui, text, false).rows.len()
+}
+
+fn should_ignore_clicks(ui: &egui::Ui) -> bool {
+    ui.input(|i| i.modifiers.matches_logically(egui::Modifiers::ALT))
 }
