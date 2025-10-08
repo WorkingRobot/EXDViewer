@@ -1,4 +1,6 @@
-use egui::{Align, Color32, Id, InnerResponse, Layout, Margin, Modal, Spinner, UiBuilder};
+use egui::{
+    Align, Color32, Id, InnerResponse, Layout, Margin, Modal, RichText, Spinner, UiBuilder,
+};
 use egui_table::TableDelegate;
 use itertools::Itertools;
 use lru::LruCache;
@@ -119,7 +121,10 @@ impl SheetTable {
                 ])
                 .num_sticky_cols(1)
                 .headers([egui_table::HeaderRow::new(
-                    ui.text_style_height(&egui::TextStyle::Heading) + 4.0,
+                    ui.text_style_height(&egui::TextStyle::Heading)
+                        + ui.spacing().item_spacing.y
+                        + ui.text_style_height(&egui::TextStyle::Small)
+                        + 4.0,
                 )]);
             if let Some(((row_id, subrow_id), column_id)) = scroll_to {
                 if let Some(row_nr) = self.search_filtered_row_nr(row_id, subrow_id) {
@@ -473,15 +478,18 @@ impl TableDelegate for SheetTable {
         let sorted_by_offset = SORTED_BY_OFFSET.get(ui.ctx());
 
         let column = column_idx.and_then(|c| {
-            Some((
-                c,
+            Some(
                 if sorted_by_offset {
-                    self.context.get_column_by_offset(c as u32)
+                    self.context
+                        .get_column_by_offset(c as u32)
+                        .map(|v| ((c as u32, v.1.id), v))
                 } else {
-                    self.context.get_column_by_index(c as u32)
+                    self.context
+                        .get_column_by_index(c as u32)
+                        .map(|(v, offset_idx)| ((offset_idx, v.1.id), v))
                 }
                 .ok()?,
-            ))
+            )
         });
 
         let is_display_column = self.is_display_column(column_idx, sorted_by_offset);
@@ -493,25 +501,46 @@ impl TableDelegate for SheetTable {
         egui::Frame::NONE
             .inner_margin(Margin::symmetric(4, 2))
             .show(ui, |ui| {
-                if let Some((column_id, (schema_column, sheet_column))) = column {
-                    ui.heading(schema_column.name()).on_hover_text(format!(
-                        "Id: {}\nIndex: {}\nOffset: {}\nKind: {:?}{}{}",
-                        sheet_column.id,
-                        column_id,
-                        sheet_column.offset(),
-                        sheet_column.kind(),
-                        if is_display_column {
-                            "\nDisplay Field"
-                        } else {
-                            ""
-                        },
-                        schema_column
-                            .comment()
-                            .map(|x| format!("\nComment: {x}"))
-                            .unwrap_or_default(),
-                    ));
+                if let Some(((offset_idx, column_idx), (schema_column, sheet_column))) = column {
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.heading(schema_column.name());
+
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} | {} (0x{:02X}) | {:?}",
+                                    column_idx,
+                                    offset_idx,
+                                    sheet_column.offset(),
+                                    sheet_column.kind(),
+                                ))
+                                .small()
+                                .color(Color32::GRAY),
+                            );
+                        });
+                        let icon_count =
+                            (is_display_column as u8) + (schema_column.comment().is_some() as u8);
+                        if icon_count > 0 {
+                            for _ in 0..icon_count {
+                                ui.add_space(ui.text_style_height(&egui::TextStyle::Heading));
+                            }
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.style_mut().interaction.selectable_labels = false;
+                                if is_display_column {
+                                    ui.label(RichText::new("★").heading().color(Color32::GOLD))
+                                        .on_hover_text("Display Field");
+                                }
+                                if let Some(comment) = schema_column.comment() {
+                                    ui.label(
+                                        RichText::new("🔖").heading().color(Color32::LIGHT_BLUE),
+                                    )
+                                    .on_hover_text(format!("Comment: {comment}"));
+                                }
+                            });
+                        }
+                    });
                 } else {
-                    ui.heading("Row");
+                    ui.centered_and_justified(|ui| ui.heading("Row"));
                 }
             });
     }

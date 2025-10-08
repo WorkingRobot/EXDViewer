@@ -119,8 +119,9 @@ impl TableContext {
     pub fn get_column_by_index(
         &self,
         column_idx: u32,
-    ) -> anyhow::Result<(SchemaColumn, &SheetColumnDefinition)> {
-        self.get_column_by_offset(self.convert_column_index_to_offset_index(column_idx)?)
+    ) -> anyhow::Result<((SchemaColumn, &SheetColumnDefinition), u32)> {
+        let offset_idx = self.convert_column_index_to_offset_index(column_idx)?;
+        Ok((self.get_column_by_offset(offset_idx)?, offset_idx))
     }
 
     pub fn set_schema(&self, schema: Option<&Schema>) -> anyhow::Result<()> {
@@ -224,7 +225,7 @@ impl TableContext {
         row: ExcelRow<'a>,
         column_idx: u32,
     ) -> anyhow::Result<Cell<'a>> {
-        let (schema_column, sheet_column) = self.get_column_by_index(column_idx)?;
+        let ((schema_column, sheet_column), _offset_idx) = self.get_column_by_index(column_idx)?;
         Ok(Cell::new(row, schema_column, sheet_column, self))
     }
 
