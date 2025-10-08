@@ -17,12 +17,7 @@ use web_time::{Duration, Instant};
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
-    sheet::{
-        cell::{
-            MULTILINE_STOPWATCH, MULTILINE2_STOPWATCH, MULTILINE3_STOPWATCH, MULTILINE4_STOPWATCH,
-        },
-        should_ignore_clicks,
-    },
+    sheet::should_ignore_clicks,
     stopwatch::Stopwatch,
     utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_to_ui},
 };

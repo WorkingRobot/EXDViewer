@@ -19,10 +19,7 @@ use ironworks::sestring::SeString;
 pub use sheet_table::{FilterKey, SheetTable};
 pub use table_context::TableContext;
 
-use crate::{
-    settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH},
-    sheet::cell::{MULTILINE2_STOPWATCH, MULTILINE3_STOPWATCH, MULTILINE4_STOPWATCH},
-};
+use crate::settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH};
 
 fn copyable_label(ui: &mut egui::Ui, text: &impl ToString) -> Response {
     ui.with_layout(
@@ -158,6 +155,10 @@ fn get_estimated_char_width(ui: &egui::Ui, ch: char) -> f32 {
 /// Wraps the string to fit within a maximum width, returning line count.
 fn wrap_string_lines_estimate(ui: &egui::Ui, text: &str) -> usize {
     // let _sw = MULTILINE4_STOPWATCH.start();
+
+    if text.is_empty() {
+        return 1;
+    }
 
     let Some(max_width) = TEXT_WRAP_WIDTH.get(ui.ctx()).map(|f| f.get() as f32) else {
         return text.lines().count();

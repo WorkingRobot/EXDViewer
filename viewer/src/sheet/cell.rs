@@ -13,7 +13,6 @@ use crate::{
     },
     settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, TEXT_MAX_LINES},
     sheet::{should_ignore_clicks, string_label_wrapped, wrap_string_lines_estimate},
-    stopwatch::RepeatedStopwatch,
     utils::{ManagedIcon, TrackedPromise},
 };
 
@@ -63,13 +62,13 @@ pub enum CellValue {
     },
 }
 
-pub static MULTILINE_STOPWATCH: RepeatedStopwatch = RepeatedStopwatch::new("Cell Multiline Size");
-pub static MULTILINE2_STOPWATCH: RepeatedStopwatch =
-    RepeatedStopwatch::new("Cell Multiline Size Actual");
-pub static MULTILINE3_STOPWATCH: RepeatedStopwatch =
-    RepeatedStopwatch::new("Cell Multiline Galley Layout");
-pub static MULTILINE4_STOPWATCH: RepeatedStopwatch =
-    RepeatedStopwatch::new("Cell Multiline Size Estimate");
+// pub static MULTILINE_STOPWATCH: RepeatedStopwatch = RepeatedStopwatch::new("Cell Multiline Size");
+// pub static MULTILINE2_STOPWATCH: RepeatedStopwatch =
+//     RepeatedStopwatch::new("Cell Multiline Size Actual");
+// pub static MULTILINE3_STOPWATCH: RepeatedStopwatch =
+//     RepeatedStopwatch::new("Cell Multiline Galley Layout");
+// pub static MULTILINE4_STOPWATCH: RepeatedStopwatch =
+//     RepeatedStopwatch::new("Cell Multiline Size Estimate");
 
 impl<'a> Cell<'a> {
     pub fn new(
