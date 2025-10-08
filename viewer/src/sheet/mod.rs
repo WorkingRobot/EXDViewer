@@ -14,11 +14,15 @@ use egui::{
     text::LayoutJob,
 };
 pub use global_context::GlobalContext;
+use intmap::IntMap;
 use ironworks::sestring::SeString;
 pub use sheet_table::{FilterKey, SheetTable};
 pub use table_context::TableContext;
 
-use crate::settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH};
+use crate::{
+    settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH},
+    sheet::cell::{MULTILINE2_STOPWATCH, MULTILINE3_STOPWATCH, MULTILINE4_STOPWATCH},
+};
 
 fn copyable_label(ui: &mut egui::Ui, text: &impl ToString) -> Response {
     ui.with_layout(
@@ -61,14 +65,9 @@ fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Respons
         }
     };
 
-    let line_count = wrap_string_lines(ui, text.clone());
+    let (line_count, galley) = wrap_string_lines_galley(ui, text.clone());
     let resp = ui
         .with_layout(Layout::left_to_right(Align::Center), |ui| {
-            let draw = |ui: &mut egui::Ui, text: &String| {
-                let galley = create_galley(ui, text.clone(), !TEXT_USE_SCROLL.get(ui.ctx()));
-                ui.label(galley)
-            };
-
             if TEXT_USE_SCROLL.get(ui.ctx())
                 && let Some(max_lines) = TEXT_MAX_LINES.get(ui.ctx())
                 && line_count > max_lines.get().into()
@@ -80,10 +79,10 @@ fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Respons
                     .auto_shrink(false)
                     .max_height(max_height)
                     .min_scrolled_height(max_height)
-                    .show(ui, |ui| draw(ui, &text))
+                    .show(ui, |ui| ui.label(galley))
                     .inner
             } else {
-                draw(ui, &text)
+                ui.label(galley)
             }
         })
         .inner;
@@ -117,8 +116,7 @@ fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Respons
 fn create_galley(ui: &egui::Ui, text: String, try_elide: bool) -> Arc<Galley> {
     let max_width = TEXT_WRAP_WIDTH
         .get(ui.ctx())
-        .map(|w| w.get().into())
-        .unwrap_or(f32::INFINITY);
+        .map_or(f32::INFINITY, |w| w.get().into());
     let mut layout = LayoutJob::simple(
         text.clone(),
         FontSelection::default().resolve(ui.style()),
@@ -132,16 +130,54 @@ fn create_galley(ui: &egui::Ui, text: String, try_elide: bool) -> Arc<Galley> {
         }
     }
 
+    // let _sw = MULTILINE3_STOPWATCH.start();
     ui.fonts(|fonts| fonts.layout_job(layout))
 }
 
-/// Wraps the string to fit within a maximum width in pixels, returning line count.
-fn wrap_string_lines(ui: &egui::Ui, text: String) -> usize {
-    if TEXT_WRAP_WIDTH.get(ui.ctx()).is_none() {
-        return text.lines().count();
-    }
+fn wrap_string_lines_galley(ui: &egui::Ui, text: String) -> (usize, Arc<Galley>) {
+    let galley = create_galley(ui, text, !TEXT_USE_SCROLL.get(ui.ctx()));
+    (galley.rows.len(), galley)
+}
 
-    create_galley(ui, text, false).rows.len()
+static mut ESTIMATE_LUT: IntMap<u32, f32> = IntMap::new();
+
+// SAFETY: Only accessed from the main thread
+fn get_estimated_char_width(ui: &egui::Ui, ch: char) -> f32 {
+    #[allow(static_mut_refs)]
+    let lut = unsafe { &mut ESTIMATE_LUT };
+
+    if let Some(width) = lut.get(ch.into()) {
+        *width
+    } else {
+        let width = ui.fonts(|f| f.glyph_width(&FontSelection::default().resolve(ui.style()), ch));
+        lut.insert(ch.into(), width);
+        width
+    }
+}
+
+/// Wraps the string to fit within a maximum width, returning line count.
+fn wrap_string_lines_estimate(ui: &egui::Ui, text: &str) -> usize {
+    // let _sw = MULTILINE4_STOPWATCH.start();
+
+    let Some(max_width) = TEXT_WRAP_WIDTH.get(ui.ctx()).map(|f| f.get() as f32) else {
+        return text.lines().count();
+    };
+
+    text.lines()
+        .map(|line| {
+            let mut line_count = 1;
+            let mut current_width = 0.0;
+            for char in line.chars() {
+                let char_width = get_estimated_char_width(ui, char);
+                current_width += char_width;
+                if current_width > max_width {
+                    line_count += 1;
+                    current_width = char_width;
+                }
+            }
+            line_count
+        })
+        .sum()
 }
 
 fn should_ignore_clicks(ui: &egui::Ui) -> bool {

@@ -12,7 +12,7 @@ use crate::{
         provider::{ExcelProvider, ExcelRow, ExcelSheet},
     },
     settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, TEXT_MAX_LINES},
-    sheet::{should_ignore_clicks, string_label_wrapped, wrap_string_lines},
+    sheet::{should_ignore_clicks, string_label_wrapped, wrap_string_lines_estimate},
     stopwatch::RepeatedStopwatch,
     utils::{ManagedIcon, TrackedPromise},
 };
@@ -97,6 +97,7 @@ impl<'a> Cell<'a> {
 
     fn size_text_multiline(&self, ui: &mut egui::Ui, text: String) -> f32 {
         // let _sw = MULTILINE_STOPWATCH.start();
+        let mut line_count = wrap_string_lines_estimate(ui, &text);
         if let Some(max_lines) = TEXT_MAX_LINES.get(ui.ctx()) {
             line_count = line_count.min(max_lines.get().into());
         }

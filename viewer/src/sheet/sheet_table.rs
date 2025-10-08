@@ -17,7 +17,12 @@ use web_time::{Duration, Instant};
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
-    sheet::should_ignore_clicks,
+    sheet::{
+        cell::{
+            MULTILINE_STOPWATCH, MULTILINE2_STOPWATCH, MULTILINE3_STOPWATCH, MULTILINE4_STOPWATCH,
+        },
+        should_ignore_clicks,
+    },
     stopwatch::Stopwatch,
     utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_to_ui},
 };
@@ -449,6 +454,10 @@ impl SheetTable {
                     (row_id, sheet.has_subrows().then_some(subrow_id)),
                 ));
             }
+            // MULTILINE_STOPWATCH.report();
+            // MULTILINE2_STOPWATCH.report();
+            // MULTILINE3_STOPWATCH.report();
+            // MULTILINE4_STOPWATCH.report();
         }
     }
 
@@ -478,18 +487,16 @@ impl TableDelegate for SheetTable {
         let sorted_by_offset = SORTED_BY_OFFSET.get(ui.ctx());
 
         let column = column_idx.and_then(|c| {
-            Some(
-                if sorted_by_offset {
-                    self.context
-                        .get_column_by_offset(c as u32)
-                        .map(|v| ((c as u32, v.1.id), v))
-                } else {
-                    self.context
-                        .get_column_by_index(c as u32)
-                        .map(|(v, offset_idx)| ((offset_idx, v.1.id), v))
-                }
-                .ok()?,
-            )
+            if sorted_by_offset {
+                self.context
+                    .get_column_by_offset(c as u32)
+                    .map(|v| ((c as u32, v.1.id), v))
+            } else {
+                self.context
+                    .get_column_by_index(c as u32)
+                    .map(|(v, offset_idx)| ((offset_idx, v.1.id), v))
+            }
+            .ok()
         });
 
         let is_display_column = self.is_display_column(column_idx, sorted_by_offset);
