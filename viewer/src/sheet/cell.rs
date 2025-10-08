@@ -13,6 +13,7 @@ use crate::{
     },
     settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, TEXT_MAX_LINES},
     sheet::{should_ignore_clicks, string_label_wrapped, wrap_string_lines},
+    stopwatch::RepeatedStopwatch,
     utils::{ManagedIcon, TrackedPromise},
 };
 
@@ -62,6 +63,14 @@ pub enum CellValue {
     },
 }
 
+pub static MULTILINE_STOPWATCH: RepeatedStopwatch = RepeatedStopwatch::new("Cell Multiline Size");
+pub static MULTILINE2_STOPWATCH: RepeatedStopwatch =
+    RepeatedStopwatch::new("Cell Multiline Size Actual");
+pub static MULTILINE3_STOPWATCH: RepeatedStopwatch =
+    RepeatedStopwatch::new("Cell Multiline Galley Layout");
+pub static MULTILINE4_STOPWATCH: RepeatedStopwatch =
+    RepeatedStopwatch::new("Cell Multiline Size Estimate");
+
 impl<'a> Cell<'a> {
     pub fn new(
         row: ExcelRow<'a>,
@@ -87,7 +96,7 @@ impl<'a> Cell<'a> {
     }
 
     fn size_text_multiline(&self, ui: &mut egui::Ui, text: String) -> f32 {
-        let mut line_count = wrap_string_lines(ui, text);
+        // let _sw = MULTILINE_STOPWATCH.start();
         if let Some(max_lines) = TEXT_MAX_LINES.get(ui.ctx()) {
             line_count = line_count.min(max_lines.get().into());
         }
