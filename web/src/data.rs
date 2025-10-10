@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{collections::HashSet, path::Path, sync::Arc, time::Duration};
 
 use ironworks::{
     Ironworks,
@@ -6,13 +6,14 @@ use ironworks::{
 };
 use mini_moka::sync::{Cache, CacheBuilder};
 use serde::Serialize;
+use tokio::runtime::Handle;
 use xiv_cache::{
     builder::ServerBuilder,
     file::CacheFile,
     server::{Server, SlugData},
     stream::CacheFileStream,
 };
-use xiv_core::file::{clut::Clut, slug::Slug, version::GameVersion};
+use xiv_core::file::{slug::Slug, version::GameVersion};
 
 use crate::{blocking_stream::BlockingReader, config::AssetCache, smart_bufreader::SmartBufReader};
 
@@ -127,8 +128,10 @@ impl GameData {
 pub struct CacheVfs {
     server: Server,
     slug: Slug,
+    version: GameVersion,
     readahead_size: usize,
-    clut: Arc<Clut>,
+    existing_files: HashSet<String>,
+    existing_folders: HashSet<String>,
 }
 
 impl CacheVfs {
@@ -138,12 +141,16 @@ impl CacheVfs {
         slug: Slug,
         version: GameVersion,
     ) -> anyhow::Result<Self> {
-        let clut = server.get_clut(slug, version).await?;
+        let clut = server.get_clut(slug, version.clone()).await?;
+        let existing_files = clut.files.keys().cloned().collect();
+        let existing_folders = clut.folders.iter().cloned().collect();
         Ok(Self {
             server,
             slug,
+            version,
             readahead_size,
-            clut,
+            existing_files,
+            existing_folders,
         })
     }
 }
@@ -155,16 +162,14 @@ impl Vfs for CacheVfs {
         let path = Path::new("sqpack").join(path);
         let path_str = path.to_str().unwrap_or_default();
         // file
-        self.clut
-            .files
-            .contains_key(path_str) ||
+        self.existing_files
+            .contains(path_str) ||
         // directory
-        self.clut
-            .folders
+        self.existing_folders
             .contains(path_str) ||
         {
             // Check if path is a parent directory of any file or folder
-            self.clut.files.keys().chain(self.clut.folders.iter()).any(|k| {
+            self.existing_files.iter().chain(self.existing_folders.iter()).any(|k| {
                 Path::new(k).parent()
                     .map(|parent| parent == path)
                     .unwrap_or(false) ||
@@ -178,22 +183,29 @@ impl Vfs for CacheVfs {
         let path = Path::new("sqpack").join(path);
         let path = path.to_str().unwrap_or_default();
 
-        let data =
-            self.clut.files.get(path).ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "file not found")
-            })?;
+        if !self.existing_files.contains(path) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "file not found",
+            ));
+        }
+
+        let file = tokio::task::block_in_place(|| {
+            Handle::current().block_on({
+                async move {
+                    CacheFile::new(
+                        self.server.clone(),
+                        self.slug,
+                        self.version.clone(),
+                        path.to_string(),
+                    )
+                    .await
+                }
+            })
+        })?;
 
         Ok(SmartBufReader::unchecked_new(
-            BlockingReader::new(
-                CacheFile::new(
-                    self.server.clone(),
-                    self.slug,
-                    data.clone(),
-                    path.to_string(),
-                )
-                .map_err(std::io::Error::other)?
-                .into_reader(),
-            ),
+            BlockingReader::new(file.into_reader()),
             self.readahead_size,
         ))
     }
