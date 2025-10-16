@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use anyhow::bail;
 use egui::{
     Color32, CursorIcon, Direction, InnerResponse, Layout, Sense, Vec2, Widget,
@@ -26,7 +28,7 @@ use super::{
 pub struct Cell<'a> {
     row: ExcelRow<'a>,
     // This can be either a SchemaColumn or a SchemaColumnMeta::Link to a vector of strings (as a reference)
-    schema_column: Either<SchemaColumn, &'a Vec<String>>,
+    schema_column: Either<Cow<'a, SchemaColumn>, &'a Vec<String>>,
     sheet_column: &'a SheetColumnDefinition,
     table_context: &'a TableContext,
 }
@@ -43,6 +45,12 @@ pub enum CellResponse {
     Icon(u32),
     Link(SheetRef),
     Row(SheetRef),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MatchOptions {
+    pub case_insensitive: bool,
+    pub use_display_field: bool,
 }
 
 pub enum CellValue {
@@ -62,6 +70,71 @@ pub enum CellValue {
     },
 }
 
+impl CellValue {
+    pub fn coerce_integer(&self) -> Option<i128> {
+        match self {
+            CellValue::String(s) => s.macro_string().ok().and_then(|s| s.parse().ok()),
+            CellValue::Integer(i) => Some(*i),
+            CellValue::Float(f) => Some(*f as i128),
+            CellValue::Boolean(b) => Some(if *b { 1 } else { 0 }),
+            CellValue::Icon(id) => Some(i128::from(*id)),
+            CellValue::ModelId(id) => Some(match id {
+                Either::Left(id) => i128::from(*id),
+                Either::Right(id) => i128::from(*id),
+            }),
+            CellValue::Color(color) => Some(u32::from_le_bytes(color.to_array()).into()),
+            CellValue::InvalidLink(id) => Some(i128::from(*id)),
+            CellValue::InProgressLink(id) => {
+                return Some(i128::from(*id));
+            }
+            CellValue::ValidLink { row_id, value, .. } => Some(
+                value
+                    .as_ref()
+                    .and_then(|v| v.coerce_integer())
+                    .unwrap_or_else(|| i128::from(*row_id)),
+            ),
+        }
+    }
+
+    pub fn coerce_string(&self) -> String {
+        match self {
+            CellValue::String(s) => s.macro_string().unwrap_or_default(),
+            CellValue::Integer(i) => i.to_string(),
+            CellValue::Float(f) => f.to_string(),
+            CellValue::Boolean(b) => b.to_string(),
+            CellValue::Icon(id) => id.to_string(),
+            CellValue::ModelId(id) => id.either(
+                |model_id| {
+                    let model = (model_id & 0xFFFF) as u16;
+                    let variant = ((model_id >> 16) & 0xFF) as u8;
+                    let stain = ((model_id >> 24) & 0xFF) as u8;
+                    format!("{model}, {variant}, {stain}")
+                },
+                |weapon_id| {
+                    let skeleton = (weapon_id & 0xFFFF) as u16;
+                    let model = ((weapon_id >> 16) & 0xFFFF) as u16;
+                    let variant = ((weapon_id >> 32) & 0xFFFF) as u16;
+                    let stain = ((weapon_id >> 48) & 0xFFFF) as u16;
+                    format!("{skeleton}, {model}, {variant}, {stain}")
+                },
+            ),
+            CellValue::Color(color) => color.to_hex(),
+            CellValue::InvalidLink(id) => id.to_string(),
+            CellValue::InProgressLink(id) => {
+                return id.to_string();
+            }
+            CellValue::ValidLink { row_id, value, .. } => value
+                .as_ref()
+                .map(|v| v.coerce_string())
+                .unwrap_or_else(|| row_id.to_string()),
+        }
+    }
+
+    pub fn is_in_progress(&self) -> bool {
+        matches!(self, CellValue::InProgressLink(_))
+    }
+}
+
 // pub static MULTILINE_STOPWATCH: RepeatedStopwatch = RepeatedStopwatch::new("Cell Multiline Size");
 // pub static MULTILINE2_STOPWATCH: RepeatedStopwatch =
 //     RepeatedStopwatch::new("Cell Multiline Size Actual");
@@ -73,7 +146,7 @@ pub enum CellValue {
 impl<'a> Cell<'a> {
     pub fn new(
         row: ExcelRow<'a>,
-        schema_column: SchemaColumn,
+        schema_column: Cow<'a, SchemaColumn>,
         sheet_column: &'a SheetColumnDefinition,
         table_context: &'a TableContext,
     ) -> Self {

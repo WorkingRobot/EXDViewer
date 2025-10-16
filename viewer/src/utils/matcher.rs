@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, num::NonZeroU32, rc::Rc};
 
 use itertools::Itertools;
 use nucleo_matcher::{
@@ -10,6 +10,7 @@ pub struct FuzzyMatcher(Rc<RefCell<FuzzyMatcherImpl>>);
 
 struct FuzzyMatcherImpl {
     matcher: Matcher,
+    utf_buf: Vec<char>,
 }
 
 impl FuzzyMatcher {
@@ -18,6 +19,7 @@ impl FuzzyMatcher {
         config.prefer_prefix = true;
         Self(Rc::new(RefCell::new(FuzzyMatcherImpl {
             matcher: Matcher::new(config),
+            utf_buf: Vec::new(),
         })))
     }
 
@@ -37,22 +39,17 @@ impl FuzzyMatcher {
         if pattern.is_empty() {
             vec![]
         } else {
-            let mut inner = self.0.borrow_mut();
+            let FuzzyMatcherImpl { matcher, utf_buf } = &mut *self.0.borrow_mut();
 
             let pattern = Self::parse_pattern(pattern);
 
-            let mut utf_buf = Vec::new();
             items
                 .into_iter()
                 .filter_map(|item| {
                     let item_str = converter(&item);
                     let item_len = item_str.len();
                     pattern
-                        .indices(
-                            Utf32Str::new(item_str, &mut utf_buf),
-                            &mut inner.matcher,
-                            &mut Vec::new(),
-                        )
+                        .indices(Utf32Str::new(item_str, utf_buf), matcher, &mut Vec::new())
                         .map(|score| (item, score, item_len))
                 })
                 .sorted_by(|(_, a_score, a_len), (_, b_score, b_len)| {
@@ -66,7 +63,15 @@ impl FuzzyMatcher {
         }
     }
 
-    fn parse_pattern(pattern: &str) -> Pattern {
+    pub fn score_one(&self, pattern: &Pattern, haystack: &str) -> Option<NonZeroU32> {
+        let FuzzyMatcherImpl { matcher, utf_buf } = &mut *self.0.borrow_mut();
+
+        pattern
+            .score(Utf32Str::new(haystack, utf_buf), matcher)
+            .and_then(NonZeroU32::new)
+    }
+
+    pub fn parse_pattern(pattern: &str) -> Pattern {
         Pattern::parse(pattern, CaseMatching::Smart, Normalization::Smart)
     }
 }

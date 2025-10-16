@@ -1,0 +1,107 @@
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+
+// Entry point
+filter = { SOI ~ expr ~ EOI }
+
+// Operator precedence: NOT > AND > OR
+expr       = _{ or_expr }
+or_expr    =  { and_expr ~ (or ~ and_expr)* }
+and_expr   =  { not_expr ~ (and ~ not_expr)* }
+not_expr   =  { (not ~ not_expr) | primary }
+primary    =  { paren_expr | simple_filter }
+paren_expr =  { LPAREN ~ expr ~ RPAREN }
+
+// Logical operators (case-insensitive for word forms)
+not = @{ NOT_OP | _NOT_TERMS_ }
+and = @{ AND_OP | _AND_TERMS_ }
+or  = @{ OR_OP | _OR_TERMS_ }
+
+// Ensure word operators are followed by whitespace, parentheses, or end of input
+_NOT_TERMS_       = @{ NOT_TERMS ~ &whitespace_suffix }
+_AND_TERMS_       = @{ AND_TERMS ~ &whitespace_suffix }
+_OR_TERMS_        = @{ OR_TERMS ~ &whitespace_suffix }
+whitespace_suffix = @{
+    WHITESPACE+
+  | LPAREN
+  | RPAREN
+  | EOI
+}
+
+NOT_OP    = { "!" }
+NOT_TERMS = { "NOT" | "not" | "Not" }
+AND_OP    = { "&&" }
+AND_TERMS = { "AND" | "and" | "And" }
+OR_OP     = { "||" }
+OR_TERMS  = { "OR" | "or" | "Or" }
+
+LPAREN = { "(" }
+RPAREN = { ")" }
+
+// Simple filter: key with comparator (possibly negated)
+simple_filter = { key ~ negatable_comparator }
+
+// Key: row id or specific column (dot and array notation allowed, wildcards * and ? allowed)
+key    =  { row_id | column }
+row_id =  { "#" }
+column = @{ (ASCII_ALPHA | "*" | "?") ~ (ASCII_ALPHANUMERIC | "_" | "." | "[" | "]" | "*" | "?")* }
+
+// A comparator, possibly negated with NOT
+comparator           =  {
+    equals_comparator
+  | string_comparator
+  | wildcard_comparator
+  | regex_comparator
+  | range_comparator
+}
+negatable_comparator = _{ not? ~ comparator }
+
+// Comparator types
+equals_comparator   = _{ EQUALS ~ strnum_value }
+string_comparator   = _{ (STARTS_WITH | ENDS_WITH | CONTAINS | FUZZY) ~ string_value }
+wildcard_comparator = _{ WILDCARD ~ string_value }
+regex_comparator    = _{ REGEX ~ regex_value }
+range_comparator    = _{ RANGE ~ range_value }
+
+// Comparator operators
+EQUALS      = { "=" }
+STARTS_WITH = { "^=" }
+ENDS_WITH   = { "$=" }
+CONTAINS    = { "*=" }
+FUZZY       = { "~=" }
+WILDCARD    = { "?=" }
+REGEX       = { "~" }
+RANGE       = { "|=" }
+
+// Values
+strnum_value = { number | string_value }
+string_value = { quoted_string | bare_string }
+regex_value  = { string_value | regex }
+range_value  = { range | number }
+
+// Quoted string: "..." with escaping
+quoted_string  = ${ PUSH(QUOTE) ~ quoted_charseq ~ POP }
+quoted_charseq = @{ quoted_char* }
+quoted_char    = @{ "\\" ~ quoted_escape | quoted_normal }
+quoted_escape  = @{ QUOTE | PEEK | "\\" | "n" | "r" | "t" }
+quoted_normal  = @{ !(PEEK | "\\") ~ ANY }
+QUOTE          =  { "\"" | "'" }
+
+// Bare string: unquoted, for simple values, can include keywords like 'and', 'or', 'not'
+bare_string = @{ (ASCII_ALPHANUMERIC | "_" | "-" | ".")+ }
+
+// Regex: /.../ with escaping and optional flags
+regex           = ${ PUSH(REGEX_SEPARATOR) ~ regex_charseq ~ POP ~ regex_flags }
+regex_charseq   = @{ regex_char* }
+regex_char      = @{ "\\" ~ regex_escape | regex_normal }
+regex_escape    = @{ ANY }
+regex_normal    = @{ quoted_normal }
+regex_flags     = @{ regex_flag* }
+regex_flag      =  { "i" | "m" | "s" | "U" | "R" | "x" | "u" }
+REGEX_SEPARATOR =  { "/" }
+
+// Number: integer, no leading zeros except for zero itself, optional leading minus
+number = @{ "-"? ~ !"0" ~ ASCII_DIGIT+ }
+
+// Range: two numbers separated by "..", or open-ended
+range           = { (number ~ RANGE_SEPARATOR ~ number) | (RANGE_SEPARATOR ~ number) | (number ~ RANGE_SEPARATOR) }
+RANGE_SEPARATOR = { ".." }

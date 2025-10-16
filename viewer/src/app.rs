@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc};
+use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc, str::FromStr};
 
 use anyhow::Result;
 use egui::{
@@ -31,7 +31,10 @@ use crate::{
         TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH,
     },
     setup::{self, SetupWindow},
-    sheet::{CellResponse, FilterKey, GlobalContext, SheetTable, TableContext},
+    sheet::{
+        CellResponse, ComplexFilter, FilterInput, GlobalContext, MatchOptions, SheetTable,
+        TableContext,
+    },
     shortcuts::{GOTO_ROW, GOTO_SHEET},
     utils::{
         CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, FuzzyMatcher, IconManager,
@@ -689,17 +692,28 @@ impl App {
                                 TextEdit::singleline(&mut filter).hint_text("Filter"),
                             )
                             .changed()
-                            // Update filter if changed or has filter on initialization
-                            || table.has_filter() == filter.is_empty()
                         {
-                            table.set_filter(if filter.is_empty() {
-                                None
+                            log::info!("Compiling filter: {filter}");
+                            let compiled_filter = if filter.is_empty() {
+                                Ok(None)
                             } else {
-                                Some(FilterKey {
-                                    text: filter.clone(),
-                                    resolve_display_field: DISPLAY_FIELD_SHOWN.get(ui.ctx()),
-                                })
-                            });
+                                ComplexFilter::from_str(&filter)
+                                    .map_err(|e| anyhow::anyhow!("Failed to parse filter: {e}"))
+                                    .and_then(|filter| {
+                                        table.context().compile_filter(
+                                            &FilterInput::Complex(filter),
+                                            MatchOptions {
+                                                case_insensitive: true,
+                                                use_display_field: true,
+                                            },
+                                        )
+                                    })
+                                    .map(|f| Some(f))
+                            };
+                            match compiled_filter {
+                                Ok(compiled_filter) => table.set_filter(compiled_filter),
+                                Err(e) => log::error!("Failed to compile filter: {e:?}"),
+                            }
                             SHEET_FILTERS.use_with(ui.ctx(), |map| {
                                 map.entry(sheet_name.clone()).insert_entry(filter);
                             });

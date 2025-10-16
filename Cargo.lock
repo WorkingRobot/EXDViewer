@@ -4596,6 +4596,49 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "pest"
+version = "2.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "989e7521a040efde50c3ab6bbadafbe15ab6dc042686926be59ac35d74607df4"
+dependencies = [
+ "memchr",
+ "ucd-trie",
+]
+
+[[package]]
+name = "pest_derive"
+version = "2.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "187da9a3030dbafabbbfb20cb323b976dc7b7ce91fcd84f2f74d6e31d378e2de"
+dependencies = [
+ "pest",
+ "pest_generator",
+]
+
+[[package]]
+name = "pest_generator"
+version = "2.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49b401d98f5757ebe97a26085998d6c0eecec4995cad6ab7fc30ffdf4b052843"
+dependencies = [
+ "pest",
+ "pest_meta",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "pest_meta"
+version = "2.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f27a2cfee9f9039c4d86faa5af122a0ac3851441a34865b8a043b46be0065a"
+dependencies = [
+ "pest",
+ "sha2",
+]
+
+[[package]]
 name = "phf"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5679,6 +5722,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "shadow-rs"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6461,6 +6515,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ucd-trie"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2896d95c02a80c6d6a5d6e953d479f5ddf2dfdb6a244441010e373ac0fb88971"
+
+[[package]]
 name = "uds_windows"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6637,8 +6697,11 @@ dependencies = [
  "matchit",
  "nucleo-matcher",
  "num-traits",
+ "pest",
+ "pest_derive",
  "pinned",
  "poll-promise",
+ "regex-lite",
  "replace_with",
  "rfd",
  "serde",
@@ -6650,6 +6713,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+ "wildmatch",
  "zip",
 ]
 
@@ -7111,6 +7175,12 @@ dependencies = [
  "thiserror 2.0.17",
  "web-sys",
 ]
+
+[[package]]
+name = "wildmatch"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39b7d07a236abaef6607536ccfaf19b396dbe3f5110ddb73d39f4562902ed382"
 
 [[package]]
 name = "winapi"

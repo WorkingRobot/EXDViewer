@@ -55,6 +55,10 @@ pinned = "0.1"
 matchit = "0.8"
 zip = { version = "5.0", default-features = false }
 base64 = "0.22"
+wildmatch = "2.5"
+regex-lite = "0.1"
+pest = "2.8"
+pest_derive = "2.8"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

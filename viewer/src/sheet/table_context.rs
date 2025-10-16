@@ -1,6 +1,7 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
 
 use anyhow::bail;
+use ironworks::sestring::SeString;
 use itertools::Itertools;
 
 use crate::{
@@ -9,6 +10,11 @@ use crate::{
         provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     },
     schema::{Schema, provider::SchemaProvider},
+    sheet::{
+        cell::MatchOptions,
+        cell_iter::CellIter,
+        filter::{CompiledFilterInput, CompiledFilterKey, FilterCache, FilterInput},
+    },
     utils::{CloneableResult, ConvertiblePromise, TrackedPromise},
 };
 
@@ -38,6 +44,8 @@ pub struct TableContextImpl {
     display_column_idx: std::cell::Cell<Option<u32>>,
 
     referenced_sheets: RefCell<HashMap<String, ConvertibleSheetPromise>>,
+
+    filter_cache: FilterCache,
 }
 
 impl TableContext {
@@ -61,6 +69,7 @@ impl TableContext {
             schema_columns: RefCell::new(schema_columns),
             display_column_idx: std::cell::Cell::new(display_column_idx),
             referenced_sheets: RefCell::new(HashMap::new()),
+            filter_cache: FilterCache::new(),
         }))
     }
 
@@ -217,7 +226,12 @@ impl TableContext {
         column_idx: u32,
     ) -> anyhow::Result<Cell<'a>> {
         let (schema_column, sheet_column) = self.get_column_by_offset(column_idx)?;
-        Ok(Cell::new(row, schema_column, sheet_column, self))
+        Ok(Cell::new(
+            row,
+            Cow::Owned(schema_column),
+            sheet_column,
+            self,
+        ))
     }
 
     pub fn cell_by_index<'a>(
@@ -226,7 +240,12 @@ impl TableContext {
         column_idx: u32,
     ) -> anyhow::Result<Cell<'a>> {
         let ((schema_column, sheet_column), _offset_idx) = self.get_column_by_index(column_idx)?;
-        Ok(Cell::new(row, schema_column, sheet_column, self))
+        Ok(Cell::new(
+            row,
+            Cow::Owned(schema_column),
+            sheet_column,
+            self,
+        ))
     }
 
     pub fn display_column_idx(&self) -> Option<u32> {
@@ -253,75 +272,53 @@ impl TableContext {
     pub fn filter_row(
         &self,
         columns: &[(SchemaColumn, &SheetColumnDefinition)],
+        row_id: u32,
+        subrow_id: Option<u16>,
         row: &ExcelRow<'_>,
-        filter: &str,
-        resolve_display_field: bool,
+        filter: &CompiledFilterInput,
     ) -> anyhow::Result<(bool, bool)> {
         if filter.is_empty() {
             return Ok((true, false));
         }
 
         let mut is_in_progress = false;
-        for column in columns {
-            let (schema_column, sheet_column) = column;
-            let cell = Cell::new(*row, schema_column.clone(), sheet_column, self);
-            let value = cell.read(resolve_display_field)?;
-            let (matches, in_progress) = Self::filter_value(&value, filter);
-            if in_progress {
-                is_in_progress = true;
-            }
-            if matches {
-                return Ok((true, is_in_progress));
-            }
-        }
-        Ok((false, is_in_progress))
-    }
 
-    fn filter_value(value: &CellValue, filter: &str) -> (bool, bool) {
-        let resp = match value {
-            CellValue::String(s) => s
-                .macro_string()
-                .unwrap_or_default()
-                .to_lowercase()
-                .contains(&filter.to_lowercase()),
-            CellValue::Integer(i) => i.to_string().contains(&filter.to_lowercase()),
-            CellValue::Float(f) => f.to_string().contains(&filter.to_lowercase()),
-            CellValue::Boolean(b) => b.to_string().contains(&filter.to_lowercase()),
-            CellValue::Icon(id) => id.to_string().contains(&filter.to_lowercase()),
-            CellValue::ModelId(id) => {
-                let label = id.map_either(
-                    |model_id| {
-                        let model = (model_id & 0xFFFF) as u16;
-                        let variant = ((model_id >> 16) & 0xFF) as u8;
-                        let stain = ((model_id >> 24) & 0xFF) as u8;
-                        format!("{model}, {variant}, {stain}")
-                    },
-                    |weapon_id| {
-                        let skeleton = (weapon_id & 0xFFFF) as u16;
-                        let model = ((weapon_id >> 16) & 0xFFFF) as u16;
-                        let variant = ((weapon_id >> 32) & 0xFFFF) as u16;
-                        let stain = ((weapon_id >> 48) & 0xFFFF) as u16;
-                        format!("{skeleton}, {model}, {variant}, {stain}")
-                    },
-                );
-                label.contains(&filter.to_lowercase())
-            }
-            CellValue::Color(color) => color.to_hex().contains(&filter.to_lowercase()),
-            CellValue::InvalidLink(id) => id.to_string().contains(&filter.to_lowercase()),
-            CellValue::InProgressLink(id) => {
-                return (id.to_string().contains(&filter.to_lowercase()), true);
-            }
-            CellValue::ValidLink { row_id, value, .. } => {
-                let ret = row_id.to_string().contains(&filter.to_lowercase());
-                if !ret {
-                    return value
-                        .as_ref()
-                        .map(|v| Self::filter_value(v.as_ref(), filter))
-                        .unwrap_or_default();
+        let cell_grabber = |key: &CompiledFilterKey,
+                            resolve_display_field: bool|
+         -> Box<dyn Iterator<Item = anyhow::Result<CellValue>>> {
+            match key {
+                CompiledFilterKey::AllColumns => Box::new(CellIter::new(
+                    self,
+                    *row,
+                    columns.iter(),
+                    resolve_display_field,
+                )),
+                CompiledFilterKey::RowId => Box::new(std::iter::once(Ok(if subrow_id.is_some() {
+                    CellValue::String(SeString::new(
+                        format!("{}.{}", row_id, subrow_id.unwrap()).into_bytes(),
+                    ))
+                } else {
+                    CellValue::Integer(row_id as i128)
+                }))),
+                CompiledFilterKey::Column(indices) => {
+                    let col_iter = indices
+                        .clone()
+                        .into_iter()
+                        .map(|idx| &columns[idx as usize]);
+                    Box::new(CellIter::new(self, *row, col_iter, resolve_display_field))
                 }
-                ret
             }
         };
-        (resp, false)
+
+        let matches = filter.matches(cell_grabber, &self.0.filter_cache)?;
+        Ok((matches, is_in_progress))
+    }
+
+    pub fn compile_filter(
+        &self,
+        input: &FilterInput,
+        options: MatchOptions,
+    ) -> anyhow::Result<CompiledFilterInput> {
+        self.0.filter_cache.compile(input, options, self)
     }
 }

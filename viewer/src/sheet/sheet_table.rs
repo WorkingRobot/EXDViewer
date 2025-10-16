@@ -17,18 +17,12 @@ use web_time::{Duration, Instant};
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
-    sheet::should_ignore_clicks,
+    sheet::{filter::CompiledFilterInput, should_ignore_clicks},
     stopwatch::Stopwatch,
     utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_to_ui},
 };
 
 use super::{cell::CellResponse, table_context::TableContext};
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct FilterKey {
-    pub text: String,
-    pub resolve_display_field: bool,
-}
 
 type FilterPromise = TrackedPromise<anyhow::Result<FilterOutput>>;
 struct FilterOutput {
@@ -54,10 +48,10 @@ pub struct SheetTable {
 
     clicked_cell: Option<CellResponse>,
 
-    filtered_rows: RefCell<LruCache<FilterKey, FilterValue>>,
+    filtered_rows: RefCell<LruCache<CompiledFilterInput, FilterValue>>,
     unfiltered_row_offsets: Rc<RefCell<Vec<f32>>>,
-    last_filter: Option<FilterKey>,
-    current_filter: Option<FilterKey>,
+    last_filter: Option<CompiledFilterInput>,
+    current_filter: Option<CompiledFilterInput>,
     current_filter_promise: Option<FilterPromise>,
     current_filter_cancel_token: Option<Rc<Cell<bool>>>,
 }
@@ -271,7 +265,7 @@ impl SheetTable {
         self.current_filter.is_some()
     }
 
-    pub fn set_filter(&mut self, filter: Option<FilterKey>) {
+    pub fn set_filter(&mut self, filter: Option<CompiledFilterInput>) {
         if self.current_filter == filter {
             return;
         }
@@ -304,7 +298,7 @@ impl SheetTable {
 
             let batch_count = 0x4000usize.div_euclid(columns.len().max(1)).max(1);
 
-            let iter: Box<dyn Iterator<Item = anyhow::Result<ExcelRow<'_>>>> =
+            let iter: Box<dyn Iterator<Item = (u32, Option<u16>, anyhow::Result<ExcelRow<'_>>)>> =
                 if ctx.sheet().has_subrows() {
                     Box::new(ctx.sheet().get_row_ids().flat_map(|row_id| {
                         let subrow_count = ctx
@@ -312,20 +306,18 @@ impl SheetTable {
                             .get_row_subrow_count(row_id)
                             .expect("Row should exist");
                         let sheet = ctx.sheet();
-                        (0..subrow_count).map(move |subrow_id| sheet.get_subrow(row_id, subrow_id))
+                        (0..subrow_count).map(move |subrow_id| {
+                            (row_id, Some(subrow_id), sheet.get_subrow(row_id, subrow_id))
+                        })
                     }))
                 } else {
                     Box::new(
                         ctx.sheet()
                             .get_row_ids()
-                            .map(|row_id| ctx.sheet().get_row(row_id)),
+                            .map(|row_id| (row_id, None, ctx.sheet().get_row(row_id))),
                     )
                 };
 
-            let FilterKey {
-                text: filter,
-                resolve_display_field,
-            } = filter;
             let mut filtered_rows = Vec::new();
             let mut is_in_progress = false;
 
@@ -333,9 +325,9 @@ impl SheetTable {
             let mut iters = 0;
             const MAX_FRAME_TIME: Duration = Duration::from_millis(250);
             for chunk in &iter.enumerate().chunks(batch_count) {
-                for (row_nr, row) in chunk {
+                for (row_nr, (row_id, subrow_id, row)) in chunk {
                     let (matches, in_progress) =
-                        ctx.filter_row(&columns, &row?, &filter, resolve_display_field)?;
+                        ctx.filter_row(&columns, row_id, subrow_id, &row?, &filter)?;
                     if in_progress {
                         is_in_progress = true;
                     }

@@ -1,4 +1,6 @@
 mod cell;
+mod cell_iter;
+mod filter;
 mod global_context;
 mod schema_column;
 mod sheet_column;
@@ -8,15 +10,16 @@ mod table_context;
 use std::{fmt::Write, sync::Arc};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-pub use cell::CellResponse;
+pub use cell::{CellResponse, MatchOptions};
 use egui::{
     Align, Color32, Direction, FontSelection, Galley, Label, Layout, Response, RichText, Sense,
     text::LayoutJob,
 };
+pub use filter::{ComplexFilter, FilterInput};
 pub use global_context::GlobalContext;
 use intmap::IntMap;
 use ironworks::sestring::SeString;
-pub use sheet_table::{FilterKey, SheetTable};
+pub use sheet_table::SheetTable;
 pub use table_context::TableContext;
 
 use crate::settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH};
