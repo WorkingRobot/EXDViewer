@@ -66,3 +66,9 @@ impl<R: Send + 'static> PromiseKind for TrackedPromise<R> {
         self.0.block_and_take()
     }
 }
+
+impl<T: Send + 'static> std::fmt::Debug for TrackedPromise<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrackedPromise").finish_non_exhaustive()
+    }
+}

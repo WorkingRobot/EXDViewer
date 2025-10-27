@@ -4,6 +4,7 @@ use std::{fmt::Display, ops::Deref};
 pub type CloneableResult<T> = Result<T, CloneableError>;
 
 /// Cloneable wrapper for `anyhow::Error`
+#[derive(Debug)]
 pub struct CloneableError(anyhow::Error);
 
 impl CloneableError {

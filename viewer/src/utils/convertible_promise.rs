@@ -33,6 +33,7 @@ impl<R: Send + 'static> PromiseKind for Promise<R> {
 }
 
 /// A promise that whose value will be converted to a different type when accessed.
+#[derive(Debug)]
 pub struct ConvertiblePromise<P: PromiseKind, T>(Either<P, T>);
 
 impl<P: PromiseKind, T> ConvertiblePromise<P, T> {
