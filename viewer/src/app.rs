@@ -468,18 +468,18 @@ impl App {
             let sheets = self
                 .sheet_filter_data
                 .get_or_insert((sheets_filter.clone(), misc_sheets_shown), || {
-            let sheets = backend
-                .excel()
-                .get_entries()
-                .iter()
+                    let sheets = backend
+                        .excel()
+                        .get_entries()
+                        .iter()
                         .filter(|(_, id)| misc_sheets_shown || **id >= 0)
-                .sorted_by_key(|(sheet, _)| *sheet)
+                        .sorted_by_key(|(sheet, _)| *sheet)
                         .map(|(s, &id)| (s.clone(), id));
-            let sheets = self.sheet_matcher.match_list_indirect(
-                (!sheets_filter.is_empty()).then_some(&sheets_filter),
-                sheets,
+                    let sheets = self.sheet_matcher.match_list_indirect(
+                        (!sheets_filter.is_empty()).then_some(&sheets_filter),
+                        sheets,
                         |s| &s.0,
-            );
+                    );
                     Rc::new(sheets)
                 })
                 .clone();
@@ -711,7 +711,7 @@ impl App {
                                         table.context().compile_filter(
                                             &FilterInput::Complex(filter),
                                             MatchOptions {
-                                                case_insensitive: true,
+                                                case_insensitive: false,
                                                 use_display_field: true,
                                             },
                                         )

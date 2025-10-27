@@ -281,7 +281,7 @@ impl EditableSchema {
                                     if SCHEMA_EDITOR_WORD_WRAP.get(ui.ctx()) {
                                         layout_job.wrap.max_width = wrap_width;
                                     }
-                                    ui.fonts(|f| f.layout_job(layout_job))
+                                    ui.fonts_mut(|f| f.layout_job(layout_job))
                                 };
 
                             let ret = {

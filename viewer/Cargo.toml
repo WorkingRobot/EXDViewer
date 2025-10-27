@@ -11,8 +11,8 @@ name = "worker"
 path = "src/worker/runner.rs"
 
 [dependencies]
-egui = "0.32"
-eframe = { version = "0.32", default-features = false, features = [
+egui = "0.33"
+eframe = { version = "0.33", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -20,7 +20,7 @@ eframe = { version = "0.32", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
 ] }
 catppuccin-egui = { version = "5.6", default-features = false, features = [
-    "egui32",
+    "egui33",
 ] }
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -35,9 +35,9 @@ binrw = "0.15"
 num-traits = "0.2"
 itertools = "0.14"
 rfd = "0.15"
-egui_table = "0.4"
+egui_table = "0.5"
 # egui_router = "0.4" Terrible library, don't use
-egui_extras = { version = "0.32", features = ["http", "image"] }
+egui_extras = { version = "0.33", features = ["http", "image"] }
 syntect = { version = "5.2", default-features = false, features = [
     "default-fancy",
 ] }
@@ -46,14 +46,14 @@ serde_json = "1.0"
 jsonschema = { version = "0.33", default-features = false }
 async-trait = "0.1"
 futures-util = "0.3"
-egui_logger = "0.8"
+egui_logger = "0.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
 image_dds = { version = "0.7", default-features = false, features = ["image"] }
 either = "1.15"
 replace_with = "0.1"
 pinned = "0.1"
-matchit = "0.8"
-zip = { version = "5.0", default-features = false }
+matchit = "0.9"
+zip = { version = "6.0", default-features = false }
 base64 = "0.22"
 wildmatch = "2.5"
 regex-lite = "0.1"

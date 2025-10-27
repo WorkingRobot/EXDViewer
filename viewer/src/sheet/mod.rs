@@ -139,7 +139,7 @@ fn create_galley(ui: &egui::Ui, text: String, try_elide: bool) -> Arc<Galley> {
     }
 
     // let _sw = MULTILINE3_STOPWATCH.start();
-    ui.fonts(|fonts| fonts.layout_job(layout))
+    ui.fonts_mut(|fonts| fonts.layout_job(layout))
 }
 
 fn wrap_string_lines_galley(ui: &egui::Ui, text: String) -> (usize, Arc<Galley>) {
@@ -157,7 +157,8 @@ fn get_estimated_char_width(ui: &egui::Ui, ch: char) -> f32 {
     if let Some(width) = lut.get(ch.into()) {
         *width
     } else {
-        let width = ui.fonts(|f| f.glyph_width(&FontSelection::default().resolve(ui.style()), ch));
+        let width =
+            ui.fonts_mut(|f| f.glyph_width(&FontSelection::default().resolve(ui.style()), ch));
         lut.insert(ch.into(), width);
         width
     }
