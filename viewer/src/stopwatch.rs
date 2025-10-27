@@ -43,13 +43,16 @@ impl Drop for Stopwatch {
     }
 }
 
-pub struct RepeatedStopwatch {
+//pub type RepeatedStopwatch = WorkingRepeatedStopwatch;
+pub type RepeatedStopwatch = DummyRepeatedStopwatch;
+
+pub struct WorkingRepeatedStopwatch {
     name: &'static str,
     duration_ns: AtomicU64,
     count: AtomicUsize,
 }
 
-impl RepeatedStopwatch {
+impl WorkingRepeatedStopwatch {
     #[must_use]
     pub const fn new(name: &'static str) -> Self {
         Self {
@@ -65,14 +68,9 @@ impl RepeatedStopwatch {
         self.count.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn average(&self) -> Duration {
-        let count = self.count.load(Ordering::Relaxed);
-        if count == 0 {
-            Duration::ZERO
-        } else {
-            let total_ns = self.duration_ns.load(Ordering::Relaxed);
-            Duration::from_nanos(total_ns / count as u64)
-        }
+    pub fn reset(&self) {
+        self.duration_ns.store(0, Ordering::SeqCst);
+        self.count.store(0, Ordering::SeqCst);
     }
 
     pub fn start(&'_ self) -> RepeatedStopwatchGuard<'_> {
@@ -101,7 +99,7 @@ impl RepeatedStopwatch {
 }
 
 pub struct RepeatedStopwatchGuard<'a> {
-    parent: &'a RepeatedStopwatch,
+    parent: &'a WorkingRepeatedStopwatch,
     start: Instant,
 }
 
@@ -109,4 +107,57 @@ impl Drop for RepeatedStopwatchGuard<'_> {
     fn drop(&mut self) {
         self.parent.record(self.start.elapsed());
     }
+}
+
+pub struct DummyRepeatedStopwatch;
+
+impl DummyRepeatedStopwatch {
+    #[must_use]
+    pub const fn new(_name: &'static str) -> Self {
+        Self
+    }
+
+    pub fn record(&self, _duration: Duration) {}
+
+    pub fn reset(&self) {}
+
+    pub fn start(&'_ self) -> () {}
+
+    pub fn report(&self) {}
+}
+
+pub mod stopwatches {
+    use super::RepeatedStopwatch;
+
+    pub static FILTER_ROW_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Sheet Table Filter Row");
+
+    pub static FILTER_CELL_ITER_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Sheet Table Cell Iter");
+
+    pub static FILTER_CELL_GRAB_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Sheet Table Cell Grab");
+
+    pub static FILTER_CELL_CREATE_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Sheet Table Cell Create");
+
+    pub static FILTER_CELL_READ_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Sheet Table Cell Read");
+
+    pub static FILTER_KEY_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Sheet Table Compare Key (Inner)");
+
+    pub static FILTER_MATCH_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Sheet Table Match Cell");
+
+    pub static FILTER_TOTAL_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Sheet Table Total Filter");
+
+    // pub static MULTILINE_STOPWATCH: RepeatedStopwatch = RepeatedStopwatch::new("Cell Multiline Size");
+    // pub static MULTILINE2_STOPWATCH: RepeatedStopwatch =
+    //     RepeatedStopwatch::new("Cell Multiline Size Actual");
+    // pub static MULTILINE3_STOPWATCH: RepeatedStopwatch =
+    //     RepeatedStopwatch::new("Cell Multiline Galley Layout");
+    // pub static MULTILINE4_STOPWATCH: RepeatedStopwatch =
+    //     RepeatedStopwatch::new("Cell Multiline Size Estimate");
 }
