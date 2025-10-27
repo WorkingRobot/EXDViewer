@@ -56,11 +56,22 @@ comparator           =  {
 negatable_comparator = _{ not? ~ comparator }
 
 // Comparator types
-equals_comparator   = _{ EQUALS ~ strnum_value }
-string_comparator   = _{ (STARTS_WITH | ENDS_WITH | CONTAINS | FUZZY) ~ string_value }
-wildcard_comparator = _{ WILDCARD ~ string_value }
-regex_comparator    = _{ REGEX ~ regex_value }
-range_comparator    = _{ RANGE ~ range_value }
+equals_comparator   = _{ _EQUALS ~ strnum_value }
+string_comparator   = _{ (_STARTS_WITH | _ENDS_WITH | _CONTAINS | _FUZZY) ~ string_value }
+wildcard_comparator = _{ _WILDCARD ~ string_value }
+regex_comparator    = _{ _REGEX ~ regex_value }
+range_comparator    = _{ _RANGE ~ range_value }
+
+// Strict comparator modifier
+STRICT_KEY   =  { "=" }
+_EQUALS      = _{ EQUALS ~ STRICT_KEY? }
+_STARTS_WITH = _{ STARTS_WITH ~ STRICT_KEY? }
+_ENDS_WITH   = _{ ENDS_WITH ~ STRICT_KEY? }
+_CONTAINS    = _{ CONTAINS ~ STRICT_KEY? }
+_FUZZY       = _{ FUZZY ~ STRICT_KEY? }
+_WILDCARD    = _{ WILDCARD ~ STRICT_KEY? }
+_REGEX       = _{ REGEX ~ STRICT_KEY? }
+_RANGE       = _{ RANGE ~ STRICT_KEY? }
 
 // Comparator operators
 EQUALS      = { "=" }
@@ -69,7 +80,7 @@ ENDS_WITH   = { "$=" }
 CONTAINS    = { "*=" }
 FUZZY       = { "~=" }
 WILDCARD    = { "?=" }
-REGEX       = { "~" }
+REGEX       = { "/=" }
 RANGE       = { "|=" }
 
 // Values
@@ -87,7 +98,7 @@ quoted_normal  = @{ !(PEEK | "\\") ~ ANY }
 QUOTE          =  { "\"" | "'" }
 
 // Bare string: unquoted, for simple values, can include keywords like 'and', 'or', 'not'
-bare_string = @{ (ASCII_ALPHANUMERIC | "_" | "-" | ".")+ }
+bare_string = @{ (ASCII_ALPHANUMERIC | "_" | "-" | "." | "/")+ }
 
 // Regex: /.../ with escaping and optional flags
 regex           = ${ PUSH(REGEX_SEPARATOR) ~ regex_charseq ~ POP ~ regex_flags }

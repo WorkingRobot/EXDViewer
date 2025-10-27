@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{fmt::Display, ops::Deref};
 
 use either::Either;
 use nucleo_matcher::pattern::Pattern;
@@ -34,7 +34,8 @@ pub enum FilterKey {
     /// Check the row ID for a match
     RowId,
     /// Check any column for a match
-    Column(Wildcard),
+    /// If bool is true, all columns must match (AND), otherwise any column can match (OR)
+    Column(Wildcard, bool),
 }
 
 /// Prepend a '!' to negate the filter
@@ -198,6 +199,16 @@ impl FilterRange {
             FilterRange::AtLeast(start) => value >= *start,
             FilterRange::AtMost(end) => value <= *end,
             FilterRange::Between(start, end) => value >= *start && value <= *end,
+        }
+    }
+}
+
+impl Display for FilterRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FilterRange::AtLeast(start) => write!(f, ">= {}", start),
+            FilterRange::AtMost(end) => write!(f, "<= {}", end),
+            FilterRange::Between(start, end) => write!(f, "{}..{}", start, end),
         }
     }
 }

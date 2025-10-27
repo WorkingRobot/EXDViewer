@@ -140,8 +140,8 @@ fn parse_simple_filter(pair: Pair<'_, Rule>) -> Result<ComplexFilter, String> {
         _ => unreachable!("Unexpected rule in simple_filter: {:?}", next.as_rule()),
     };
 
-    let key = parse_key(key_pair)?;
-    let value = parse_comparator(comparator)?;
+    let (value, is_strict_key) = parse_comparator(comparator)?;
+    let key = parse_key(key_pair, is_strict_key)?;
 
     if is_negated {
         Ok(ComplexFilter::Not(Box::new(ComplexFilter::KeyEquals(
@@ -152,7 +152,7 @@ fn parse_simple_filter(pair: Pair<'_, Rule>) -> Result<ComplexFilter, String> {
     }
 }
 
-fn parse_key(pair: Pair<'_, Rule>) -> Result<FilterKey, String> {
+fn parse_key(pair: Pair<'_, Rule>, is_strict: bool) -> Result<FilterKey, String> {
     assert_eq!(pair.as_rule(), Rule::key);
     let inner = pair.into_inner().exactly_one().map_err(|_| {
         "Expected exactly one token inside key (either row_id or column)".to_string()
@@ -161,34 +161,40 @@ fn parse_key(pair: Pair<'_, Rule>) -> Result<FilterKey, String> {
         Rule::row_id => Ok(FilterKey::RowId),
         Rule::column => {
             let col_str = inner.as_str();
-            Ok(FilterKey::Column(WildMatch::new(col_str).into()))
+            Ok(FilterKey::Column(WildMatch::new(col_str).into(), is_strict))
         }
         _ => unreachable!("Unexpected rule in key: {:?}", inner.as_rule()),
     }
 }
 
-fn parse_comparator(pair: Pair<'_, Rule>) -> Result<FilterValue, String> {
+fn parse_comparator(pair: Pair<'_, Rule>) -> Result<(FilterValue, bool), String> {
     assert_eq!(pair.as_rule(), Rule::comparator);
-    let mut inner = pair.into_inner();
-    let op_pair = inner
-        .next()
-        .ok_or("Expected an operator in comparator".to_string())?;
-    let value_pair = inner
-        .next()
-        .ok_or("Expected a value in comparator".to_string())?;
+    let mut pairs = pair.into_inner();
 
-    Ok(match op_pair.as_rule() {
-        Rule::EQUALS => FilterValue::Equals(parse_strnum_value(value_pair)?),
-        Rule::STARTS_WITH => FilterValue::StartsWith(parse_string_value(value_pair)?),
-        Rule::ENDS_WITH => FilterValue::EndsWith(parse_string_value(value_pair)?),
-        Rule::CONTAINS => FilterValue::Contains(parse_string_value(value_pair)?),
-        Rule::FUZZY => FilterValue::Fuzzy(parse_string_value(value_pair)?.into()),
-        Rule::WILDCARD => {
-            FilterValue::Wildcard(WildMatch::new(&parse_string_value(value_pair)?).into())
-        }
-        Rule::REGEX => FilterValue::Regex(parse_regex_value(value_pair)?.into()),
+    let a = pairs
+        .next()
+        .ok_or_else(|| "Expected at least two tokens in comparator".to_string())?;
+    let b = pairs
+        .next()
+        .ok_or_else(|| "Expected at least two tokens in comparator".to_string())?;
+    let c = pairs.next(); // optional
+
+    let (op, is_strict, value) = match (a.as_rule(), b.as_rule(), c.as_ref().map(|p| p.as_rule())) {
+        (_, Rule::STRICT_KEY, Some(_)) => (a, true, c.unwrap()),
+        (_, _, None) => (a, false, b),
+        _ => return Err("Invalid comparator format".to_string()),
+    };
+
+    let value = match op.as_rule() {
+        Rule::EQUALS => FilterValue::Equals(parse_strnum_value(value)?),
+        Rule::STARTS_WITH => FilterValue::StartsWith(parse_string_value(value)?),
+        Rule::ENDS_WITH => FilterValue::EndsWith(parse_string_value(value)?),
+        Rule::CONTAINS => FilterValue::Contains(parse_string_value(value)?),
+        Rule::FUZZY => FilterValue::Fuzzy(parse_string_value(value)?.into()),
+        Rule::WILDCARD => FilterValue::Wildcard(WildMatch::new(&parse_string_value(value)?).into()),
+        Rule::REGEX => FilterValue::Regex(parse_regex_value(value)?.into()),
         Rule::RANGE => {
-            let ret = parse_range_value(value_pair)?;
+            let ret = parse_range_value(value)?;
             match ret {
                 FilterRange::Between(a, b) if a > b => {
                     return Err(format!("Invalid range: start {a} is greater than end {b}"));
@@ -197,8 +203,9 @@ fn parse_comparator(pair: Pair<'_, Rule>) -> Result<FilterValue, String> {
                 _ => FilterValue::Range(ret),
             }
         }
-        _ => unreachable!("Unexpected operator in comparator: {:?}", op_pair.as_rule()),
-    })
+        _ => unreachable!("Unexpected operator in comparator: {:?}", op.as_rule()),
+    };
+    Ok((value, is_strict))
 }
 
 fn parse_strnum_value(pair: Pair<'_, Rule>) -> Result<Either<String, i128>, String> {
@@ -403,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_complex() {
-        let filter_str = r#"(Column1 ^= "Hello" AND Column2 $= "World" && * = a) OR (# = 42)"#;
+        let filter_str = r#"(Column1 ^== "Hello" AND Column2 $= "World" && * = a) OR (# = 42)"#;
         test_filter(filter_str);
     }
 
@@ -434,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_regex() {
-        let filter_str = r#"Column1 ~ /^Hello.*World$/i"#;
+        let filter_str = r#"Column1 /= /^Hello.*World$/i"#;
         test_filter(filter_str);
     }
 
@@ -488,7 +495,13 @@ mod tests {
 
     #[test]
     fn test_negated_regex() {
-        let filter_str = r#"Column1 !~ /^Test.*$/i"#;
+        let filter_str = r#"Column1 !/= /^Test.*$/i"#;
+        test_filter(filter_str);
+    }
+
+    #[test]
+    fn test_strict_range() {
+        let filter_str = r#"Column1 |== 10..=20"#;
         test_filter(filter_str);
     }
 
