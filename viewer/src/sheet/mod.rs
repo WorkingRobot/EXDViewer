@@ -24,7 +24,10 @@ use ironworks::sestring::SeStr;
 pub use sheet_table::SheetTable;
 pub use table_context::TableContext;
 
-use crate::settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH};
+use crate::{
+    settings::{EVALUATE_STRINGS, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH},
+    stopwatch::stopwatches::{MULTILINE3_STOPWATCH, MULTILINE4_STOPWATCH},
+};
 
 fn copyable_label(ui: &mut egui::Ui, text: &impl ToString) -> Response {
     ui.with_layout(
@@ -138,7 +141,7 @@ fn create_galley(ui: &egui::Ui, text: String, try_elide: bool) -> Arc<Galley> {
         }
     }
 
-    // let _sw = MULTILINE3_STOPWATCH.start();
+    let _sw = MULTILINE3_STOPWATCH.start();
     ui.fonts_mut(|fonts| fonts.layout_job(layout))
 }
 
@@ -166,7 +169,7 @@ fn get_estimated_char_width(ui: &egui::Ui, ch: char) -> f32 {
 
 /// Wraps the string to fit within a maximum width, returning line count.
 fn wrap_string_lines_estimate(ui: &egui::Ui, text: &str) -> usize {
-    // let _sw = MULTILINE4_STOPWATCH.start();
+    let _sw = MULTILINE4_STOPWATCH.start();
 
     if text.is_empty() {
         return 1;

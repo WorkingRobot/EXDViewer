@@ -23,7 +23,8 @@ use crate::{
         stopwatches::{
             FILTER_CELL_CREATE_STOPWATCH, FILTER_CELL_GRAB_STOPWATCH, FILTER_CELL_ITER_STOPWATCH,
             FILTER_CELL_READ_STOPWATCH, FILTER_KEY_STOPWATCH, FILTER_MATCH_STOPWATCH,
-            FILTER_ROW_STOPWATCH, FILTER_TOTAL_STOPWATCH,
+            FILTER_ROW_STOPWATCH, FILTER_TOTAL_STOPWATCH, MULTILINE_STOPWATCH,
+            MULTILINE2_STOPWATCH, MULTILINE3_STOPWATCH, MULTILINE4_STOPWATCH,
         },
     },
     utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_to_ui},
@@ -506,10 +507,11 @@ impl SheetTable {
                     (row_id, sheet.has_subrows().then_some(subrow_id)),
                 ));
             }
-            // MULTILINE_STOPWATCH.report();
-            // MULTILINE2_STOPWATCH.report();
-            // MULTILINE3_STOPWATCH.report();
-            // MULTILINE4_STOPWATCH.report();
+            drop(_stop);
+            MULTILINE_STOPWATCH.report();
+            MULTILINE2_STOPWATCH.report();
+            MULTILINE3_STOPWATCH.report();
+            MULTILINE4_STOPWATCH.report();
         }
     }
 

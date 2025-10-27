@@ -153,11 +153,12 @@ pub mod stopwatches {
     pub static FILTER_TOTAL_STOPWATCH: RepeatedStopwatch =
         RepeatedStopwatch::new("Sheet Table Total Filter");
 
-    // pub static MULTILINE_STOPWATCH: RepeatedStopwatch = RepeatedStopwatch::new("Cell Multiline Size");
-    // pub static MULTILINE2_STOPWATCH: RepeatedStopwatch =
-    //     RepeatedStopwatch::new("Cell Multiline Size Actual");
-    // pub static MULTILINE3_STOPWATCH: RepeatedStopwatch =
-    //     RepeatedStopwatch::new("Cell Multiline Galley Layout");
-    // pub static MULTILINE4_STOPWATCH: RepeatedStopwatch =
-    //     RepeatedStopwatch::new("Cell Multiline Size Estimate");
+    pub static MULTILINE_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Cell Multiline Size");
+    pub static MULTILINE2_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Cell Multiline Size Actual");
+    pub static MULTILINE3_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Cell Multiline Galley Layout");
+    pub static MULTILINE4_STOPWATCH: RepeatedStopwatch =
+        RepeatedStopwatch::new("Cell Multiline Size Estimate");
 }
