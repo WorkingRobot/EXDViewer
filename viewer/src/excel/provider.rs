@@ -8,7 +8,7 @@ use image::RgbaImage;
 use ironworks::{
     excel::Language,
     file::exh::{ColumnDefinition, PageDefinition},
-    sestring::SeString,
+    sestring::SeStr,
 };
 use num_traits::FromBytes;
 use url::Url;
@@ -71,17 +71,26 @@ impl ExcelPage {
             .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {offset} in row"))
     }
 
-    fn get_cursor(&self, offset: u32) -> anyhow::Result<Cursor<&[u8]>> {
-        let data = self
-            .data
+    fn get_slice(&self, offset: u32) -> anyhow::Result<&[u8]> {
+        self.data
             .get((offset - self.data_offset) as usize..)
-            .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {offset} in row"))?;
+            .ok_or_else(|| anyhow::anyhow!("Couldn't seek to offset {offset} in row"))
+    }
+
+    fn get_cursor(&self, offset: u32) -> anyhow::Result<Cursor<&[u8]>> {
+        let data = self.get_slice(offset)?;
         Ok(Cursor::new(data))
     }
 
-    pub fn read_string(&self, offset: u32, string_offset: u32) -> anyhow::Result<SeString<'_>> {
+    pub fn read_string(&self, offset: u32, string_offset: u32) -> anyhow::Result<&'_ SeStr> {
         let offset = string_offset + self.read::<u32>(offset)?;
-        Ok(SeString::new(self.read_bw::<SeStringWrapper>(offset)?.0))
+        let data_slice = self.get_slice(offset)?;
+        let data_len = data_slice
+            .iter()
+            .position(|p| *p == 0)
+            .ok_or_else(|| anyhow::anyhow!("Couldn't find null terminator for string"))?;
+        let string_slice = &data_slice[..data_len];
+        Ok(string_slice.into())
     }
 
     pub fn read_bool(&self, offset: u32) -> anyhow::Result<bool> {
@@ -131,7 +140,7 @@ impl<'a> ExcelRow<'a> {
         }
     }
 
-    pub fn read_string(&self, offset: u32) -> anyhow::Result<SeString<'_>> {
+    pub fn read_string(&self, offset: u32) -> anyhow::Result<&'_ SeStr> {
         self.page
             .read_string(self.offset + offset, self.string_offset)
     }

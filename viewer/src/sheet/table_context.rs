@@ -1,32 +1,30 @@
-use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, num::NonZeroU32, rc::Rc};
 
 use anyhow::bail;
-use ironworks::sestring::SeString;
 use itertools::Itertools;
 
 use crate::{
     excel::{
         base::BaseSheet,
-        provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
+        provider::{ExcelHeader, ExcelProvider, ExcelRow},
     },
     schema::{Schema, provider::SchemaProvider},
     sheet::{
         cell::MatchOptions,
-        cell_iter::CellIter,
-        filter::{CompiledFilterInput, CompiledFilterKey, FilterCache, FilterInput},
+        filter::{CompiledFilterInput, CompiledFilterKey, FilterCache, FilterInput, KeyCellIter},
     },
+    stopwatch::stopwatches::{FILTER_CELL_GRAB_STOPWATCH, FILTER_ROW_STOPWATCH},
     utils::{CloneableResult, ConvertiblePromise, TrackedPromise},
 };
 
 use super::{
-    cell::{Cell, CellValue},
-    global_context::GlobalContext,
-    schema_column::SchemaColumn,
+    cell::Cell, global_context::GlobalContext, schema_column::SchemaColumn,
     sheet_column::SheetColumnDefinition,
 };
 
 type SheetPromise = TrackedPromise<anyhow::Result<(BaseSheet, Option<Schema>)>>;
 type ConvertibleSheetPromise = ConvertiblePromise<SheetPromise, CloneableResult<TableContext>>;
+pub type SharedConvertibleSheetPromise = Rc<RefCell<ConvertibleSheetPromise>>;
 
 #[derive(Clone)]
 pub struct TableContext(Rc<TableContextImpl>);
@@ -43,7 +41,7 @@ pub struct TableContextImpl {
     // Offset index of the displayField column
     display_column_idx: std::cell::Cell<Option<u32>>,
 
-    referenced_sheets: RefCell<HashMap<String, ConvertibleSheetPromise>>,
+    referenced_sheets: RefCell<HashMap<String, SharedConvertibleSheetPromise>>,
 
     filter_cache: FilterCache,
 }
@@ -61,6 +59,9 @@ impl TableContext {
             .map(|(i, _p)| i as u32)
             .collect_vec();
 
+        let filter_cache = FilterCache::new(&schema_columns, &sheet_columns)
+            .expect("Failed to create FilterCache");
+
         Self(Rc::new(TableContextImpl {
             global,
             sheet,
@@ -69,7 +70,7 @@ impl TableContext {
             schema_columns: RefCell::new(schema_columns),
             display_column_idx: std::cell::Cell::new(display_column_idx),
             referenced_sheets: RefCell::new(HashMap::new()),
-            filter_cache: FilterCache::new(),
+            filter_cache,
         }))
     }
 
@@ -158,66 +159,47 @@ impl TableContext {
         Ok(())
     }
 
-    pub fn try_get_sheet(&self, name: String) -> Option<anyhow::Result<TableContext>> {
+    pub fn load_sheets(&self, names: &[String]) -> Vec<SharedConvertibleSheetPromise> {
         let mut sheets = self.0.referenced_sheets.borrow_mut();
-        let entry = sheets.entry(name).or_insert_with_key(|name| {
-            let ctx = self.0.global.clone();
-            let name = name.clone();
-            ConvertiblePromise::new_promise(TrackedPromise::spawn_local(async move {
-                let sheet_future = ctx.backend().excel().get_sheet(&name, ctx.language());
-                let schema_future = ctx.backend().schema().get_schema_text(&name);
-                Ok(futures_util::try_join!(sheet_future, async move {
-                    Ok(schema_future
-                        .await
-                        .and_then(|s| Schema::from_str(&s))
-                        .map(|a| a.ok())
-                        .ok()
-                        .flatten())
-                })?)
-            }))
-        });
-
-        entry
-            .get_mut(|result| {
-                result
-                    .map(|(sheet, schema)| {
-                        TableContext::new(self.0.global.clone(), sheet, schema.as_ref())
-                    })
-                    .map_err(|e| e.into())
-            })
-            .map(|result| result.as_ref().cloned().map_err(|e| e.clone().into()))
-    }
-
-    pub fn resolve_link(
-        &self,
-        sheets: &[String],
-        row_id: u32,
-    ) -> Option<Option<(String, TableContext)>> {
-        sheets
+        names
             .iter()
-            .map(|s| (s, self.try_get_sheet(s.clone())))
-            .collect_vec()
-            .into_iter()
-            .find_map(|(s, result)| match result {
-                None => Some(None),
-                Some(Ok(table)) => {
-                    if table.sheet().get_row(row_id).is_ok() {
-                        Some(Some((s.clone(), table)))
-                    } else {
-                        None
-                    }
-                }
-                Some(Err(err)) => {
-                    log::error!("Failed to retrieve linked sheet: {err:?}");
-                    None
-                }
+            .map(|name| {
+                sheets
+                    .entry(name.clone())
+                    .or_insert_with_key(|name| {
+                        let ctx = self.0.global.clone();
+                        let name = name.clone();
+                        let promise = ConvertiblePromise::new_promise(TrackedPromise::spawn_local(
+                            async move {
+                                let sheet_future =
+                                    ctx.backend().excel().get_sheet(&name, ctx.language());
+                                let schema_future = ctx.backend().schema().get_schema_text(&name);
+                                Ok(futures_util::try_join!(sheet_future, async move {
+                                    Ok(schema_future
+                                        .await
+                                        .and_then(|s| Schema::from_str(&s))
+                                        .map(|a| a.ok())
+                                        .ok()
+                                        .flatten())
+                                })?)
+                            },
+                        ));
+                        Rc::new(RefCell::new(promise))
+                    })
+                    .clone()
             })
+            .collect()
     }
 
-    pub fn columns(&self) -> anyhow::Result<Vec<(SchemaColumn, &SheetColumnDefinition)>> {
+    pub fn columns(&self) -> anyhow::Result<Vec<(SchemaColumn, SheetColumnDefinition)>> {
         (0..self.0.sheet_columns.len() as u32)
             .map(|i| self.get_column_by_offset(i))
+            .map_ok(|(schema_col, sheet_col)| (schema_col, sheet_col.clone()))
             .collect::<anyhow::Result<Vec<_>>>()
+    }
+
+    pub fn column_count(&self) -> usize {
+        self.0.sheet_columns.len()
     }
 
     pub fn cell_by_offset<'a>(
@@ -271,47 +253,56 @@ impl TableContext {
 
     pub fn filter_row(
         &self,
-        columns: &[(SchemaColumn, &SheetColumnDefinition)],
         row_id: u32,
         subrow_id: Option<u16>,
         row: &ExcelRow<'_>,
         filter: &CompiledFilterInput,
     ) -> anyhow::Result<(bool, bool)> {
         if filter.is_empty() {
-            return Ok((true, false));
+            bail!("No filter to match against");
         }
 
-        let mut is_in_progress = false;
+        let cell_grabber = self.get_cell_grabber(row_id, subrow_id, row);
 
-        let cell_grabber = |key: &CompiledFilterKey,
-                            resolve_display_field: bool|
-         -> Box<dyn Iterator<Item = anyhow::Result<CellValue>>> {
+        let _sw = FILTER_ROW_STOPWATCH.start();
+        let mut is_in_progress = false;
+        let matches = filter.matches(cell_grabber, &mut is_in_progress, &self.0.filter_cache)?;
+        Ok((matches, is_in_progress))
+    }
+
+    pub fn score_row(
+        &self,
+        row_id: u32,
+        subrow_id: Option<u16>,
+        row: &ExcelRow<'_>,
+        filter: &CompiledFilterInput,
+    ) -> anyhow::Result<(Option<NonZeroU32>, bool)> {
+        if filter.is_empty() {
+            bail!("No filter to match against");
+        }
+
+        let cell_grabber = self.get_cell_grabber(row_id, subrow_id, row);
+
+        let mut is_in_progress = false;
+        let score = filter.score(cell_grabber, &mut is_in_progress, &self.0.filter_cache)?;
+        Ok((score, is_in_progress))
+    }
+
+    fn get_cell_grabber<'a>(
+        &'a self,
+        row_id: u32,
+        subrow_id: Option<u16>,
+        row: &'a ExcelRow<'_>,
+    ) -> impl Fn(&CompiledFilterKey, bool) -> KeyCellIter<'a> {
+        let _sw = FILTER_CELL_GRAB_STOPWATCH.start();
+        move |key: &CompiledFilterKey, resolve_display_field: bool| -> KeyCellIter<'a> {
             match key {
-                CompiledFilterKey::AllColumns => Box::new(CellIter::new(
-                    self,
-                    *row,
-                    columns.iter(),
-                    resolve_display_field,
-                )),
-                CompiledFilterKey::RowId => Box::new(std::iter::once(Ok(if subrow_id.is_some() {
-                    CellValue::String(SeString::new(
-                        format!("{}.{}", row_id, subrow_id.unwrap()).into_bytes(),
-                    ))
-                } else {
-                    CellValue::Integer(row_id as i128)
-                }))),
-                CompiledFilterKey::Column(indices) => {
-                    let col_iter = indices
-                        .clone()
-                        .into_iter()
-                        .map(|idx| &columns[idx as usize]);
-                    Box::new(CellIter::new(self, *row, col_iter, resolve_display_field))
+                CompiledFilterKey::RowId => KeyCellIter::row_id(row_id, subrow_id),
+                CompiledFilterKey::Column(indices, _) => {
+                    KeyCellIter::column(self, *row, indices.clone(), resolve_display_field)
                 }
             }
-        };
-
-        let matches = filter.matches(cell_grabber, &self.0.filter_cache)?;
-        Ok((matches, is_in_progress))
+        }
     }
 
     pub fn compile_filter(
@@ -319,6 +310,6 @@ impl TableContext {
         input: &FilterInput,
         options: MatchOptions,
     ) -> anyhow::Result<CompiledFilterInput> {
-        self.0.filter_cache.compile(input, options, self)
+        self.0.filter_cache.compile(input, options)
     }
 }

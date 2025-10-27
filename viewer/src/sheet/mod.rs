@@ -1,5 +1,6 @@
 mod cell;
 mod cell_iter;
+mod compact_sestring;
 mod filter;
 mod global_context;
 mod schema_column;
@@ -11,6 +12,7 @@ use std::{fmt::Write, sync::Arc};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 pub use cell::{CellResponse, MatchOptions};
+use compact_str::ToCompactString;
 use egui::{
     Align, Color32, Direction, FontSelection, Galley, Label, Layout, Response, RichText, Sense,
     text::LayoutJob,
@@ -18,7 +20,7 @@ use egui::{
 pub use filter::{ComplexFilter, FilterInput};
 pub use global_context::GlobalContext;
 use intmap::IntMap;
-use ironworks::sestring::SeString;
+use ironworks::sestring::SeStr;
 pub use sheet_table::SheetTable;
 pub use table_context::TableContext;
 
@@ -42,11 +44,17 @@ fn copyable_label(ui: &mut egui::Ui, text: &impl ToString) -> Response {
     .inner
 }
 
-fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Response {
+fn string_label_wrapped(ui: &mut egui::Ui, value: &SeStr) -> Response {
     let text = if EVALUATE_STRINGS.get(ui.ctx()) {
-        value.format()
+        value
+            .format()
+            .try_to_compact_string()
+            .map_err(|e| anyhow::anyhow!(e))
     } else {
-        value.macro_string()
+        value
+            .macro_string()
+            .try_to_compact_string()
+            .map_err(|e| anyhow::anyhow!(e))
     };
 
     let text = match text {
@@ -65,7 +73,7 @@ fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Respons
         }
     };
 
-    let (line_count, galley) = wrap_string_lines_galley(ui, text.clone());
+    let (line_count, galley) = wrap_string_lines_galley(ui, text.to_string());
     let resp = ui
         .with_layout(Layout::left_to_right(Align::Center), |ui| {
             if TEXT_USE_SCROLL.get(ui.ctx())
@@ -89,7 +97,7 @@ fn string_label_wrapped(ui: &mut egui::Ui, value: &SeString<'static>) -> Respons
 
     resp.context_menu(|ui| {
         if ui.button("Copy").clicked() {
-            ui.ctx().copy_text(text);
+            ui.ctx().copy_text(text.into());
             ui.close();
         }
         if ui.button("Copy Raw (base64)").clicked() {
@@ -118,7 +126,7 @@ fn create_galley(ui: &egui::Ui, text: String, try_elide: bool) -> Arc<Galley> {
         .get(ui.ctx())
         .map_or(f32::INFINITY, |w| w.get().into());
     let mut layout = LayoutJob::simple(
-        text.clone(),
+        text,
         FontSelection::default().resolve(ui.style()),
         Color32::PLACEHOLDER,
         max_width,

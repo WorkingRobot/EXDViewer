@@ -1,4 +1,9 @@
-use crate::sheet::filter::complex_filter::FilterValue;
+use std::rc::Rc;
+
+use crate::sheet::{
+    filter::complex_filter::FilterValue, schema_column::SchemaColumn,
+    sheet_column::SheetColumnDefinition,
+};
 
 #[derive(Debug, Clone)]
 pub struct CompiledComplexFilter {
@@ -21,11 +26,19 @@ impl std::hash::Hash for CompiledComplexFilter {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum CompiledFilterKey {
     RowId,
-    AllColumns,
-    Column(Vec<u32>),
+    Column(Rc<Vec<(SchemaColumn, SheetColumnDefinition)>>, bool),
+}
+
+impl CompiledFilterKey {
+    pub fn is_strict(&self) -> bool {
+        match self {
+            CompiledFilterKey::RowId => true,
+            CompiledFilterKey::Column(_, is_strict) => *is_strict,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

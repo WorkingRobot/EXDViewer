@@ -1,12 +1,13 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, rc::Rc};
 
 use anyhow::bail;
+use compact_str::{CompactString, ToCompactString, format_compact};
 use egui::{
     Color32, CursorIcon, Direction, InnerResponse, Layout, Sense, Vec2, Widget,
     color_picker::show_color_at, ecolor::HexColor,
 };
 use either::Either;
-use ironworks::{file::exh::ColumnKind, sestring::SeString};
+use ironworks::file::exh::ColumnKind;
 
 use crate::{
     excel::{
@@ -14,7 +15,10 @@ use crate::{
         provider::{ExcelProvider, ExcelRow, ExcelSheet},
     },
     settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, TEXT_MAX_LINES},
-    sheet::{should_ignore_clicks, string_label_wrapped, wrap_string_lines_estimate},
+    sheet::{
+        compact_sestring::CompactSeString, schema_column::SheetLink, should_ignore_clicks,
+        string_label_wrapped, wrap_string_lines_estimate,
+    },
     utils::{ManagedIcon, TrackedPromise},
 };
 
@@ -27,8 +31,8 @@ use super::{
 
 pub struct Cell<'a> {
     row: ExcelRow<'a>,
-    // This can be either a SchemaColumn or a SchemaColumnMeta::Link to a vector of strings (as a reference)
-    schema_column: Either<Cow<'a, SchemaColumn>, &'a Vec<String>>,
+    // This can be either a SchemaColumn or a SchemaColumnMeta::Link to a sheet link (and None if no sheets are linked) (as a reference)
+    schema_column: Either<Cow<'a, SchemaColumn>, Option<&'a Rc<SheetLink>>>,
     sheet_column: &'a SheetColumnDefinition,
     table_context: &'a TableContext,
 }
@@ -54,7 +58,7 @@ pub struct MatchOptions {
 }
 
 pub enum CellValue {
-    String(SeString<'static>),
+    String(CompactSeString),
     Integer(i128),
     Float(f32),
     Boolean(bool),
@@ -64,7 +68,7 @@ pub enum CellValue {
     InvalidLink(i128),
     InProgressLink(i128),
     ValidLink {
-        sheet_name: String,
+        sheet_name: CompactString,
         row_id: u32,
         value: Option<Box<CellValue>>,
     },
@@ -73,7 +77,11 @@ pub enum CellValue {
 impl CellValue {
     pub fn coerce_integer(&self) -> Option<i128> {
         match self {
-            CellValue::String(s) => s.macro_string().ok().and_then(|s| s.parse().ok()),
+            CellValue::String(s) => s
+                .extract_text(false)
+                .try_to_compact_string()
+                .ok()
+                .and_then(|s| s.parse().ok()),
             CellValue::Integer(i) => Some(*i),
             CellValue::Float(f) => Some(*f as i128),
             CellValue::Boolean(b) => Some(if *b { 1 } else { 0 }),
@@ -96,37 +104,35 @@ impl CellValue {
         }
     }
 
-    pub fn coerce_string(&self) -> String {
+    pub fn coerce_string(&self) -> CompactString {
         match self {
-            CellValue::String(s) => s.macro_string().unwrap_or_default(),
-            CellValue::Integer(i) => i.to_string(),
-            CellValue::Float(f) => f.to_string(),
-            CellValue::Boolean(b) => b.to_string(),
-            CellValue::Icon(id) => id.to_string(),
+            CellValue::String(s) => s.macro_string().try_to_compact_string().unwrap_or_default(),
+            CellValue::Integer(i) => i.to_compact_string(),
+            CellValue::Float(f) => f.to_compact_string(),
+            CellValue::Boolean(b) => b.to_compact_string(),
+            CellValue::Icon(id) => id.to_compact_string(),
             CellValue::ModelId(id) => id.either(
                 |model_id| {
                     let model = (model_id & 0xFFFF) as u16;
                     let variant = ((model_id >> 16) & 0xFF) as u8;
                     let stain = ((model_id >> 24) & 0xFF) as u8;
-                    format!("{model}, {variant}, {stain}")
+                    format_compact!("{model}, {variant}, {stain}")
                 },
                 |weapon_id| {
                     let skeleton = (weapon_id & 0xFFFF) as u16;
                     let model = ((weapon_id >> 16) & 0xFFFF) as u16;
                     let variant = ((weapon_id >> 32) & 0xFFFF) as u16;
                     let stain = ((weapon_id >> 48) & 0xFFFF) as u16;
-                    format!("{skeleton}, {model}, {variant}, {stain}")
+                    format_compact!("{skeleton}, {model}, {variant}, {stain}")
                 },
             ),
-            CellValue::Color(color) => color.to_hex(),
-            CellValue::InvalidLink(id) => id.to_string(),
-            CellValue::InProgressLink(id) => {
-                return id.to_string();
-            }
+            CellValue::Color(color) => HexColor::Hex8(*color).to_compact_string(),
+            CellValue::InvalidLink(id) => id.to_compact_string(),
+            CellValue::InProgressLink(id) => id.to_compact_string(),
             CellValue::ValidLink { row_id, value, .. } => value
                 .as_ref()
                 .map(|v| v.coerce_string())
-                .unwrap_or_else(|| row_id.to_string()),
+                .unwrap_or_else(|| row_id.to_compact_string()),
         }
     }
 
@@ -134,14 +140,6 @@ impl CellValue {
         matches!(self, CellValue::InProgressLink(_))
     }
 }
-
-// pub static MULTILINE_STOPWATCH: RepeatedStopwatch = RepeatedStopwatch::new("Cell Multiline Size");
-// pub static MULTILINE2_STOPWATCH: RepeatedStopwatch =
-//     RepeatedStopwatch::new("Cell Multiline Size Actual");
-// pub static MULTILINE3_STOPWATCH: RepeatedStopwatch =
-//     RepeatedStopwatch::new("Cell Multiline Galley Layout");
-// pub static MULTILINE4_STOPWATCH: RepeatedStopwatch =
-//     RepeatedStopwatch::new("Cell Multiline Size Estimate");
 
 impl<'a> Cell<'a> {
     pub fn new(
@@ -167,7 +165,7 @@ impl<'a> Cell<'a> {
         ui.text_style_height(&egui::TextStyle::Body)
     }
 
-    fn size_text_multiline(&self, ui: &mut egui::Ui, text: String) -> f32 {
+    fn size_text_multiline(&self, ui: &mut egui::Ui, text: &str) -> f32 {
         // let _sw = MULTILINE_STOPWATCH.start();
         let mut line_count = wrap_string_lines_estimate(ui, &text);
         if let Some(max_lines) = TEXT_MAX_LINES.get(ui.ctx()) {
@@ -176,7 +174,11 @@ impl<'a> Cell<'a> {
         self.size_text(ui) * line_count as f32
     }
 
-    fn size_internal_link(&self, ui: &mut egui::Ui, sheets: &[String]) -> anyhow::Result<f32> {
+    fn size_internal_link(
+        &self,
+        ui: &mut egui::Ui,
+        sheets: Option<&Rc<SheetLink>>,
+    ) -> anyhow::Result<f32> {
         let row_id: isize = read_integer(
             self.row,
             self.sheet_column.offset() as u32,
@@ -187,9 +189,9 @@ impl<'a> Cell<'a> {
             match row_id
                 .try_into()
                 .ok()
-                .and_then(|id| self.table_context.resolve_link(sheets, id))
+                .and_then(|id| sheets.map(|s| s.resolve(self.table_context, id)))
             {
-                Some(Some((_, table))) => {
+                Some(Some(Some((_, table)))) => {
                     if let Some(cell) =
                         table.display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
                     {
@@ -214,7 +216,7 @@ impl<'a> Cell<'a> {
                             self.sheet_column.kind(),
                             ui,
                         )?;
-                        self.size_text_multiline(ui, text)
+                        self.size_text_multiline(ui, &text)
                     } else {
                         self.size_text(ui)
                     }
@@ -222,7 +224,7 @@ impl<'a> Cell<'a> {
                 SchemaColumnMeta::Icon => 32.0,
                 SchemaColumnMeta::ModelId => self.size_text(ui),
                 SchemaColumnMeta::Color => self.size_text(ui),
-                SchemaColumnMeta::Link(sheets) => self.size_internal_link(ui, sheets)?,
+                SchemaColumnMeta::Link(sheets) => self.size_internal_link(ui, Some(sheets))?,
                 SchemaColumnMeta::ConditionalLink { column_idx, links } => {
                     let (_, switch_column) =
                         self.table_context.get_column_by_offset(*column_idx)?;
@@ -234,7 +236,7 @@ impl<'a> Cell<'a> {
                     if let Some(sheets) = links.get(&switch_data) {
                         Cell {
                             row: self.row,
-                            schema_column: Either::Right(sheets),
+                            schema_column: Either::Right(Some(sheets)),
                             sheet_column: self.sheet_column,
                             table_context: self.table_context,
                         }
@@ -244,7 +246,7 @@ impl<'a> Cell<'a> {
                     }
                 }
             },
-            Either::Right(sheets) => self.size_internal_link(ui, sheets)?,
+            Either::Right(sheets) => self.size_internal_link(ui, *sheets)?,
         })
     }
 
@@ -281,7 +283,7 @@ impl<'a> Cell<'a> {
     fn read_internal_link(
         &self,
         resolve_display_field: bool,
-        sheets: &[String],
+        sheets: Option<&Rc<SheetLink>>,
     ) -> anyhow::Result<CellValue> {
         let row_id: i128 = read_integer(
             self.row,
@@ -291,8 +293,9 @@ impl<'a> Cell<'a> {
 
         Ok(
             match row_id.try_into().ok().and_then(|id| {
-                self.table_context
-                    .resolve_link(sheets, id)
+                sheets
+                    .map(|s| s.resolve(self.table_context, id))
+                    .unwrap_or_default()
                     .map(|r| r.map(|(s, t)| (s, t, id)))
             }) {
                 Some(Some((sheet_name, table, row_id))) => {
@@ -301,7 +304,7 @@ impl<'a> Cell<'a> {
                         .flatten();
 
                     CellValue::ValidLink {
-                        sheet_name,
+                        sheet_name: sheet_name.into(),
                         row_id,
                         value: display_field_cell
                             .map(|cell| -> anyhow::Result<Box<CellValue>> {
@@ -362,7 +365,7 @@ impl<'a> Cell<'a> {
                     CellValue::Color(color)
                 }
                 SchemaColumnMeta::Link(sheets) => {
-                    self.read_internal_link(resolve_display_field, sheets)?
+                    self.read_internal_link(resolve_display_field, Some(sheets))?
                 }
                 SchemaColumnMeta::ConditionalLink { column_idx, links } => {
                     let (_, switch_column) =
@@ -373,10 +376,6 @@ impl<'a> Cell<'a> {
                         switch_column.kind(),
                     )?;
                     let sheets = links.get(&switch_data);
-                    let sheets = match sheets {
-                        Some(sheets) => sheets,
-                        None => &vec![],
-                    };
                     return Cell {
                         row: self.row,
                         schema_column: Either::Right(sheets),
@@ -386,14 +385,14 @@ impl<'a> Cell<'a> {
                     .read(resolve_display_field);
                 }
             },
-            Either::Right(sheets) => self.read_internal_link(resolve_display_field, sheets)?,
+            Either::Right(sheets) => self.read_internal_link(resolve_display_field, *sheets)?,
         })
     }
 }
 
 fn read_scalar(row: ExcelRow<'_>, offset: u32, kind: ColumnKind) -> anyhow::Result<CellValue> {
     Ok(match kind {
-        ColumnKind::String => CellValue::String(row.read_string(offset)?.as_owned()),
+        ColumnKind::String => CellValue::String(row.read_string(offset)?.into()),
         ColumnKind::Bool => CellValue::Boolean(row.read_bool(offset)?),
         ColumnKind::Int8 => CellValue::Integer(i128::from(row.read::<i8>(offset)?)),
         ColumnKind::UInt8 => CellValue::Integer(i128::from(row.read::<u8>(offset)?)),
@@ -423,16 +422,16 @@ fn read_string(
     offset: u32,
     kind: ColumnKind,
     ui: &mut egui::Ui,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<CompactString> {
     match read_scalar(row, offset, kind)? {
         CellValue::String(s) => Ok(if EVALUATE_STRINGS.get(ui.ctx()) {
-            s.format()
+            s.format().try_to_compact_string()?
         } else {
-            s.macro_string()
-        }?),
-        CellValue::Boolean(b) => Ok(b.to_string()),
-        CellValue::Integer(i) => Ok(i.to_string()),
-        CellValue::Float(f) => Ok(f.to_string()),
+            s.macro_string().try_to_compact_string()?
+        }),
+        CellValue::Boolean(b) => Ok(b.to_compact_string()),
+        CellValue::Integer(i) => Ok(i.to_compact_string()),
+        CellValue::Float(f) => Ok(f.to_compact_string()),
         _ => unreachable!(),
     }
 }
@@ -510,7 +509,7 @@ impl CellValue {
 
                 if resp.clicked() && !should_ignore_clicks(ui) {
                     return InnerResponse::new(
-                        CellResponse::Link((sheet_name, (row_id, None))),
+                        CellResponse::Link((sheet_name.into(), (row_id, None))),
                         resp,
                     );
                 }

@@ -14,3 +14,6 @@ target_wasm
 
 downloads/
 exd_cache/
+cache/
+massif.out.*
+callgrind.out.*

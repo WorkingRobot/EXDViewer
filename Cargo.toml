@@ -12,3 +12,7 @@ edition = "2024"
 ironworks = { path = "deps/ironworks/ironworks" }
 xiv-dl-cache = { path = "deps/ffxiv-downloader/rust/cache" }
 xiv-dl-core = { path = "deps/ffxiv-downloader/rust/core" }
+
+[profile.release-dbg]
+inherits = "release"
+debug = true

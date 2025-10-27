@@ -1,10 +1,12 @@
 use std::{
     cell::{LazyCell, RefCell},
+    collections::HashMap,
     num::NonZeroU32,
+    rc::Rc,
 };
 
 use either::Either;
-use lru::LruCache;
+use itertools::Itertools;
 
 use crate::{
     sheet::{
@@ -16,73 +18,87 @@ use crate::{
             complex_filter::{ComplexFilter, FilterKey, Wildcard},
             input::{CompiledFilterInput, FilterInput},
         },
+        schema_column::SchemaColumn,
+        sheet_column::SheetColumnDefinition,
     },
+    stopwatch::stopwatches::FILTER_MATCH_STOPWATCH,
     utils::FuzzyMatcher,
 };
 
 pub struct FilterCache {
-    wildcard_cache: LazyCell<RefCell<LruCache<Wildcard, Vec<u32>>>>,
+    wildcard_cache:
+        LazyCell<RefCell<HashMap<Wildcard, Rc<Vec<(SchemaColumn, SheetColumnDefinition)>>>>>,
+    columns: RefCell<Rc<Vec<(SchemaColumn, SheetColumnDefinition)>>>,
     matcher: FuzzyMatcher,
 }
 
 impl FilterCache {
-    pub fn new() -> Self {
-        Self {
-            wildcard_cache: LazyCell::new(|| {
-                RefCell::new(LruCache::new(std::num::NonZeroUsize::new(256).unwrap()))
-            }),
+    pub fn new(
+        schema_columns: &[SchemaColumn],
+        sheet_columns: &[SheetColumnDefinition],
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            wildcard_cache: LazyCell::new(|| RefCell::new(HashMap::with_capacity(256))),
+            columns: RefCell::new(Rc::new(
+                schema_columns
+                    .iter()
+                    .zip(sheet_columns)
+                    .map(|(a, b)| (a.clone(), b.clone()))
+                    .collect_vec(),
+            )),
             matcher: FuzzyMatcher::new(),
-        }
+        })
     }
 
     pub fn compile(
         &self,
         input: &FilterInput,
         options: MatchOptions,
-        ctx: &TableContext,
     ) -> anyhow::Result<CompiledFilterInput> {
         if input.is_empty() {
             return Ok(CompiledFilterInput::new(None, options));
         }
         let data = match input {
-            FilterInput::Equals(s) => Self::compile_equals(s),
-            FilterInput::Contains(s) => Self::compile_contains(s),
-            FilterInput::Complex(f) => self.compile_complex(f, ctx)?,
+            FilterInput::Equals(s) => self.compile_equals(s),
+            FilterInput::Contains(s) => self.compile_contains(s),
+            FilterInput::Complex(f) => self.compile_complex(f)?,
         };
 
         Ok(CompiledFilterInput::new(Some(data), options))
     }
 
-    pub fn invalidate_cache(&self) {
+    pub fn invalidate_cache(&self, ctx: &TableContext) -> anyhow::Result<()> {
         self.wildcard_cache.borrow_mut().clear();
+        *self.columns.borrow_mut() = Rc::new(ctx.columns()?);
+        Ok(())
     }
 
-    fn compile_equals(filter: impl Into<String>) -> CompiledComplexFilter {
+    fn columns(&self) -> Rc<Vec<(SchemaColumn, SheetColumnDefinition)>> {
+        self.columns.borrow().clone()
+    }
+
+    fn compile_equals(&self, filter: impl Into<String>) -> CompiledComplexFilter {
         CompiledComplexFilter {
             filter: CompiledFilterPart::KeyEquals(
                 0,
                 FilterValue::Equals(Either::Left(filter.into())),
             ),
-            lookup: vec![CompiledFilterKey::AllColumns],
+            lookup: vec![CompiledFilterKey::Column(self.columns(), false)],
             has_fuzzy: false,
         }
     }
 
-    fn compile_contains(filter: impl Into<String>) -> CompiledComplexFilter {
+    fn compile_contains(&self, filter: impl Into<String>) -> CompiledComplexFilter {
         CompiledComplexFilter {
             filter: CompiledFilterPart::KeyEquals(0, FilterValue::Contains(filter.into())),
-            lookup: vec![CompiledFilterKey::AllColumns],
+            lookup: vec![CompiledFilterKey::Column(self.columns(), false)],
             has_fuzzy: false,
         }
     }
 
-    fn compile_complex(
-        &self,
-        filter: &ComplexFilter,
-        ctx: &TableContext,
-    ) -> anyhow::Result<CompiledComplexFilter> {
+    fn compile_complex(&self, filter: &ComplexFilter) -> anyhow::Result<CompiledComplexFilter> {
         let mut lookup = (Vec::new(), Vec::new());
-        let compiled_filter = self.compile_complex_part(&filter, &mut lookup, ctx)?;
+        let compiled_filter = self.compile_complex_part(&filter, &mut lookup)?;
         Ok(CompiledComplexFilter {
             filter: compiled_filter,
             lookup: lookup.1,
@@ -94,7 +110,6 @@ impl FilterCache {
         &self,
         filter: &ComplexFilter,
         lookup: &mut (Vec<FilterKey>, Vec<CompiledFilterKey>),
-        ctx: &TableContext,
     ) -> anyhow::Result<CompiledFilterPart> {
         Ok(match filter {
             ComplexFilter::KeyEquals(key, value) => {
@@ -106,7 +121,7 @@ impl FilterCache {
                 let compiled_key_idx = if let Some(idx) = compiled_key_idx {
                     idx
                 } else {
-                    let compiled_key = self.compile_complex_key(key, ctx)?;
+                    let compiled_key = self.compile_complex_key(key)?;
                     lookup.0.push(key.clone());
                     lookup.1.push(compiled_key);
                     assert_eq!(lookup.0.len(), lookup.1.len());
@@ -117,37 +132,34 @@ impl FilterCache {
             ComplexFilter::And(parts) => CompiledFilterPart::And(
                 parts
                     .into_iter()
-                    .map(|p| self.compile_complex_part(p, lookup, ctx))
+                    .map(|p| self.compile_complex_part(p, lookup))
                     .collect::<anyhow::Result<Vec<_>>>()?,
             ),
             ComplexFilter::Or(parts) => CompiledFilterPart::Or(
                 parts
                     .into_iter()
-                    .map(|p| self.compile_complex_part(p, lookup, ctx))
+                    .map(|p| self.compile_complex_part(p, lookup))
                     .collect::<anyhow::Result<Vec<_>>>()?,
             ),
             ComplexFilter::Not(part) => {
-                CompiledFilterPart::Not(Box::new(self.compile_complex_part(part, lookup, ctx)?))
+                CompiledFilterPart::Not(Box::new(self.compile_complex_part(part, lookup)?))
             }
         })
     }
 
-    fn compile_complex_key(
-        &self,
-        key: &FilterKey,
-        ctx: &TableContext,
-    ) -> anyhow::Result<CompiledFilterKey> {
+    fn compile_complex_key(&self, key: &FilterKey) -> anyhow::Result<CompiledFilterKey> {
         Ok(match key {
             FilterKey::RowId => CompiledFilterKey::RowId,
-            FilterKey::Column(wildcard) if wildcard.is_catch_all() => CompiledFilterKey::AllColumns,
-            FilterKey::Column(wildcard) => CompiledFilterKey::Column(
+            FilterKey::Column(wildcard, is_strict) if wildcard.is_catch_all() => {
+                CompiledFilterKey::Column(self.columns(), *is_strict)
+            }
+            FilterKey::Column(wildcard, is_strict) => CompiledFilterKey::Column(
                 self.wildcard_cache
                     .borrow_mut()
-                    .get_or_insert_ref(&wildcard, || {
-                        self.compile_complex_column_uncached(&wildcard, ctx)
-                            .unwrap_or_default()
-                    })
+                    .entry(wildcard.clone())
+                    .or_insert_with_key(|wildcard| self.compile_complex_column_uncached(&wildcard))
                     .clone(),
+                *is_strict,
             ),
         })
     }
@@ -155,35 +167,20 @@ impl FilterCache {
     fn compile_complex_column_uncached(
         &self,
         key: &Wildcard,
-        ctx: &TableContext,
-    ) -> anyhow::Result<Vec<u32>> {
-        ctx.columns().map(|cols| {
-            cols.into_iter()
-                .enumerate()
-                .filter_map(|(idx, (schema_col, _))| {
-                    key.matches(schema_col.name()).then_some(idx as u32)
-                })
-                .collect()
-        })
+    ) -> Rc<Vec<(SchemaColumn, SheetColumnDefinition)>> {
+        Rc::new(
+            self.columns()
+                .iter()
+                .filter(|(schema_col, _)| key.matches(schema_col.name()))
+                .cloned()
+                .collect(),
+        )
     }
 
     #[inline]
     pub fn match_cell(&self, cell: &CellValue, value: &FilterValue, options: MatchOptions) -> bool {
-        self.match_cell_score(cell, value, options).is_some()
-    }
-
-    #[inline]
-    pub fn match_cell_score(
-        &self,
-        cell: &CellValue,
-        value: &FilterValue,
-        options: MatchOptions,
-    ) -> Option<NonZeroU32> {
-        if let FilterValue::Fuzzy(v) = value {
-            return self.matcher.score_one(&*v, &cell.coerce_string());
-        }
-
-        let matches = match value {
+        let _sw = FILTER_MATCH_STOPWATCH.start();
+        match value {
             FilterValue::Equals(Either::Left(v)) => {
                 filter_string(cell, v, options.case_insensitive, |a, b| a == b)
             }
@@ -199,13 +196,26 @@ impl FilterCache {
             FilterValue::Contains(v) => {
                 filter_string(cell, v, options.case_insensitive, |a, b| a.contains(b))
             }
-            FilterValue::Fuzzy(_) => unreachable!(),
+            FilterValue::Fuzzy(v) => self.matcher.score_one(&*v, &cell.coerce_string()).is_some(),
             FilterValue::Wildcard(v) => v.matches(&cell.coerce_string()),
             FilterValue::Regex(v) => v.is_match(&cell.coerce_string()),
             FilterValue::Range(v) => cell.coerce_integer().map_or(false, |i| v.contains(i)),
-        };
+        }
+    }
 
-        matches.then_some(NonZeroU32::new(1).unwrap())
+    #[inline]
+    pub fn match_cell_score(
+        &self,
+        cell: &CellValue,
+        value: &FilterValue,
+        options: MatchOptions,
+    ) -> Option<NonZeroU32> {
+        if let FilterValue::Fuzzy(v) = value {
+            return self.matcher.score_one(&*v, &cell.coerce_string());
+        } else {
+            self.match_cell(cell, value, options)
+                .then_some(NonZeroU32::new(1).unwrap())
+        }
     }
 }
 
@@ -218,7 +228,7 @@ fn filter_string(
 ) -> bool {
     let a = cell.coerce_string();
     if case_insensitive {
-        f(&a.to_uppercase(), &b.to_uppercase())
+        f(&a.to_lowercase(), &b.to_lowercase())
     } else {
         f(&a, b)
     }

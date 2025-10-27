@@ -1,9 +1,13 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::OnceCell, collections::HashMap, rc::Rc};
 
 use anyhow::bail;
 use itertools::Itertools;
 
-use crate::schema::{Field, FieldType, Schema};
+use crate::{
+    excel::provider::ExcelSheet,
+    schema::{Field, FieldType, Schema},
+    sheet::{GlobalContext, TableContext, table_context::SharedConvertibleSheetPromise},
+};
 
 #[derive(Debug, Clone)]
 pub struct SchemaColumn(Rc<SchemaColumnImpl>);
@@ -73,12 +77,16 @@ impl SchemaColumn {
                     FieldType::Color => SchemaColumnMeta::Color,
                     FieldType::Link => {
                         if let Some(targets) = &field.targets {
-                            SchemaColumnMeta::Link(targets.clone())
+                            SchemaColumnMeta::Link(SheetLink::new(targets.clone()))
                         } else if let Some(condition) = &field.condition {
                             column_lookups.push(condition.switch.clone());
                             let ret = SchemaColumnMeta::ConditionalLink {
                                 column_idx: *column_placeholder,
-                                links: condition.cases.clone(),
+                                links: condition
+                                    .cases
+                                    .iter()
+                                    .map(|(k, v)| (*k, SheetLink::new(v.clone())))
+                                    .collect(),
                             };
                             *column_placeholder += 1;
                             ret
@@ -187,9 +195,79 @@ pub enum SchemaColumnMeta {
     Icon,
     ModelId,
     Color,
-    Link(Vec<String>),
+    Link(Rc<SheetLink>),
     ConditionalLink {
         column_idx: u32,
-        links: HashMap<i32, Vec<String>>,
+        links: HashMap<i32, Rc<SheetLink>>,
     },
+}
+
+pub struct SheetLink {
+    targets: Vec<String>,
+    promises: OnceCell<Vec<SharedConvertibleSheetPromise>>,
+}
+
+impl SheetLink {
+    pub fn new(targets: Vec<String>) -> Rc<Self> {
+        Rc::new(Self {
+            targets,
+            promises: OnceCell::new(),
+        })
+    }
+
+    pub fn targets(&self) -> &[String] {
+        &self.targets
+    }
+
+    pub fn resolve(
+        &self,
+        table: &TableContext,
+        row_id: u32,
+    ) -> Option<Option<(&String, TableContext)>> {
+        self.resolve_internal(|| table.load_sheets(&self.targets), table.global(), row_id)
+    }
+
+    fn resolve_internal(
+        &self,
+        promise_initializer: impl Fn() -> Vec<SharedConvertibleSheetPromise>,
+        global: &GlobalContext,
+        row_id: u32,
+    ) -> Option<Option<(&String, TableContext)>> {
+        let promises = self.promises.get_or_init(promise_initializer);
+        promises
+            .into_iter()
+            .zip(self.targets.iter())
+            .find_map(|(p, s)| {
+                let mut p = p.borrow_mut();
+                let result = p.get(|result| {
+                    result
+                        .map(|(sheet, schema)| {
+                            TableContext::new(global.clone(), sheet, schema.as_ref())
+                        })
+                        .map_err(|e| e.into())
+                });
+                match result {
+                    None => Some(None),
+                    Some(Ok(table)) => {
+                        if table.sheet().get_row(row_id).is_ok() {
+                            Some(Some((s, table.clone())))
+                        } else {
+                            None
+                        }
+                    }
+                    Some(Err(err)) => {
+                        log::error!("Failed to retrieve linked sheet: {err:?}");
+                        None
+                    }
+                }
+            })
+    }
+}
+
+impl std::fmt::Debug for SheetLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SheetLink")
+            .field("targets", &self.targets)
+            .finish_non_exhaustive()
+    }
 }

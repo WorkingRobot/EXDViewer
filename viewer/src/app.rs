@@ -63,6 +63,7 @@ pub struct App {
     sheet_data: LruCache<CachedSheetEntry, ConvertibleSheetPromise>,
     schema_data: LruCache<CachedSchemaEntry, ConvertibleSchemaPromise>,
     sheet_matcher: FuzzyMatcher,
+    sheet_filter_data: LruCache<(String, bool), Rc<Vec<(String, i32)>>>,
     save_promise: Option<TrackedPromise<()>>,
     goto_window: Option<goto::GoToWindow>,
 }
@@ -464,17 +465,24 @@ impl App {
             let sheets_filter = SHEETS_FILTER.get(ctx);
             let misc_sheets_shown = MISC_SHEETS_SHOWN.get(ctx);
             let backend = self.backend.clone().unwrap();
+            let sheets = self
+                .sheet_filter_data
+                .get_or_insert((sheets_filter.clone(), misc_sheets_shown), || {
             let sheets = backend
                 .excel()
                 .get_entries()
                 .iter()
+                        .filter(|(_, id)| misc_sheets_shown || **id >= 0)
                 .sorted_by_key(|(sheet, _)| *sheet)
-                .filter(|(_, id)| misc_sheets_shown || **id >= 0);
+                        .map(|(s, &id)| (s.clone(), id));
             let sheets = self.sheet_matcher.match_list_indirect(
                 (!sheets_filter.is_empty()).then_some(&sheets_filter),
                 sheets,
-                |s| s.0,
+                        |s| &s.0,
             );
+                    Rc::new(sheets)
+                })
+                .clone();
 
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 let row_height = ui.text_style_height(&egui::TextStyle::Button);
@@ -485,7 +493,7 @@ impl App {
                     |ui, range| {
                         ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                             let mut current_sheet = SELECTED_SHEET.get(ctx);
-                            for &(sheet, &id) in sheets
+                            for (sheet, id) in sheets
                                 .iter()
                                 .skip(range.start)
                                 .take(range.end - range.start)
@@ -958,6 +966,7 @@ impl App {
             sheet_data: LruCache::new(NonZero::new(32).unwrap()),
             schema_data: LruCache::unbounded(),
             sheet_matcher: FuzzyMatcher::new(),
+            sheet_filter_data: LruCache::new(NonZero::new(8).unwrap()),
             save_promise: None,
             goto_window: None,
         }

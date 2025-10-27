@@ -18,7 +18,14 @@ use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
     sheet::{filter::CompiledFilterInput, should_ignore_clicks},
-    stopwatch::Stopwatch,
+    stopwatch::{
+        Stopwatch,
+        stopwatches::{
+            FILTER_CELL_CREATE_STOPWATCH, FILTER_CELL_GRAB_STOPWATCH, FILTER_CELL_ITER_STOPWATCH,
+            FILTER_CELL_READ_STOPWATCH, FILTER_KEY_STOPWATCH, FILTER_MATCH_STOPWATCH,
+            FILTER_ROW_STOPWATCH, FILTER_TOTAL_STOPWATCH,
+        },
+    },
     utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_to_ui},
 };
 
@@ -286,7 +293,7 @@ impl SheetTable {
         self.current_filter_promise.take();
 
         let Some(filter) = filter else { return };
-        if self.filtered_rows.get_mut().get(&filter).is_some() {
+        if filter.is_empty() || self.filtered_rows.get_mut().get(&filter).is_some() {
             return;
         }
 
@@ -294,12 +301,23 @@ impl SheetTable {
         let ctx = self.context().clone();
         let promise_token = token.clone();
         let promise = TrackedPromise::spawn_local(async move {
-            let columns = ctx.columns()?;
+            #[inline]
+            async fn filter_core(
+                ctx: TableContext,
+                promise_token: Rc<Cell<bool>>,
+                mut inspector: impl FnMut(
+                    &TableContext,
+                    u32,
+                    u32,
+                    Option<u16>,
+                    &ExcelRow<'_>,
+                ) -> anyhow::Result<()>,
+            ) -> anyhow::Result<()> {
+                let batch_count = 0x4000usize.div_euclid(ctx.column_count().max(1)).max(1);
 
-            let batch_count = 0x4000usize.div_euclid(columns.len().max(1)).max(1);
-
-            let iter: Box<dyn Iterator<Item = (u32, Option<u16>, anyhow::Result<ExcelRow<'_>>)>> =
-                if ctx.sheet().has_subrows() {
+                let iter: Box<
+                    dyn Iterator<Item = (u32, Option<u16>, anyhow::Result<ExcelRow<'_>>)>,
+                > = if ctx.sheet().has_subrows() {
                     Box::new(ctx.sheet().get_row_ids().flat_map(|row_id| {
                         let subrow_count = ctx
                             .sheet()
@@ -318,44 +336,91 @@ impl SheetTable {
                     )
                 };
 
-            let mut filtered_rows = Vec::new();
-            let mut is_in_progress = false;
+                let mut last_now = Instant::now();
+                let mut iters = 0;
+                const MAX_FRAME_TIME: Duration = Duration::from_millis(250);
 
-            let mut last_now = Instant::now();
-            let mut iters = 0;
-            const MAX_FRAME_TIME: Duration = Duration::from_millis(250);
-            for chunk in &iter.enumerate().chunks(batch_count) {
-                for (row_nr, (row_id, subrow_id, row)) in chunk {
-                    let (matches, in_progress) =
-                        ctx.filter_row(&columns, row_id, subrow_id, &row?, &filter)?;
-                    if in_progress {
+                for chunk in &iter.enumerate().chunks(batch_count) {
+                    for (row_nr, (row_id, subrow_id, row)) in chunk {
+                        inspector(&ctx, row_nr as u32, row_id, subrow_id, &row?)?;
+                    }
+
+                    if promise_token.get() {
+                        log::info!("Filter cancelled");
+                        return Err(anyhow::anyhow!("Filter cancelled"));
+                    }
+
+                    let now = Instant::now();
+                    if now.duration_since(last_now) >= MAX_FRAME_TIME {
+                        iters += 1;
+                        last_now = now;
+                        yield_to_ui().await;
+                    }
+                }
+
+                log::info!("Filter completed after {iters} yields");
+
+                Ok(())
+            }
+
+            let mut filtered_rows: Vec<u32>;
+            let mut is_in_progress = false;
+            if filter.input().as_ref().unwrap().has_fuzzy {
+                let mut scored_rows = Vec::new();
+                filter_core(ctx, promise_token, |ctx, row_nr, row_id, subrow_id, row| {
+                    let (score, row_in_progress) =
+                        ctx.score_row(row_id, subrow_id, row, &filter)?;
+                    if row_in_progress {
+                        is_in_progress = true;
+                    }
+                    if let Some(score) = score {
+                        scored_rows.push((row_nr, score));
+                    }
+                    Ok(())
+                })
+                .await?;
+                scored_rows.sort_by(|(_, a), (_, b)| a.cmp(b).reverse());
+                filtered_rows = scored_rows.into_iter().map(|(row_nr, _)| row_nr).collect();
+            } else {
+                filtered_rows = Vec::new();
+                let mut is_in_progress = false;
+                FILTER_TOTAL_STOPWATCH.reset();
+                FILTER_ROW_STOPWATCH.reset();
+                FILTER_CELL_GRAB_STOPWATCH.reset();
+                FILTER_CELL_ITER_STOPWATCH.reset();
+                FILTER_CELL_CREATE_STOPWATCH.reset();
+                FILTER_CELL_READ_STOPWATCH.reset();
+                FILTER_KEY_STOPWATCH.reset();
+                FILTER_MATCH_STOPWATCH.reset();
+                filter_core(ctx, promise_token, |ctx, row_nr, row_id, subrow_id, row| {
+                    let _sw = FILTER_TOTAL_STOPWATCH.start();
+                    let (matches, row_in_progress) =
+                        ctx.filter_row(row_id, subrow_id, row, &filter)?;
+                    if row_in_progress {
                         is_in_progress = true;
                     }
                     if matches {
-                        filtered_rows.push(row_nr as u32);
+                        filtered_rows.push(row_nr);
                     }
-                }
-
-                if promise_token.get() {
-                    log::info!("Filter cancelled");
-                    return Err(anyhow::anyhow!("Filter cancelled"));
-                }
-
-                let now = Instant::now();
-                if now.duration_since(last_now) >= MAX_FRAME_TIME {
-                    iters += 1;
-                    last_now = now;
-                    yield_to_ui().await;
-                }
+                    Ok(())
+                })
+                .await?;
+                FILTER_TOTAL_STOPWATCH.report();
+                FILTER_ROW_STOPWATCH.report();
+                FILTER_CELL_GRAB_STOPWATCH.report();
+                FILTER_CELL_ITER_STOPWATCH.report();
+                FILTER_CELL_CREATE_STOPWATCH.report();
+                FILTER_CELL_READ_STOPWATCH.report();
+                FILTER_KEY_STOPWATCH.report();
+                FILTER_MATCH_STOPWATCH.report();
             }
-            if iters > 0 {
-                log::info!("Filter yielded {iters} times");
-            }
+
             Ok(FilterOutput {
                 filtered_rows,
                 is_in_progress,
             })
         });
+
         self.current_filter_cancel_token = Some(token);
         self.current_filter_promise = Some(promise);
     }

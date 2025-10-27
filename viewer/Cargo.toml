@@ -59,6 +59,8 @@ wildmatch = "2.5"
 regex-lite = "0.1"
 pest = "2.8"
 pest_derive = "2.8"
+compact_str = { version = "0.9", features = ["smallvec"] }
+smallvec = { version = "1.15", features = ["union"] }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
