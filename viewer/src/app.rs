@@ -27,13 +27,14 @@ use crate::{
     settings::{
         ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, DISPLAY_FIELD_SHOWN,
         EVALUATE_STRINGS, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE,
-        SELECTED_SHEET, SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR, SORTED_BY_OFFSET,
-        TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH,
+        SELECTED_SHEET, SHEET_FILTER_OPTIONS, SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR,
+        SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES, TEXT_USE_SCROLL,
+        TEXT_WRAP_WIDTH,
     },
     setup::{self, SetupWindow},
     sheet::{
-        CellResponse, ComplexFilter, FilterInput, GlobalContext, MatchOptions, SheetTable,
-        TableContext,
+        CellResponse, ComplexFilter, FilterInput, FilterInputType, GlobalContext, MatchOptions,
+        SheetTable, TableContext,
     },
     shortcuts::{GOTO_ROW, GOTO_SHEET},
     utils::{
@@ -287,14 +288,19 @@ impl App {
                             }
 
                             let mut use_scroll = TEXT_USE_SCROLL.get(ctx);
-                            let text = if use_scroll { "Scrollbar" } else { "Tooltip" };
                             ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
                                 ui.style_mut().spacing.item_spacing.x /= 2.0;
                                 ui.set_max_width(
                                     ui.spacing().slider_width + ui.spacing().interact_size.x,
                                 );
                                 ui.label("Show ");
-                                if ui.selectable_label(use_scroll, text).clicked() {
+                                if ui
+                                    .selectable_label(
+                                        use_scroll,
+                                        if use_scroll { "Scrollbar" } else { "Tooltip" },
+                                    )
+                                    .clicked()
+                                {
                                     use_scroll = !use_scroll;
                                     TEXT_USE_SCROLL.set(ctx, use_scroll);
                                 }
@@ -672,49 +678,113 @@ impl App {
                         ui.vertical_centered_justified(|ui| ui.heading(sheet_name.clone()));
                     });
                     ui.add_space(4.0);
-                    ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                        let mut filter = SHEET_FILTERS.use_with(ui.ctx(), |map| {
-                            map.entry(sheet_name.clone()).or_default().clone()
-                        });
-                        let is_miscellaneous = backend
-                            .excel()
-                            .get_entries()
-                            .get(&sheet_name)
-                            .copied()
-                            .unwrap_or_default()
-                            < 0;
+                    ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
+                        let (mut filter_type, mut filter_text) = SHEET_FILTERS
+                            .use_with(ui.ctx(), |map| {
+                                map.entry(sheet_name.clone()).or_default().clone()
+                            });
 
-                        ui.add_enabled_ui(!is_miscellaneous, |ui| {
-                            let mut visible = SCHEMA_EDITOR_VISIBLE.get(ui.ctx());
-                            let resp = ui
-                                .toggle_value(&mut visible, "Edit Schema")
-                                .on_hover_text("Edit the schema for this sheet");
-                            if resp.changed() {
-                                SCHEMA_EDITOR_VISIBLE.set(ui.ctx(), visible);
+                        ui.spacing_mut().item_spacing.x /= 2.0;
+
+                        let mut filter_dirty = egui::ComboBox::from_id_salt("filter_type")
+                            .selected_text(filter_type.to_string())
+                            .width(ui.spacing().combo_width * 0.8f32)
+                            .show_ui(ui, |ui| {
+                                let mut changed = false;
+                                for value in &[
+                                    FilterInputType::Equals,
+                                    FilterInputType::Contains,
+                                    FilterInputType::Complex,
+                                ] {
+                                    let resp = ui.selectable_value(
+                                        &mut filter_type,
+                                        *value,
+                                        value.to_string(),
+                                    );
+                                    if resp.changed() {
+                                        changed = true;
+                                    }
+                                }
+                                changed
+                            })
+                            .inner
+                            .unwrap_or_default();
+
+                        let options = {
+                            let MatchOptions {
+                                mut case_insensitive,
+                                mut use_display_field,
+                            } = SHEET_FILTER_OPTIONS.get(ctx);
+
+                            let mut is_dirty = ui
+                                .toggle_value(&mut case_insensitive, "🔡")
+                                .on_hover_text("Case Insensitive")
+                                .changed();
+                            is_dirty |= ui
+                                .toggle_value(&mut use_display_field, "📝")
+                                .on_hover_text("Use Display Field")
+                                .changed();
+                            let ret = MatchOptions {
+                                case_insensitive,
+                                use_display_field,
+                            };
+
+                            if is_dirty {
+                                SHEET_FILTER_OPTIONS.set(ctx, ret);
                             }
+
+                            ret
+                        };
+
+                        ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
+                            let is_miscellaneous = backend
+                                .excel()
+                                .get_entries()
+                                .get(&sheet_name)
+                                .copied()
+                                .unwrap_or_default()
+                                < 0;
+
+                            ui.add_enabled_ui(!is_miscellaneous, |ui| {
+                                let mut visible = SCHEMA_EDITOR_VISIBLE.get(ui.ctx());
+                                let resp = ui
+                                    .toggle_value(&mut visible, "Edit Schema")
+                                    .on_hover_text("Edit the schema for this sheet");
+                                if resp.changed() {
+                                    SCHEMA_EDITOR_VISIBLE.set(ui.ctx(), visible);
+                                }
+                            });
+
+                            filter_dirty |= ui
+                                .add_sized(
+                                    Vec2::new(ui.available_width(), 0.0),
+                                    TextEdit::singleline(&mut filter_text).hint_text("Filter"),
+                                )
+                                .changed();
                         });
 
-                        if ui
-                            .add_sized(
-                                Vec2::new(ui.available_width(), 0.0),
-                                TextEdit::singleline(&mut filter).hint_text("Filter"),
-                            )
-                            .changed()
-                        {
-                            log::info!("Compiling filter: {filter}");
-                            let compiled_filter = if filter.is_empty() {
+                        if filter_dirty {
+                            log::info!("Compiling {filter_type} filter: {filter_text}");
+                            let compiled_filter = if filter_text.is_empty() {
                                 Ok(None)
                             } else {
-                                ComplexFilter::from_str(&filter)
+                                let input = match filter_type {
+                                    FilterInputType::Equals => {
+                                        Ok(FilterInput::Equals(filter_text.clone()))
+                                    }
+                                    FilterInputType::Contains => {
+                                        Ok(FilterInput::Contains(filter_text.clone()))
+                                    }
+                                    FilterInputType::Complex => {
+                                        ComplexFilter::from_str(&filter_text)
+                                            .map(FilterInput::Complex)
+                                    }
+                                };
+
+                                input
                                     .map_err(|e| anyhow::anyhow!("Failed to parse filter: {e}"))
                                     .and_then(|filter| {
-                                        table.context().compile_filter(
-                                            &FilterInput::Complex(filter),
-                                            MatchOptions {
-                                                case_insensitive: false,
-                                                use_display_field: true,
-                                            },
-                                        )
+                                        table.context().compile_filter(&filter, options)
                                     })
                                     .map(|f| Some(f))
                             };
@@ -723,7 +793,8 @@ impl App {
                                 Err(e) => log::error!("Failed to compile filter: {e:?}"),
                             }
                             SHEET_FILTERS.use_with(ui.ctx(), |map| {
-                                map.entry(sheet_name.clone()).insert_entry(filter);
+                                map.entry(sheet_name.clone())
+                                    .insert_entry((filter_type, filter_text.clone()));
                             });
                         }
                     });

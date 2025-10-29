@@ -8,6 +8,7 @@ use egui::{
 };
 use either::Either;
 use ironworks::file::exh::ColumnKind;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     excel::{
@@ -52,7 +53,7 @@ pub enum CellResponse {
     Row(SheetRef),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MatchOptions {
     pub case_insensitive: bool,
     pub use_display_field: bool,

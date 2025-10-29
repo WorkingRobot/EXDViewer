@@ -4,7 +4,10 @@ use egui::ThemePreference;
 use ironworks::excel::Language;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::utils::{CodeTheme, ColorTheme, GameVersion};
+use crate::{
+    sheet::{FilterInputType, MatchOptions},
+    utils::{CodeTheme, ColorTheme, GameVersion},
+};
 
 pub trait Keyable: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {}
 
@@ -225,8 +228,15 @@ pub const TEXT_USE_SCROLL: DKey<bool> = DKey::new("text-use-scroll", false);
 pub const BACKEND_CONFIG: DKey<Option<BackendConfig>> = DKey::new("backend-config", None);
 pub const LANGUAGE: DKey<Language> = DKey::new("language", Language::English);
 pub const SHEETS_FILTER: DKey<String> = DKey::new("sheets-filter", String::new());
-pub const SHEET_FILTERS: FKey<HashMap<String, String>> =
+pub const SHEET_FILTERS: FKey<HashMap<String, (FilterInputType, String)>> =
     FKey::new("sheet-filters", |_, ()| HashMap::new());
+pub const SHEET_FILTER_OPTIONS: DKey<MatchOptions> = DKey::new(
+    "sheet-filter-options",
+    MatchOptions {
+        case_insensitive: true,
+        use_display_field: true,
+    },
+);
 pub const SELECTED_SHEET: DKey<Option<String>> = DKey::new("selected-sheet", None);
 pub const MISC_SHEETS_SHOWN: DKey<bool> = DKey::new("misc-sheets-shown", false);
 pub const SCHEMA_EDITOR_VISIBLE: DKey<bool> = DKey::new("schema-editor-visible", false);

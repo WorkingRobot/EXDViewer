@@ -1,6 +1,7 @@
-use std::num::NonZeroU32;
+use std::{fmt::Display, num::NonZeroU32};
 
 use anyhow::bail;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     sheet::{
@@ -13,6 +14,24 @@ use crate::{
     },
     stopwatch::stopwatches::FILTER_KEY_STOPWATCH,
 };
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FilterInputType {
+    Equals,
+    #[default]
+    Contains,
+    Complex,
+}
+
+impl Display for FilterInputType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            FilterInputType::Equals => "Equals",
+            FilterInputType::Contains => "Contains",
+            FilterInputType::Complex => "Complex",
+        })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FilterInput {

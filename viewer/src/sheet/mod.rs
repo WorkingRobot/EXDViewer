@@ -17,7 +17,7 @@ use egui::{
     Align, Color32, Direction, FontSelection, Galley, Label, Layout, Response, RichText, Sense,
     text::LayoutJob,
 };
-pub use filter::{ComplexFilter, FilterInput};
+pub use filter::{ComplexFilter, FilterInput, FilterInputType};
 pub use global_context::GlobalContext;
 use intmap::IntMap;
 use ironworks::sestring::SeStr;
