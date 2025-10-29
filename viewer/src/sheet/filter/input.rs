@@ -33,6 +33,16 @@ impl Display for FilterInputType {
     }
 }
 
+impl FilterInputType {
+    pub fn emoji(self) -> &'static str {
+        match self {
+            FilterInputType::Equals => "=",
+            FilterInputType::Contains => "≈",
+            FilterInputType::Complex => "\u{ff0a}",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FilterInput {
     Equals(String),

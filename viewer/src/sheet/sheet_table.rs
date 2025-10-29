@@ -10,14 +10,18 @@ use std::{
     cell::{Cell, RefCell},
     num::NonZero,
     rc::Rc,
+    str::FromStr,
 };
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
 use crate::{
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
-    settings::{SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
-    sheet::{filter::CompiledFilterInput, should_ignore_clicks},
+    settings::{SHEET_FILTER_OPTIONS, SHEET_FILTERS, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
+    sheet::{
+        ComplexFilter, FilterInput, FilterInputType, filter::CompiledFilterInput,
+        should_ignore_clicks,
+    },
     stopwatch::{
         Stopwatch,
         stopwatches::{
@@ -59,7 +63,7 @@ pub struct SheetTable {
     filtered_rows: RefCell<LruCache<CompiledFilterInput, FilterValue>>,
     unfiltered_row_offsets: Rc<RefCell<Vec<f32>>>,
     last_filter: Option<CompiledFilterInput>,
-    current_filter: Option<CompiledFilterInput>,
+    current_filter: Result<Option<CompiledFilterInput>, String>,
     current_filter_promise: Option<FilterPromise>,
     current_filter_cancel_token: Option<Rc<Cell<bool>>>,
 }
@@ -94,12 +98,14 @@ impl SheetTable {
             filtered_rows,
             unfiltered_row_offsets,
             last_filter: None,
-            current_filter: None,
+            current_filter: Ok(None),
             current_filter_promise: None,
             current_filter_cancel_token: None,
         };
 
         ret.size_all_rows(ui);
+
+        ret.update_filter(ui.ctx());
 
         ret
     }
@@ -270,10 +276,14 @@ impl SheetTable {
     }
 
     pub fn has_filter(&self) -> bool {
-        self.current_filter.is_some()
+        matches!(self.current_filter, Ok(Some(..)))
     }
 
-    pub fn set_filter(&mut self, filter: Option<CompiledFilterInput>) {
+    pub fn get_filter_error(&self) -> Option<&str> {
+        self.current_filter.as_ref().err().map(|e| e.as_str())
+    }
+
+    fn set_compiled_filter(&mut self, filter: Result<Option<CompiledFilterInput>, String>) {
         if self.current_filter == filter {
             return;
         }
@@ -281,9 +291,11 @@ impl SheetTable {
         if self
             .current_filter
             .as_ref()
+            .unwrap_or(&None)
+            .as_ref()
             .is_none_or(|f| self.filtered_rows.get_mut().get(f).is_some())
         {
-            self.last_filter = self.current_filter.clone();
+            self.last_filter = self.current_filter.clone().unwrap_or_default();
         }
 
         self.current_filter.clone_from(&filter);
@@ -293,7 +305,7 @@ impl SheetTable {
         self.current_filter_cancel_token.take();
         self.current_filter_promise.take();
 
-        let Some(filter) = filter else { return };
+        let Ok(Some(filter)) = filter else { return };
         if filter.is_empty() || self.filtered_rows.get_mut().get(&filter).is_some() {
             return;
         }
@@ -427,7 +439,7 @@ impl SheetTable {
     }
 
     fn get_filtered_row_count(&mut self) -> usize {
-        if let Some(current_filter) = &self.current_filter {
+        if let Ok(Some(current_filter)) = &self.current_filter {
             if let Some(filter_value) = self.filtered_rows.get_mut().get(current_filter)
                 && let Ok(filter_output) = &filter_value.filter_result
             {
@@ -444,7 +456,7 @@ impl SheetTable {
     }
 
     fn get_filtered_row_nr(&self, filtered_row_nr: u64) -> u64 {
-        if let Some(current_filter) = &self.current_filter {
+        if let Ok(Some(current_filter)) = &self.current_filter {
             if let Some(filter_value) = self.filtered_rows.borrow_mut().get(current_filter)
                 && let Ok(filter_output) = &filter_value.filter_result
                 && let Some(&filtered_row_nr) =
@@ -468,6 +480,8 @@ impl SheetTable {
     fn get_row_offsets(&self) -> Rc<RefCell<Vec<f32>>> {
         self.current_filter
             .as_ref()
+            .unwrap_or(&None)
+            .as_ref()
             .and_then(|f| {
                 let mut rows = self.filtered_rows.borrow_mut();
                 rows.get(f).map(|v| v.row_offsets.clone()).or_else(|| {
@@ -483,7 +497,7 @@ impl SheetTable {
         if let Some(promise) = self.current_filter_promise.take_if(|p| p.ready()) {
             let result = promise.block_and_take();
             self.filtered_rows.get_mut().push(
-                self.current_filter.clone().unwrap(),
+                self.current_filter.clone().unwrap().unwrap(),
                 FilterValue {
                     filter_result: result,
                     row_offsets: Rc::new(RefCell::new(Vec::new())),
@@ -525,6 +539,37 @@ impl SheetTable {
     pub fn invalidate_sizes(&mut self, ui: &mut egui::Ui) {
         self.clear_offsets();
         self.size_all_rows(ui);
+    }
+
+    fn retrieve_filter(&self, ctx: &egui::Context) -> Result<Option<CompiledFilterInput>, String> {
+        let filters = SHEET_FILTERS.get(ctx);
+        let Some((filter_type, filter_text)) = filters.get(self.context().sheet().name()) else {
+            return Ok(None);
+        };
+
+        if filter_text.is_empty() {
+            Ok(None)
+        } else {
+            let input = match filter_type {
+                FilterInputType::Equals => Ok(FilterInput::Equals(filter_text.clone())),
+                FilterInputType::Contains => Ok(FilterInput::Contains(filter_text.clone())),
+                FilterInputType::Complex => {
+                    ComplexFilter::from_str(&filter_text).map(FilterInput::Complex)
+                }
+            };
+
+            input
+                .and_then(|filter| {
+                    self.context()
+                        .compile_filter(&filter, SHEET_FILTER_OPTIONS.get(ctx))
+                        .map_err(|e| e.to_string())
+                })
+                .map(|f| Some(f))
+        }
+    }
+
+    pub fn update_filter(&mut self, ctx: &egui::Context) {
+        self.set_compiled_filter(self.retrieve_filter(ctx));
     }
 }
 

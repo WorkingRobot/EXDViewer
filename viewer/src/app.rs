@@ -1,8 +1,10 @@
-use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc, str::FromStr};
+use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc};
 
 use anyhow::Result;
 use egui::{
-    Button, CentralPanel, FontData, FontFamily, Layout, ScrollArea, TextEdit, Vec2, Widget,
+    Button, CentralPanel, FontData, FontFamily, Layout, RichText, ScrollArea, TextEdit, Vec2,
+    Widget,
+    containers::menu::MenuButton,
     epaint::text::{FontInsert, FontPriority, InsertFontFamily},
     panel::Side,
     style::ScrollStyle,
@@ -32,10 +34,7 @@ use crate::{
         TEXT_WRAP_WIDTH,
     },
     setup::{self, SetupWindow},
-    sheet::{
-        CellResponse, ComplexFilter, FilterInput, FilterInputType, GlobalContext, MatchOptions,
-        SheetTable, TableContext,
-    },
+    sheet::{CellResponse, FilterInputType, GlobalContext, MatchOptions, SheetTable, TableContext},
     shortcuts::{GOTO_ROW, GOTO_SHEET},
     utils::{
         CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, FuzzyMatcher, IconManager,
@@ -686,31 +685,32 @@ impl App {
 
                         ui.spacing_mut().item_spacing.x /= 2.0;
 
-                        let mut filter_dirty = egui::ComboBox::from_id_salt("filter_type")
-                            .selected_text(filter_type.to_string())
-                            .width(ui.spacing().combo_width * 0.8f32)
-                            .show_ui(ui, |ui| {
-                                let mut changed = false;
-                                for value in &[
-                                    FilterInputType::Equals,
-                                    FilterInputType::Contains,
-                                    FilterInputType::Complex,
-                                ] {
-                                    let resp = ui.selectable_value(
-                                        &mut filter_type,
-                                        *value,
-                                        value.to_string(),
-                                    );
-                                    if resp.changed() {
-                                        changed = true;
-                                    }
+                        let (button_resp, menu_resp) = MenuButton::from_button(
+                            Button::new(filter_type.emoji())
+                                .min_size(Vec2::splat(ui.spacing().interact_size.y)),
+                        )
+                        .ui(ui, |ui| {
+                            let mut changed = false;
+                            for value in &[
+                                FilterInputType::Equals,
+                                FilterInputType::Contains,
+                                FilterInputType::Complex,
+                            ] {
+                                let resp =
+                                    ui.selectable_value(&mut filter_type, *value, value.emoji());
+                                if resp.changed() {
+                                    changed = true;
                                 }
-                                changed
-                            })
-                            .inner
-                            .unwrap_or_default();
+                                resp.on_hover_text(value.to_string());
+                            }
+                            changed
+                        });
 
-                        let options = {
+                        button_resp.on_hover_text(format!("Filter Type:\n{filter_type}"));
+
+                        let mut filter_dirty = menu_resp.map(|m| m.inner).unwrap_or_default();
+
+                        {
                             let MatchOptions {
                                 mut case_insensitive,
                                 mut use_display_field,
@@ -724,17 +724,17 @@ impl App {
                                 .toggle_value(&mut use_display_field, "📝")
                                 .on_hover_text("Use Display Field")
                                 .changed();
-                            let ret = MatchOptions {
-                                case_insensitive,
-                                use_display_field,
-                            };
 
                             if is_dirty {
-                                SHEET_FILTER_OPTIONS.set(ctx, ret);
+                                SHEET_FILTER_OPTIONS.set(
+                                    ctx,
+                                    MatchOptions {
+                                        case_insensitive,
+                                        use_display_field,
+                                    },
+                                );
                             }
-
-                            ret
-                        };
+                        }
 
                         ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
                             let is_miscellaneous = backend
@@ -755,47 +755,35 @@ impl App {
                                 }
                             });
 
-                            filter_dirty |= ui
-                                .add_sized(
-                                    Vec2::new(ui.available_width(), 0.0),
-                                    TextEdit::singleline(&mut filter_text).hint_text("Filter"),
-                                )
-                                .changed();
+                            let filter_error = table.get_filter_error();
+
+                            let filter_resp = ui.add_sized(
+                                Vec2::new(ui.available_width(), 0.0),
+                                TextEdit::singleline(&mut filter_text)
+                                    .hint_text("Filter")
+                                    .background_color(if filter_error.is_some() {
+                                        ui.visuals()
+                                            .text_edit_bg_color()
+                                            .blend(ui.visuals().error_fg_color.gamma_multiply(0.2))
+                                    } else {
+                                        ui.visuals().text_edit_bg_color()
+                                    }),
+                            );
+
+                            filter_dirty |= filter_resp.changed();
+
+                            if let Some(text) = filter_error {
+                                filter_resp.on_hover_text(RichText::new(text).monospace());
+                            }
                         });
 
                         if filter_dirty {
-                            log::info!("Compiling {filter_type} filter: {filter_text}");
-                            let compiled_filter = if filter_text.is_empty() {
-                                Ok(None)
-                            } else {
-                                let input = match filter_type {
-                                    FilterInputType::Equals => {
-                                        Ok(FilterInput::Equals(filter_text.clone()))
-                                    }
-                                    FilterInputType::Contains => {
-                                        Ok(FilterInput::Contains(filter_text.clone()))
-                                    }
-                                    FilterInputType::Complex => {
-                                        ComplexFilter::from_str(&filter_text)
-                                            .map(FilterInput::Complex)
-                                    }
-                                };
-
-                                input
-                                    .map_err(|e| anyhow::anyhow!("Failed to parse filter: {e}"))
-                                    .and_then(|filter| {
-                                        table.context().compile_filter(&filter, options)
-                                    })
-                                    .map(|f| Some(f))
-                            };
-                            match compiled_filter {
-                                Ok(compiled_filter) => table.set_filter(compiled_filter),
-                                Err(e) => log::error!("Failed to compile filter: {e:?}"),
-                            }
                             SHEET_FILTERS.use_with(ui.ctx(), |map| {
                                 map.entry(sheet_name.clone())
                                     .insert_entry((filter_type, filter_text.clone()));
                             });
+
+                            table.update_filter(ui.ctx());
                         }
                     });
                     ui.add_space(4.0);
