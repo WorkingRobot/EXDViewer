@@ -52,6 +52,7 @@ comparator           =  {
   | wildcard_comparator
   | regex_comparator
   | range_comparator
+  | number_comparator
 }
 negatable_comparator = _{ not? ~ comparator }
 
@@ -61,6 +62,7 @@ string_comparator   = _{ (_STARTS_WITH | _ENDS_WITH | _CONTAINS | _FUZZY) ~ stri
 wildcard_comparator = _{ _WILDCARD ~ string_value }
 regex_comparator    = _{ _REGEX ~ regex_value }
 range_comparator    = _{ _RANGE ~ range_value }
+number_comparator   = _{ (_GREATEREQ | _LESSEREQ | _GREATER | _LESSER) ~ number_value }
 
 // Strict comparator modifier
 STRICT_KEY   =  { "=" }
@@ -72,6 +74,10 @@ _FUZZY       = _{ FUZZY ~ STRICT_KEY? }
 _WILDCARD    = _{ WILDCARD ~ STRICT_KEY? }
 _REGEX       = _{ REGEX ~ STRICT_KEY? }
 _RANGE       = _{ RANGE ~ STRICT_KEY? }
+_GREATEREQ   = _{ GREATEREQ ~ STRICT_KEY? }
+_LESSEREQ    = _{ LESSEREQ ~ STRICT_KEY? }
+_GREATER     = _{ GREATER }
+_LESSER      = _{ LESSER }
 
 // Comparator operators
 EQUALS      = { "=" }
@@ -82,12 +88,17 @@ FUZZY       = { "~=" }
 WILDCARD    = { "?=" }
 REGEX       = { "/=" }
 RANGE       = { "|=" }
+GREATEREQ   = { ">=" }
+LESSEREQ    = { "<=" }
+GREATER     = { ">" }
+LESSER      = { "<" }
 
 // Values
 strnum_value = { number | string_value }
 string_value = { quoted_string | bare_string }
-regex_value  = { string_value | regex }
+regex_value  = { regex | string_value }
 range_value  = { range | number }
+number_value = { number }
 
 // Quoted string: "..." with escaping
 quoted_string  = ${ PUSH(QUOTE) ~ quoted_charseq ~ POP }

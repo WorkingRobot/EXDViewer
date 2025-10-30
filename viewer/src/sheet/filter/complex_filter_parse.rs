@@ -203,6 +203,14 @@ fn parse_comparator(pair: Pair<'_, Rule>) -> Result<(FilterValue, bool), String>
                 _ => FilterValue::Range(ret),
             }
         }
+        Rule::GREATEREQ => FilterValue::Range(FilterRange::AtLeast(parse_number_value(value)?)),
+        Rule::LESSEREQ => FilterValue::Range(FilterRange::AtMost(parse_number_value(value)?)),
+        Rule::GREATER => FilterValue::Range(FilterRange::AtLeast(
+            parse_number_value(value)?.saturating_add(1),
+        )),
+        Rule::LESSER => FilterValue::Range(FilterRange::AtMost(
+            parse_number_value(value)?.saturating_sub(1),
+        )),
         _ => unreachable!("Unexpected operator in comparator: {:?}", op.as_rule()),
     };
     Ok((value, is_strict))
@@ -261,6 +269,16 @@ fn parse_range_value(pair: Pair<'_, Rule>) -> Result<FilterRange, String> {
         }
         _ => unreachable!("Unexpected rule in range_value: {:?}", inner.as_rule()),
     }
+}
+
+fn parse_number_value(pair: Pair<'_, Rule>) -> Result<i128, String> {
+    assert_eq!(pair.as_rule(), Rule::number_value);
+    let inner = pair
+        .into_inner()
+        .exactly_one()
+        .map_err(|_| "Expected exactly one token inside range_value (number_value)".to_string())?;
+    assert_eq!(inner.as_rule(), Rule::number);
+    parse_number(inner)
 }
 
 fn parse_quoted_string(pair: Pair<'_, Rule>) -> Result<String, String> {
@@ -441,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_regex() {
-        let filter_str = r#"Column1 /= /^Hello.*World$/i"#;
+        let filter_str = r#"Column1 /= /^Hello.* \d World$/i"#;
         test_filter(filter_str);
     }
 
@@ -500,8 +518,50 @@ mod tests {
     }
 
     #[test]
+    fn test_simple_regex() {
+        let filter_str = r#"Column1 /= "Hello.* \\d""#;
+        test_filter(filter_str);
+    }
+
+    #[test]
     fn test_strict_range() {
-        let filter_str = r#"Column1 |== 10..=20"#;
+        let filter_str = r#"Column1 |== 10..20"#;
+        test_filter(filter_str);
+    }
+
+    #[test]
+    fn test_greater() {
+        let filter_str = r#"Column1 > 10"#;
+        test_filter(filter_str);
+    }
+
+    #[test]
+    fn test_lesser() {
+        let filter_str = r#"Column1 < 20"#;
+        test_filter(filter_str);
+    }
+
+    #[test]
+    fn test_greatereq() {
+        let filter_str = r#"Column1 >= 10"#;
+        test_filter(filter_str);
+    }
+
+    #[test]
+    fn test_lessereq() {
+        let filter_str = r#"Column1 <= 20"#;
+        test_filter(filter_str);
+    }
+
+    #[test]
+    fn test_strict_greq() {
+        let filter_str = r#"Colum?1 >== 10"#;
+        test_filter(filter_str);
+    }
+
+    #[test]
+    fn test_strict_lesseq() {
+        let filter_str = r#"Colum?1 <== 20"#;
         test_filter(filter_str);
     }
 
