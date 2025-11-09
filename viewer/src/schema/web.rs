@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use either::Either;
 use serde::Deserialize;
 
 use crate::utils::{GameVersion, fetch_url, fetch_url_str};
@@ -27,11 +28,16 @@ impl WebProvider {
         WebProvider { base_url }
     }
 
-    pub fn new_github(owner: &str, repo: &str, version: Option<GameVersion>) -> Self {
+    pub fn new_github(
+        owner: &str,
+        repo: &str,
+        version: Option<Either<GameVersion, String>>,
+    ) -> Self {
         WebProvider {
             base_url: format!(
                 "https://raw.githubusercontent.com/{owner}/{repo}/refs/heads/{}",
-                version.map_or("latest".to_string(), |v| format!("ver/{v}"))
+                version.map_or("latest".to_string(), |b| b
+                    .either(|v| format!("ver/{v}"), |b| b))
             ),
         }
     }
@@ -46,7 +52,7 @@ impl WebProvider {
     pub async fn fetch_github_repository(
         owner: &str,
         repo: &str,
-    ) -> anyhow::Result<Vec<GameVersion>> {
+    ) -> anyhow::Result<(Vec<GameVersion>, Vec<String>)> {
         if !Self::is_valid_github_name(owner) || !Self::is_valid_github_name(repo) {
             return Err(anyhow::anyhow!("Invalid GitHub repository format"));
         }
@@ -56,12 +62,17 @@ impl WebProvider {
         let branches: Vec<GithubBranch> = serde_json::from_slice(&resp)?;
 
         let mut vers = Vec::new();
+        let mut other_branches = Vec::new();
         let mut has_latest = false;
         for branch in branches {
             if branch.name == "latest" {
                 has_latest = true;
             } else if let Some(version_string) = branch.name.strip_prefix("ver/") {
                 vers.push(GameVersion::new(version_string)?);
+            } else if branch.name == "main" || branch.name == "master" {
+                continue;
+            } else {
+                other_branches.push(branch.name);
             }
         }
 
@@ -72,7 +83,7 @@ impl WebProvider {
         vers.sort();
         vers.reverse();
 
-        Ok(vers)
+        Ok((vers, other_branches))
     }
 }
 

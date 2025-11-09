@@ -62,8 +62,8 @@ impl Backend {
                     BoxedSchemaProvider::new_worker(WorkerProvider::new(handle).await?)
                 }
 
-                SchemaLocation::Github((owner, repo), version) => {
-                    BoxedSchemaProvider::new_web(WebProvider::new_github(&owner, &repo, version))
+                SchemaLocation::Github((owner, repo), branch) => {
+                    BoxedSchemaProvider::new_web(WebProvider::new_github(&owner, &repo, branch))
                 }
 
                 SchemaLocation::Web(base_url) => {

@@ -1,4 +1,5 @@
 use egui::{Frame, Layout, Modal, Sense, TextEdit, UiBuilder, Vec2, WidgetText};
+use either::Either;
 
 use crate::{
     DEFAULT_API_URL,
@@ -27,7 +28,7 @@ pub struct SetupWindow {
     display_error: Option<anyhow::Error>,
 
     web_version_promise: VersionPromiseHolder<String, VersionInfo>,
-    github_branch_promise: VersionPromiseHolder<(String, String), Vec<GameVersion>>,
+    github_branch_promise: VersionPromiseHolder<(String, String), (Vec<GameVersion>, Vec<String>)>,
 }
 
 impl SetupWindow {
@@ -497,7 +498,7 @@ impl SetupWindow {
                                     ui.label("Version:");
 
                                     if let Some((_, promise)) = &mut self.github_branch_promise {
-                                        if let Some(versions) = promise.get_mut(|r| match r {
+                                        if let Some(branches) = promise.get_mut(|r| match r {
                                             Ok(vers) => {
                                                 self.display_error = None;
                                                 Some(vers)
@@ -508,7 +509,7 @@ impl SetupWindow {
                                                 None
                                             }
                                         }) {
-                                            if let Some(versions) = versions {
+                                            if let Some((versions, other_branches)) = branches {
                                                 egui::ComboBox::from_id_salt(
                                                     "setup_github_version",
                                                 )
@@ -518,15 +519,27 @@ impl SetupWindow {
                                                 ))
                                                 .width(ui.available_width())
                                                 .show_ui(ui, |ui| {
+                                                    if !other_branches.is_empty() {
+                                                        for entry in other_branches.iter() {
+                                                            ui.selectable_value(
+                                                                version,
+                                                                Some(Either::Right(entry.clone())),
+                                                                entry.to_string(),
+                                                            );
+                                                        }
+                                                        ui.separator();
+                                                    }
+
                                                     ui.selectable_value(
                                                         version,
                                                         None,
                                                         "Latest".to_string(),
                                                     );
+
                                                     for entry in versions.iter() {
                                                         ui.selectable_value(
                                                             version,
-                                                            Some(entry.clone()),
+                                                            Some(Either::Left(entry.clone())),
                                                             entry.to_string(),
                                                         );
                                                     }

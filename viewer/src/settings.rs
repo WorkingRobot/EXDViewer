@@ -1,6 +1,7 @@
 use std::{collections::HashMap, num::NonZero, sync::Arc};
 
 use egui::ThemePreference;
+use either::Either;
 use ironworks::excel::Language;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -280,7 +281,7 @@ pub enum SchemaLocation {
     Local(String),
     #[cfg(target_arch = "wasm32")]
     Worker(String),
-    Github((String, String), Option<GameVersion>),
+    Github((String, String), Option<Either<GameVersion, String>>),
     Web(String),
 }
 
