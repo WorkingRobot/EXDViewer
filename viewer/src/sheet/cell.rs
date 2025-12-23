@@ -141,6 +141,14 @@ impl CellValue {
     pub fn is_in_progress(&self) -> bool {
         matches!(self, CellValue::InProgressLink(_))
     }
+
+    pub fn is_empty(&self) -> bool {
+        if let CellValue::String(s) = self {
+            s.is_empty()
+        } else {
+            false
+        }
+    }
 }
 
 impl<'a> Cell<'a> {
@@ -312,7 +320,8 @@ impl<'a> Cell<'a> {
                             .map(|cell| -> anyhow::Result<Box<CellValue>> {
                                 Ok(Box::new(cell?.read(resolve_display_field)?))
                             })
-                            .transpose()?,
+                            .transpose()?
+                            .filter(|c| !c.is_empty()),
                     }
                 }
                 Some(None) => CellValue::InProgressLink(row_id),
