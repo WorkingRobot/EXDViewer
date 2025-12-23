@@ -72,6 +72,14 @@ impl FuzzyMatcher {
     }
 
     pub fn parse_pattern(pattern: &str) -> Pattern {
-        Pattern::parse(pattern, CaseMatching::Smart, Normalization::Smart)
+        // Helps match against something like "QUEST" => "Quest"
+        // CaseMatching::Smart only works if it's all lowercase
+        let case_matching = if pattern.chars().all(|c| c.is_uppercase()) {
+            CaseMatching::Ignore
+        } else {
+            CaseMatching::Smart
+        };
+
+        Pattern::parse(pattern, case_matching, Normalization::Smart)
     }
 }
