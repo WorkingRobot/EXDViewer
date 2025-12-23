@@ -59,8 +59,7 @@ impl TableContext {
             .map(|(i, _p)| i as u32)
             .collect_vec();
 
-        let filter_cache = FilterCache::new(&schema_columns, &sheet_columns)
-            .expect("Failed to create FilterCache");
+        let filter_cache = FilterCache::new(&schema_columns, &sheet_columns);
 
         Self(Rc::new(TableContextImpl {
             global,

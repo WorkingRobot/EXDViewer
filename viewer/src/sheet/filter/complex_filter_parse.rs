@@ -291,9 +291,9 @@ fn parse_quoted_string(pair: Pair<'_, Rule>) -> Result<String, String> {
     unquote_string(charseq.as_str())
 }
 
-fn parse_bare_string(pair: Pair<'_, Rule>) -> Result<&'_ str, String> {
+fn parse_bare_string(pair: Pair<'_, Rule>) -> &'_ str {
     assert_eq!(pair.as_rule(), Rule::bare_string);
-    Ok(pair.as_str())
+    pair.as_str()
 }
 
 fn parse_regex(pair: Pair<'_, Rule>) -> Result<Regex, String> {

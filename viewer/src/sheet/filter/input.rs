@@ -73,8 +73,8 @@ impl CompiledFilterInput {
         self.0.is_none()
     }
 
-    pub fn input(&self) -> &Option<CompiledComplexFilter> {
-        &self.0
+    pub fn input(&self) -> Option<&CompiledComplexFilter> {
+        self.0.as_ref()
     }
 
     pub fn options(&self) -> &MatchOptions {

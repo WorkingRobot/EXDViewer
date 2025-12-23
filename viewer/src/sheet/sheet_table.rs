@@ -378,7 +378,7 @@ impl SheetTable {
 
             let mut filtered_rows: Vec<u32>;
             let mut is_in_progress = false;
-            if filter.input().as_ref().unwrap().has_fuzzy {
+            if filter.input().unwrap().has_fuzzy {
                 let mut scored_rows = Vec::new();
                 filter_core(ctx, promise_token, |ctx, row_nr, row_id, subrow_id, row| {
                     let (score, row_in_progress) =

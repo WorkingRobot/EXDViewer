@@ -33,11 +33,8 @@ pub struct FilterCache {
 }
 
 impl FilterCache {
-    pub fn new(
-        schema_columns: &[SchemaColumn],
-        sheet_columns: &[SheetColumnDefinition],
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
+    pub fn new(schema_columns: &[SchemaColumn], sheet_columns: &[SheetColumnDefinition]) -> Self {
+        Self {
             wildcard_cache: LazyCell::new(|| RefCell::new(HashMap::with_capacity(256))),
             columns: RefCell::new(Rc::new(
                 schema_columns
@@ -47,7 +44,7 @@ impl FilterCache {
                     .collect_vec(),
             )),
             matcher: FuzzyMatcher::new(),
-        })
+        }
     }
 
     pub fn compile(
@@ -121,7 +118,7 @@ impl FilterCache {
                 let compiled_key_idx = if let Some(idx) = compiled_key_idx {
                     idx
                 } else {
-                    let compiled_key = self.compile_complex_key(key)?;
+                    let compiled_key = self.compile_complex_key(key);
                     lookup.0.push(key.clone());
                     lookup.1.push(compiled_key);
                     assert_eq!(lookup.0.len(), lookup.1.len());
@@ -147,8 +144,8 @@ impl FilterCache {
         })
     }
 
-    fn compile_complex_key(&self, key: &FilterKey) -> anyhow::Result<CompiledFilterKey> {
-        Ok(match key {
+    fn compile_complex_key(&self, key: &FilterKey) -> CompiledFilterKey {
+        match key {
             FilterKey::RowId => CompiledFilterKey::RowId,
             FilterKey::Column(wildcard, is_strict) if wildcard.is_catch_all() => {
                 CompiledFilterKey::Column(self.columns(), *is_strict)
@@ -161,7 +158,7 @@ impl FilterCache {
                     .clone(),
                 *is_strict,
             ),
-        })
+        }
     }
 
     fn compile_complex_column_uncached(
