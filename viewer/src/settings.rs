@@ -1,7 +1,6 @@
-use std::{collections::HashMap, num::NonZero, sync::Arc};
+use std::{cmp::Reverse, collections::HashMap, fmt::Display, num::NonZero, sync::Arc};
 
 use egui::ThemePreference;
-use either::Either;
 use ironworks::excel::Language;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -276,12 +275,73 @@ pub enum InstallLocation {
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct GithubSchemaLocation {
+    pub owner: String,
+    pub repo: String,
+    pub branch: GithubSchemaBranch,
+}
+
+impl GithubSchemaLocation {
+    pub fn base_url(&self) -> String {
+        if let GithubSchemaBranch::PullRequest {
+            full_name, branch, ..
+        } = &self.branch
+        {
+            format!("https://raw.githubusercontent.com/{full_name}/refs/heads/{branch}")
+        } else {
+            format!(
+                "https://raw.githubusercontent.com/{}/{}/refs/heads/{}",
+                self.owner,
+                self.repo,
+                match &self.branch {
+                    GithubSchemaBranch::Latest => "latest",
+                    GithubSchemaBranch::Other(name) => name,
+                    GithubSchemaBranch::Version(v) => &format!("ver/{}", v.0),
+                    GithubSchemaBranch::PullRequest { .. } => unreachable!(),
+                }
+            )
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GithubSchemaBranch {
+    Latest,
+    PullRequest {
+        number: u32,
+        title: String,
+        label: String,
+        username: String,
+        full_name: String,
+        branch: String,
+    },
+    Other(String),
+    Version(Reverse<GameVersion>),
+}
+
+impl Display for GithubSchemaBranch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GithubSchemaBranch::Latest => write!(f, "Latest"),
+            GithubSchemaBranch::Version(v) => v.0.fmt(f),
+            GithubSchemaBranch::Other(name) => name.fmt(f),
+            GithubSchemaBranch::PullRequest {
+                number,
+                title,
+                label,
+                ..
+            } => write!(f, "PR #{number} - {title} ({label})"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum SchemaLocation {
     #[cfg(not(target_arch = "wasm32"))]
     Local(String),
     #[cfg(target_arch = "wasm32")]
     Worker(String),
-    Github((String, String), Option<Either<GameVersion, String>>),
+    Github(GithubSchemaLocation),
     Web(String),
 }
 

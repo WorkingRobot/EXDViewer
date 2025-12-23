@@ -1,13 +1,15 @@
 use egui::{Frame, Layout, Modal, Sense, TextEdit, UiBuilder, Vec2, WidgetText};
-use either::Either;
 
 use crate::{
     DEFAULT_API_URL,
     backend::Backend,
     excel::web::{VersionInfo, WebFileProvider},
     schema::web::WebProvider,
-    settings::{BACKEND_CONFIG, BackendConfig, InstallLocation, SchemaLocation},
-    utils::{ConvertiblePromise, GameVersion, PromiseKind, TrackedPromise, UnsendPromise},
+    settings::{
+        BACKEND_CONFIG, BackendConfig, GithubSchemaBranch, GithubSchemaLocation, InstallLocation,
+        SchemaLocation,
+    },
+    utils::{ConvertiblePromise, PromiseKind, TrackedPromise, UnsendPromise},
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -28,7 +30,7 @@ pub struct SetupWindow {
     display_error: Option<anyhow::Error>,
 
     web_version_promise: VersionPromiseHolder<String, VersionInfo>,
-    github_branch_promise: VersionPromiseHolder<(String, String), (Vec<GameVersion>, Vec<String>)>,
+    github_branch_promise: VersionPromiseHolder<(String, String), Vec<GithubSchemaBranch>>,
 }
 
 impl SetupWindow {
@@ -46,13 +48,11 @@ impl SetupWindow {
 
         Self {
             location,
-            schema: SchemaLocation::Github(
-                (
-                    super::DEFAULT_GITHUB_REPO.0.to_string(),
-                    super::DEFAULT_GITHUB_REPO.1.to_string(),
-                ),
-                None,
-            ),
+            schema: SchemaLocation::Github(GithubSchemaLocation {
+                owner: super::DEFAULT_GITHUB_REPO.0.to_string(),
+                repo: super::DEFAULT_GITHUB_REPO.1.to_string(),
+                branch: GithubSchemaBranch::Latest,
+            }),
             is_startup,
             #[cfg(target_arch = "wasm32")]
             location_promises: Default::default(),
@@ -355,16 +355,14 @@ impl SetupWindow {
                                 }
                                 if radio(
                                     col_1,
-                                    matches!(self.schema, SchemaLocation::Github(_, _)),
+                                    matches!(self.schema, SchemaLocation::Github(_)),
                                     "GitHub",
                                 ) {
-                                    self.schema = SchemaLocation::Github(
-                                        (
-                                            super::DEFAULT_GITHUB_REPO.0.to_string(),
-                                            super::DEFAULT_GITHUB_REPO.1.to_string(),
-                                        ),
-                                        None,
-                                    );
+                                    self.schema = SchemaLocation::Github(GithubSchemaLocation {
+                                        owner: super::DEFAULT_GITHUB_REPO.0.to_string(),
+                                        repo: super::DEFAULT_GITHUB_REPO.1.to_string(),
+                                        branch: GithubSchemaBranch::Latest,
+                                    });
                                 }
                                 if radio(
                                     col_2,
@@ -454,7 +452,11 @@ impl SetupWindow {
                                 }
                             }
 
-                            SchemaLocation::Github((owner, repo), version) => {
+                            SchemaLocation::Github(GithubSchemaLocation {
+                                owner,
+                                repo,
+                                branch,
+                            }) => {
                                 ui.horizontal(|ui| {
                                     ui.columns_const(|[col_owner, col_repo]| {
                                         col_owner.horizontal(|ui| {
@@ -487,8 +489,19 @@ impl SetupWindow {
                                         (owner.clone(), repo.clone()),
                                         ConvertiblePromise::new_promise(
                                             TrackedPromise::spawn_local(async move {
-                                                WebProvider::fetch_github_repository(&owner, &repo)
-                                                    .await
+                                                let branches =
+                                                    WebProvider::fetch_github_repository(
+                                                        &owner, &repo,
+                                                    )
+                                                    .await?;
+                                                let prs = WebProvider::fetch_github_pull_requests(
+                                                    &owner, &repo,
+                                                )
+                                                .await?;
+                                                let mut all_branches = branches;
+                                                all_branches.extend(prs);
+                                                all_branches.sort();
+                                                Ok(all_branches)
                                             }),
                                         ),
                                     ));
@@ -509,39 +522,76 @@ impl SetupWindow {
                                                 None
                                             }
                                         }) {
-                                            if let Some((versions, other_branches)) = branches {
+                                            if let Some(branches) = branches {
                                                 egui::ComboBox::from_id_salt(
                                                     "setup_github_version",
                                                 )
-                                                .selected_text(version.as_ref().map_or_else(
-                                                    || "Latest".to_string(),
-                                                    |v| v.to_string(),
-                                                ))
+                                                .selected_text(branch.to_string())
                                                 .width(ui.available_width())
                                                 .show_ui(ui, |ui| {
-                                                    if !other_branches.is_empty() {
-                                                        for entry in other_branches.iter() {
+                                                    let mut branches_latest = vec![];
+                                                    let mut branches_version = vec![];
+                                                    let mut branches_other = vec![];
+                                                    let mut branches_pr = vec![];
+                                                    for entry in branches.iter() {
+                                                        let vec = match entry {
+                                                            GithubSchemaBranch::Latest => {
+                                                                &mut branches_latest
+                                                            }
+                                                            GithubSchemaBranch::Version(_) => {
+                                                                &mut branches_version
+                                                            }
+                                                            GithubSchemaBranch::Other(_) => {
+                                                                &mut branches_other
+                                                            }
+                                                            GithubSchemaBranch::PullRequest {
+                                                                ..
+                                                            } => &mut branches_pr,
+                                                        };
+                                                        vec.push(entry);
+                                                    }
+
+                                                    if !branches_latest.is_empty() {
+                                                        for entry in branches_latest.iter() {
                                                             ui.selectable_value(
-                                                                version,
-                                                                Some(Either::Right(entry.clone())),
+                                                                branch,
+                                                                (*entry).clone(),
                                                                 entry.to_string(),
                                                             );
                                                         }
                                                         ui.separator();
                                                     }
 
-                                                    ui.selectable_value(
-                                                        version,
-                                                        None,
-                                                        "Latest".to_string(),
-                                                    );
+                                                    if !branches_pr.is_empty() {
+                                                        for entry in branches_pr.iter() {
+                                                            ui.selectable_value(
+                                                                branch,
+                                                                (*entry).clone(),
+                                                                entry.to_string(),
+                                                            );
+                                                        }
+                                                        ui.separator();
+                                                    }
 
-                                                    for entry in versions.iter() {
-                                                        ui.selectable_value(
-                                                            version,
-                                                            Some(Either::Left(entry.clone())),
-                                                            entry.to_string(),
-                                                        );
+                                                    if !branches_other.is_empty() {
+                                                        for entry in branches_other.iter() {
+                                                            ui.selectable_value(
+                                                                branch,
+                                                                (*entry).clone(),
+                                                                entry.to_string(),
+                                                            );
+                                                        }
+                                                        ui.separator();
+                                                    }
+
+                                                    if !branches_version.is_empty() {
+                                                        for entry in branches_version.iter() {
+                                                            ui.selectable_value(
+                                                                branch,
+                                                                (*entry).clone(),
+                                                                entry.to_string(),
+                                                            );
+                                                        }
                                                     }
                                                 });
                                             } else {
@@ -624,7 +674,7 @@ impl SetupWindow {
         {
             return false;
         }
-        if matches!(self.schema, SchemaLocation::Github(_, _))
+        if matches!(self.schema, SchemaLocation::Github(_))
             && self
                 .github_branch_promise
                 .as_ref()

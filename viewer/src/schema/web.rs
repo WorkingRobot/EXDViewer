@@ -1,8 +1,13 @@
+use std::cmp::Reverse;
+
 use async_trait::async_trait;
-use either::Either;
+use itertools::Itertools;
 use serde::Deserialize;
 
-use crate::utils::{GameVersion, fetch_url, fetch_url_str};
+use crate::{
+    settings::{GithubSchemaBranch, GithubSchemaLocation},
+    utils::{GameVersion, fetch_url, fetch_url_str},
+};
 
 use super::provider::SchemaProvider;
 
@@ -23,22 +28,39 @@ pub struct GithubBranch {
     pub protected: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubPullRequest {
+    pub number: u32,
+    pub title: String,
+    pub user: GithubPullRequestUser,
+    pub head: GithubPullRequestHead,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubPullRequestUser {
+    pub login: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubPullRequestHead {
+    pub label: String,
+    pub r#ref: String,
+    pub repo: GithubPullRequestRepo,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubPullRequestRepo {
+    pub full_name: String,
+}
+
 impl WebProvider {
     pub fn new(base_url: String) -> Self {
         WebProvider { base_url }
     }
 
-    pub fn new_github(
-        owner: &str,
-        repo: &str,
-        version: Option<Either<GameVersion, String>>,
-    ) -> Self {
+    pub fn new_github(location: &GithubSchemaLocation) -> Self {
         WebProvider {
-            base_url: format!(
-                "https://raw.githubusercontent.com/{owner}/{repo}/refs/heads/{}",
-                version.map_or("latest".to_string(), |b| b
-                    .either(|v| format!("ver/{v}"), |b| b))
-            ),
+            base_url: location.base_url(),
         }
     }
 
@@ -52,7 +74,7 @@ impl WebProvider {
     pub async fn fetch_github_repository(
         owner: &str,
         repo: &str,
-    ) -> anyhow::Result<(Vec<GameVersion>, Vec<String>)> {
+    ) -> anyhow::Result<Vec<GithubSchemaBranch>> {
         if !Self::is_valid_github_name(owner) || !Self::is_valid_github_name(repo) {
             return Err(anyhow::anyhow!("Invalid GitHub repository format"));
         }
@@ -61,29 +83,51 @@ impl WebProvider {
 
         let branches: Vec<GithubBranch> = serde_json::from_slice(&resp)?;
 
-        let mut vers = Vec::new();
-        let mut other_branches = Vec::new();
-        let mut has_latest = false;
+        let mut ret = Vec::new();
         for branch in branches {
-            if branch.name == "latest" {
-                has_latest = true;
-            } else if let Some(version_string) = branch.name.strip_prefix("ver/") {
-                vers.push(GameVersion::new(version_string)?);
-            } else if branch.name == "main" || branch.name == "master" {
-                continue;
-            } else {
-                other_branches.push(branch.name);
-            }
+            ret.push(match branch.name.as_str() {
+                "latest" => GithubSchemaBranch::Latest,
+                "main" | "master" => continue,
+                _ => {
+                    if let Some(version_string) = branch.name.strip_prefix("ver/")
+                        && let Ok(version) = GameVersion::new(version_string)
+                    {
+                        GithubSchemaBranch::Version(Reverse(version))
+                    } else {
+                        GithubSchemaBranch::Other(branch.name)
+                    }
+                }
+            });
         }
 
-        if !has_latest {
-            anyhow::bail!("No 'latest' branch found in repository {owner}/{repo}");
+        Ok(ret)
+    }
+
+    pub async fn fetch_github_pull_requests(
+        owner: &str,
+        repo: &str,
+    ) -> anyhow::Result<Vec<GithubSchemaBranch>> {
+        if !Self::is_valid_github_name(owner) || !Self::is_valid_github_name(repo) {
+            return Err(anyhow::anyhow!("Invalid GitHub repository format"));
         }
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls?per_page=100");
+        let resp = fetch_url(url).await?;
 
-        vers.sort();
-        vers.reverse();
+        let pulls: Vec<GithubPullRequest> = serde_json::from_slice(&resp)?;
 
-        Ok((vers, other_branches))
+        let pulls = pulls
+            .into_iter()
+            .map(|pull| GithubSchemaBranch::PullRequest {
+                number: pull.number,
+                title: pull.title,
+                label: pull.head.label,
+                username: pull.user.login,
+                full_name: pull.head.repo.full_name,
+                branch: pull.head.r#ref,
+            })
+            .collect_vec();
+
+        Ok(pulls)
     }
 }
 
