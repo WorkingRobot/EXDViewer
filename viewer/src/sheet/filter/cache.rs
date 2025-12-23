@@ -98,7 +98,7 @@ impl FilterCache {
 
     fn compile_complex(&self, filter: &ComplexFilter) -> anyhow::Result<CompiledComplexFilter> {
         let mut lookup = (Vec::new(), Vec::new());
-        let compiled_filter = self.compile_complex_part(&filter, &mut lookup)?;
+        let compiled_filter = self.compile_complex_part(filter, &mut lookup)?;
         Ok(CompiledComplexFilter {
             filter: compiled_filter,
             lookup: lookup.1,
@@ -131,13 +131,13 @@ impl FilterCache {
             }
             ComplexFilter::And(parts) => CompiledFilterPart::And(
                 parts
-                    .into_iter()
+                    .iter()
                     .map(|p| self.compile_complex_part(p, lookup))
                     .collect::<anyhow::Result<Vec<_>>>()?,
             ),
             ComplexFilter::Or(parts) => CompiledFilterPart::Or(
                 parts
-                    .into_iter()
+                    .iter()
                     .map(|p| self.compile_complex_part(p, lookup))
                     .collect::<anyhow::Result<Vec<_>>>()?,
             ),
@@ -157,7 +157,7 @@ impl FilterCache {
                 self.wildcard_cache
                     .borrow_mut()
                     .entry(wildcard.clone())
-                    .or_insert_with_key(|wildcard| self.compile_complex_column_uncached(&wildcard))
+                    .or_insert_with_key(|wildcard| self.compile_complex_column_uncached(wildcard))
                     .clone(),
                 *is_strict,
             ),
@@ -184,9 +184,7 @@ impl FilterCache {
             FilterValue::Equals(Either::Left(v)) => {
                 filter_string(cell, v, options.case_insensitive, |a, b| a == b)
             }
-            FilterValue::Equals(Either::Right(v)) => {
-                cell.coerce_integer().map_or(false, |i| i == *v)
-            }
+            FilterValue::Equals(Either::Right(v)) => cell.coerce_integer() == Some(*v),
             FilterValue::StartsWith(v) => {
                 filter_string(cell, v, options.case_insensitive, |a, b| a.starts_with(b))
             }
@@ -196,10 +194,10 @@ impl FilterCache {
             FilterValue::Contains(v) => {
                 filter_string(cell, v, options.case_insensitive, |a, b| a.contains(b))
             }
-            FilterValue::Fuzzy(v) => self.matcher.score_one(&*v, &cell.coerce_string()).is_some(),
+            FilterValue::Fuzzy(v) => self.matcher.score_one(v, &cell.coerce_string()).is_some(),
             FilterValue::Wildcard(v) => v.matches(&cell.coerce_string()),
             FilterValue::Regex(v) => v.is_match(&cell.coerce_string()),
-            FilterValue::Range(v) => cell.coerce_integer().map_or(false, |i| v.contains(i)),
+            FilterValue::Range(v) => cell.coerce_integer().is_some_and(|i| v.contains(i)),
         }
     }
 
@@ -211,7 +209,7 @@ impl FilterCache {
         options: MatchOptions,
     ) -> Option<NonZeroU32> {
         if let FilterValue::Fuzzy(v) = value {
-            return self.matcher.score_one(&*v, &cell.coerce_string());
+            self.matcher.score_one(v, &cell.coerce_string())
         } else {
             self.match_cell(cell, value, options)
                 .then_some(NonZeroU32::new(1).unwrap())

@@ -121,7 +121,7 @@ impl DummyRepeatedStopwatch {
 
     pub fn reset(&self) {}
 
-    pub fn start(&'_ self) -> () {}
+    pub fn start(&'_ self) {}
 
     pub fn report(&self) {}
 }

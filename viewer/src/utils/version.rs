@@ -1,4 +1,4 @@
-/// https://github.com/WorkingRobot/ffxiv-downloader/blob/main/rust/core/src/file/version.rs
+/// <https://github.com/WorkingRobot/ffxiv-downloader/blob/main/rust/core/src/file/version.rs>
 use std::{
     cmp::Ordering,
     fmt::{self, Display},

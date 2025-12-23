@@ -151,7 +151,7 @@ impl Deref for Wildcard {
 
 impl Wildcard {
     pub fn is_catch_all(&self) -> bool {
-        self.0.pattern_chars() == &['*']
+        self.0.pattern_chars() == ['*']
     }
 }
 
@@ -206,9 +206,9 @@ impl FilterRange {
 impl Display for FilterRange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FilterRange::AtLeast(start) => write!(f, ">= {}", start),
-            FilterRange::AtMost(end) => write!(f, "<= {}", end),
-            FilterRange::Between(start, end) => write!(f, "{}..{}", start, end),
+            FilterRange::AtLeast(start) => write!(f, ">= {start}"),
+            FilterRange::AtMost(end) => write!(f, "<= {end}"),
+            FilterRange::Between(start, end) => write!(f, "{start}..{end}"),
         }
     }
 }

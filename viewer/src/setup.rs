@@ -552,10 +552,10 @@ impl SetupWindow {
                                                     }
 
                                                     if !branches_latest.is_empty() {
-                                                        for entry in branches_latest.iter() {
+                                                        for entry in branches_latest {
                                                             ui.selectable_value(
                                                                 branch,
-                                                                (*entry).clone(),
+                                                                entry.clone(),
                                                                 entry.to_string(),
                                                             );
                                                         }
@@ -563,10 +563,10 @@ impl SetupWindow {
                                                     }
 
                                                     if !branches_pr.is_empty() {
-                                                        for entry in branches_pr.iter() {
+                                                        for entry in branches_pr {
                                                             ui.selectable_value(
                                                                 branch,
-                                                                (*entry).clone(),
+                                                                entry.clone(),
                                                                 entry.to_string(),
                                                             );
                                                         }
@@ -574,10 +574,10 @@ impl SetupWindow {
                                                     }
 
                                                     if !branches_other.is_empty() {
-                                                        for entry in branches_other.iter() {
+                                                        for entry in branches_other {
                                                             ui.selectable_value(
                                                                 branch,
-                                                                (*entry).clone(),
+                                                                entry.clone(),
                                                                 entry.to_string(),
                                                             );
                                                         }
@@ -585,10 +585,10 @@ impl SetupWindow {
                                                     }
 
                                                     if !branches_version.is_empty() {
-                                                        for entry in branches_version.iter() {
+                                                        for entry in branches_version {
                                                             ui.selectable_value(
                                                                 branch,
-                                                                (*entry).clone(),
+                                                                entry.clone(),
                                                                 entry.to_string(),
                                                             );
                                                         }

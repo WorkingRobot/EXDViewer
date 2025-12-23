@@ -86,17 +86,15 @@ impl CellValue {
                 .and_then(|s| s.parse().ok()),
             CellValue::Integer(i) => Some(*i),
             CellValue::Float(f) => Some(*f as i128),
-            CellValue::Boolean(b) => Some(if *b { 1 } else { 0 }),
+            CellValue::Boolean(b) => Some(i128::from(*b)),
             CellValue::Icon(id) => Some(i128::from(*id)),
             CellValue::ModelId(id) => Some(match id {
                 Either::Left(id) => i128::from(*id),
                 Either::Right(id) => i128::from(*id),
             }),
             CellValue::Color(color) => Some(u32::from_le_bytes(color.to_array()).into()),
-            CellValue::InvalidLink(id) => Some(i128::from(*id)),
-            CellValue::InProgressLink(id) => {
-                return Some(i128::from(*id));
-            }
+            CellValue::InvalidLink(id) => Some(*id),
+            CellValue::InProgressLink(id) => Some(*id),
             CellValue::ValidLink { row_id, value, .. } => Some(
                 value
                     .as_ref()
@@ -133,8 +131,7 @@ impl CellValue {
             CellValue::InProgressLink(id) => id.to_compact_string(),
             CellValue::ValidLink { row_id, value, .. } => value
                 .as_ref()
-                .map(|v| v.coerce_string())
-                .unwrap_or_else(|| row_id.to_compact_string()),
+                .map_or_else(|| row_id.to_compact_string(), |v| v.coerce_string()),
         }
     }
 
@@ -177,7 +174,7 @@ impl<'a> Cell<'a> {
 
     fn size_text_multiline(&self, ui: &mut egui::Ui, text: &str) -> f32 {
         let _sw = MULTILINE_STOPWATCH.start();
-        let mut line_count = wrap_string_lines_estimate(ui, &text);
+        let mut line_count = wrap_string_lines_estimate(ui, text);
         if let Some(max_lines) = TEXT_MAX_LINES.get(ui.ctx()) {
             line_count = line_count.min(max_lines.get().into());
         }

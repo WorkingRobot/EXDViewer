@@ -554,7 +554,7 @@ impl SheetTable {
                 FilterInputType::Equals => Ok(FilterInput::Equals(filter_text.clone())),
                 FilterInputType::Contains => Ok(FilterInput::Contains(filter_text.clone())),
                 FilterInputType::Complex => {
-                    ComplexFilter::from_str(&filter_text).map(FilterInput::Complex)
+                    ComplexFilter::from_str(filter_text).map(FilterInput::Complex)
                 }
             };
 
@@ -564,7 +564,7 @@ impl SheetTable {
                         .compile_filter(&filter, SHEET_FILTER_OPTIONS.get(ctx))
                         .map_err(|e| e.to_string())
                 })
-                .map(|f| Some(f))
+                .map(Some)
         }
     }
 

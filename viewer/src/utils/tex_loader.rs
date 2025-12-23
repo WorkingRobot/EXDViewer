@@ -142,7 +142,7 @@ pub fn write(image: impl Into<DynamicImage>, format: ImageFormat) -> Result<Vec<
         // JPEG encoder errors out on anything with an alpha channel.
         if format == ImageFormat::Jpeg {
             image = match image {
-                image @ DynamicImage::ImageLumaA8(..) | image @ DynamicImage::ImageLuma16(..) => {
+                image @ (DynamicImage::ImageLumaA8(..) | DynamicImage::ImageLuma16(..)) => {
                     image.into_luma8().into()
                 }
                 other => other.into_rgb8().into(),

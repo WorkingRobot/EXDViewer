@@ -6594,7 +6594,17 @@ dependencies = [
  "getrandom 0.3.4",
  "js-sys",
  "serde",
+ "uuid-rng-internal",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "uuid-rng-internal"
+version = "1.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d0021aebf9af0cbec73af2f884a2cd0a41d984c00e42f27baa11856ab480e2c"
+dependencies = [
+ "getrandom 0.3.4",
 ]
 
 [[package]]
@@ -6685,6 +6695,7 @@ dependencies = [
  "smallvec",
  "syntect",
  "url",
+ "uuid",
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",

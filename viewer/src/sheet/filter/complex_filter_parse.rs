@@ -345,7 +345,8 @@ fn parse_regex(pair: Pair<'_, Rule>) -> Result<Regex, String> {
 fn parse_number(pair: Pair<'_, Rule>) -> Result<i128, String> {
     assert_eq!(pair.as_rule(), Rule::number);
     let num_str = pair.as_str();
-    i128::from_str_radix(num_str, 10)
+    num_str
+        .parse::<i128>()
         .map_err(|e| format!("Failed to parse number '{num_str}': {e}"))
 }
 

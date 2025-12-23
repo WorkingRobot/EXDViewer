@@ -36,7 +36,7 @@ impl<'a> CellIter<'a> {
     }
 }
 
-impl<'a> Iterator for CellIter<'a> {
+impl Iterator for CellIter<'_> {
     type Item = anyhow::Result<CellValue>;
 
     fn next(&mut self) -> Option<Self::Item> {

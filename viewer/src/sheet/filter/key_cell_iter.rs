@@ -37,7 +37,7 @@ impl<'a> KeyCellIter<'a> {
     }
 }
 
-impl<'a> Iterator for KeyCellIter<'a> {
+impl Iterator for KeyCellIter<'_> {
     type Item = anyhow::Result<CellValue>;
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -234,33 +234,30 @@ impl SheetLink {
         row_id: u32,
     ) -> Option<Option<(&String, TableContext)>> {
         let promises = self.promises.get_or_init(promise_initializer);
-        promises
-            .into_iter()
-            .zip(self.targets.iter())
-            .find_map(|(p, s)| {
-                let mut p = p.borrow_mut();
-                let result = p.get(|result| {
-                    result
-                        .map(|(sheet, schema)| {
-                            TableContext::new(global.clone(), sheet, schema.as_ref())
-                        })
-                        .map_err(|e| e.into())
-                });
-                match result {
-                    None => Some(None),
-                    Some(Ok(table)) => {
-                        if table.sheet().get_row(row_id).is_ok() {
-                            Some(Some((s, table.clone())))
-                        } else {
-                            None
-                        }
-                    }
-                    Some(Err(err)) => {
-                        log::error!("Failed to retrieve linked sheet: {err:?}");
+        promises.iter().zip(self.targets.iter()).find_map(|(p, s)| {
+            let mut p = p.borrow_mut();
+            let result = p.get(|result| {
+                result
+                    .map(|(sheet, schema)| {
+                        TableContext::new(global.clone(), sheet, schema.as_ref())
+                    })
+                    .map_err(|e| e.into())
+            });
+            match result {
+                None => Some(None),
+                Some(Ok(table)) => {
+                    if table.sheet().get_row(row_id).is_ok() {
+                        Some(Some((s, table.clone())))
+                    } else {
                         None
                     }
                 }
-            })
+                Some(Err(err)) => {
+                    log::error!("Failed to retrieve linked sheet: {err:?}");
+                    None
+                }
+            }
+        })
     }
 }
 

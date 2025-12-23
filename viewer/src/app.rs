@@ -708,7 +708,7 @@ impl App {
 
                         button_resp.on_hover_text(format!("Filter Type:\n{filter_type}"));
 
-                        let mut filter_dirty = menu_resp.map(|m| m.inner).unwrap_or_default();
+                        let mut filter_dirty = menu_resp.is_some_and(|m| m.inner);
 
                         {
                             let MatchOptions {
@@ -1012,6 +1012,7 @@ impl App {
 }
 
 impl App {
+    #[must_use]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_image_loaders(&cc.egui_ctx);
         Self::setup_fonts(&cc.egui_ctx);
