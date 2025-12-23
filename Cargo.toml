@@ -12,7 +12,7 @@ edition = "2024"
 ironworks = { path = "deps/ironworks/ironworks" }
 xiv-dl-cache = { path = "deps/ffxiv-downloader/rust/cache" }
 xiv-dl-core = { path = "deps/ffxiv-downloader/rust/core" }
-catppuccin-egui = { git = "https://github.com/Wayfarer-Labs/catppuccin-egui.git", branch = "disable-build-script" }
+# catppuccin-egui = { git = "https://github.com/Wayfarer-Labs/catppuccin-egui.git", branch = "disable-build-script" }
 
 [profile.release-dbg]
 inherits = "release"
