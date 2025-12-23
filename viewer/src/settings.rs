@@ -294,9 +294,9 @@ impl GithubSchemaLocation {
                 self.owner,
                 self.repo,
                 match &self.branch {
-                    GithubSchemaBranch::Latest => "latest",
-                    GithubSchemaBranch::Other(name) => name,
-                    GithubSchemaBranch::Version(v) => &format!("ver/{}", v.0),
+                    GithubSchemaBranch::Latest => "latest".to_string(),
+                    GithubSchemaBranch::Other(name) => name.clone(),
+                    GithubSchemaBranch::Version(v) => format!("ver/{}", v.0),
                     GithubSchemaBranch::PullRequest { .. } => unreachable!(),
                 }
             )
