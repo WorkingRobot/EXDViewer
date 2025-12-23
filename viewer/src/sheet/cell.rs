@@ -65,7 +65,7 @@ pub enum CellValue {
     Integer(i128),
     Float(f32),
     Boolean(bool),
-    Icon(u32),
+    Icon(i128),
     ModelId(Either<u32, u64>),
     Color(Color32),
     InvalidLink(i128),
@@ -336,7 +336,7 @@ impl<'a> Cell<'a> {
                     self.sheet_column.kind(),
                 )?,
                 SchemaColumnMeta::Icon => {
-                    let icon_id: u32 = read_integer(
+                    let icon_id: i128 = read_integer(
                         self.row,
                         self.sheet_column.offset() as u32,
                         self.sheet_column.kind(),
@@ -469,6 +469,10 @@ impl CellValue {
             CellValue::Float(value) => copyable_label(ui, &value),
             CellValue::Boolean(value) => copyable_label(ui, &value),
             CellValue::Icon(icon_id) => {
+                let Ok(icon_id) = icon_id.try_into() else {
+                    return InnerResponse::new(CellResponse::None, copyable_label(ui, &icon_id));
+                };
+
                 let resp = draw_icon(ctx, ui, icon_id).on_hover_cursor(CursorIcon::PointingHand);
                 if resp.clicked() && !should_ignore_clicks(ui) {
                     return InnerResponse::new(CellResponse::Icon(icon_id), resp);
