@@ -202,6 +202,15 @@ pub enum SchemaColumnMeta {
     },
 }
 
+pub enum ResolvedTableContext<'a> {
+    InProgress,
+    NotFound,
+    Found {
+        sheet_name: &'a String,
+        table: TableContext,
+    },
+}
+
 pub struct SheetLink {
     targets: Vec<String>,
     promises: OnceCell<Vec<SharedConvertibleSheetPromise>>,
@@ -219,11 +228,7 @@ impl SheetLink {
         &self.targets
     }
 
-    pub fn resolve(
-        &self,
-        table: &TableContext,
-        row_id: u32,
-    ) -> Option<Option<(&String, TableContext)>> {
+    pub fn resolve(&self, table: &TableContext, row_id: u32) -> ResolvedTableContext<'_> {
         self.resolve_internal(|| table.load_sheets(&self.targets), table.global(), row_id)
     }
 
@@ -232,9 +237,9 @@ impl SheetLink {
         promise_initializer: impl Fn() -> Vec<SharedConvertibleSheetPromise>,
         global: &GlobalContext,
         row_id: u32,
-    ) -> Option<Option<(&String, TableContext)>> {
+    ) -> ResolvedTableContext<'_> {
         let promises = self.promises.get_or_init(promise_initializer);
-        promises.iter().zip(self.targets.iter()).find_map(|(p, s)| {
+        let ret = promises.iter().zip(self.targets.iter()).find_map(|(p, s)| {
             let mut p = p.borrow_mut();
             let result = p.get(|result| {
                 result
@@ -257,7 +262,12 @@ impl SheetLink {
                     None
                 }
             }
-        })
+        });
+        match ret {
+            None => ResolvedTableContext::NotFound,
+            Some(None) => ResolvedTableContext::InProgress,
+            Some(Some((sheet_name, table))) => ResolvedTableContext::Found { sheet_name, table },
+        }
     }
 }
 

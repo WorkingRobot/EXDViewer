@@ -17,8 +17,9 @@ use crate::{
     },
     settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, TEXT_MAX_LINES},
     sheet::{
-        compact_sestring::CompactSeString, schema_column::SheetLink, should_ignore_clicks,
-        string_label_wrapped, wrap_string_lines_estimate,
+        compact_sestring::CompactSeString,
+        schema_column::{ResolvedTableContext, SheetLink},
+        should_ignore_clicks, string_label_wrapped, wrap_string_lines_estimate,
     },
     stopwatch::stopwatches::MULTILINE_STOPWATCH,
     utils::{ManagedIcon, TrackedPromise},
@@ -198,7 +199,7 @@ impl<'a> Cell<'a> {
                 .ok()
                 .and_then(|id| sheets.map(|s| s.resolve(self.table_context, id)))
             {
-                Some(Some(Some((_, table)))) => {
+                Some(ResolvedTableContext::Found { table, .. }) => {
                     if let Some(cell) =
                         table.display_field_cell(table.sheet().get_row(row_id as u32).unwrap())
                     {
@@ -299,13 +300,12 @@ impl<'a> Cell<'a> {
         )?;
 
         Ok(
-            match row_id.try_into().ok().and_then(|id| {
-                sheets
-                    .map(|s| s.resolve(self.table_context, id))
-                    .unwrap_or_default()
-                    .map(|r| r.map(|(s, t)| (s, t, id)))
-            }) {
-                Some(Some((sheet_name, table, row_id))) => {
+            match row_id
+                .try_into()
+                .ok()
+                .and_then(|id| sheets.map(|s| (s.resolve(self.table_context, id), id)))
+            {
+                Some((ResolvedTableContext::Found { sheet_name, table }, row_id)) => {
                     let display_field_cell = resolve_display_field
                         .then(|| table.display_field_cell(table.sheet().get_row(row_id).unwrap()))
                         .flatten();
@@ -321,8 +321,8 @@ impl<'a> Cell<'a> {
                             .filter(|c| !c.is_empty()),
                     }
                 }
-                Some(None) => CellValue::InProgressLink(row_id),
-                None => CellValue::InvalidLink(row_id),
+                Some((ResolvedTableContext::InProgress, _)) => CellValue::InProgressLink(row_id),
+                _ => CellValue::InvalidLink(row_id),
             },
         )
     }

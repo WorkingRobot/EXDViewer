@@ -73,6 +73,7 @@ impl WorkingRepeatedStopwatch {
         self.count.store(0, Ordering::SeqCst);
     }
 
+    #[must_use]
     pub fn start(&'_ self) -> RepeatedStopwatchGuard<'_> {
         RepeatedStopwatchGuard {
             parent: self,
@@ -121,9 +122,18 @@ impl DummyRepeatedStopwatch {
 
     pub fn reset(&self) {}
 
-    pub fn start(&'_ self) {}
+    #[must_use]
+    pub fn start(&'_ self) -> DummyRepeatedStopwatchGuard {
+        DummyRepeatedStopwatchGuard
+    }
 
     pub fn report(&self) {}
+}
+
+pub struct DummyRepeatedStopwatchGuard;
+
+impl Drop for DummyRepeatedStopwatchGuard {
+    fn drop(&mut self) {}
 }
 
 pub mod stopwatches {
