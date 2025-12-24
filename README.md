@@ -18,7 +18,7 @@ EXDViewer is a modern, fast, and user-friendly tool for exploring [Excel files](
 - **Easy Deployment:** Host your own web instance via Docker.
 - **Performance:** Efficiently handles all sheets, even huge ones like `Item`, `Action`, or `Quest`.
 - **EXDSchema Support:** Provides tight integration with [EXDSchema](https://github.com/xivdev/EXDSchema) for enhanced data exploration and dynamic in-viewer schema editing.
-- **Advanced Filtering:** Supports simple, ~~fuzzy, and complex~~ (TBD) filtering to quickly find specific data.
+- **Advanced Filtering:** Supports simple, fuzzy, and complex filtering to quickly find specific data.
 
 ## Quick Start
 
@@ -76,7 +76,12 @@ More info is available [here](https://github.com/xivdev/EXDSchema?tab=readme-ov-
     or follow the [instructions](https://trunkrs.dev/guide/getting-started/installation.html).
     Make sure `trunk` is installed and available in your PATH before continuing.
 
-3. Build the web version:
+3. If you don't require an API server, you can save time by building only the viewer binary:
+    ```bash
+    trunk serve --release --config viewer
+    ```
+
+4. If you do require an API server, build the web binary (which will internally build the viewer binary as well):
     ```bash
     cargo run --bin web --release
     ```
