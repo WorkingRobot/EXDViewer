@@ -1034,6 +1034,14 @@ impl App {
 
     fn setup_fonts(ctx: &egui::Context) {
         ctx.add_font(FontInsert::new(
+            "NotoSans-SC",
+            FontData::from_static(include_bytes!("../assets/NotoSansSC-Medium.ttf")),
+            vec![InsertFontFamily {
+                family: FontFamily::Proportional,
+                priority: FontPriority::Lowest,
+            }],
+        ));
+        ctx.add_font(FontInsert::new(
             "NotoSans-JP",
             FontData::from_static(include_bytes!("../assets/NotoSansJP-Medium.ttf")),
             vec![InsertFontFamily {
