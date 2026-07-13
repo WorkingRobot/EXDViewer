@@ -24,7 +24,7 @@ EXDViewer is a modern, fast, and user-friendly tool for exploring [Excel files](
 
 ### Online
 
-Visit [exd.camora.dev](https://exd.camora.dev) to use the latest version, directly in your browser. Supports local game installs and schema files ([Chromium-based browsers only](https://developer.mozilla.org/en-US/docs/Web/API/Window/showDirectoryPicker#browser_compatibility)).
+Visit [exd.camora.dev](https://exd.camora.dev) to use the latest version, directly in your browser. Supports local game installs, schema files ([Chromium-based browsers only](https://developer.mozilla.org/en-US/docs/Web/API/Window/showDirectoryPicker#browser_compatibility)), and all four regions (Taiwan is listed but disabled until it's published on [Thaliak](https://thaliak.xiv.dev/)).
 
 ### Locally
 

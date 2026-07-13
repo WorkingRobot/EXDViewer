@@ -14,6 +14,7 @@ pub enum WorkerRequest {
     DataSetup(WorkerDirectory),
     DataRequestFile(String),
     DataRequestTexture(String),
+    DataRequestExists(Vec<String>),
 
     SchemaGet(),
     SchemaStore(WorkerDirectory),
@@ -33,6 +34,7 @@ pub enum WorkerResponse {
     DataSetup(Result<(), String>),
     DataRequestFile(Result<Vec<u8>, String>),
     DataRequestTexture(Result<(u32, u32, Vec<u8>), String>),
+    DataRequestExists(Result<Vec<bool>, String>),
 
     SchemaGet(Result<Vec<WorkerDirectory>, String>),
     SchemaStore(Result<(), String>),

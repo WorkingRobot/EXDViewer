@@ -169,6 +169,17 @@ impl Worker for SqpackWorker {
                     scope.respond(id, WorkerResponse::DataRequestTexture(data));
                 }
             }
+            WorkerRequest::DataRequestExists(paths) => {
+                let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestExists({paths:?})"));
+                if let Some(inst) = self.install_instance.borrow().as_ref() {
+                    let mut result = Vec::with_capacity(paths.len());
+                    for path in paths {
+                        result.push(inst.0.exists(&path).map_err(|e| e.to_string()));
+                    }
+                    let result: Result<Vec<bool>, String> = result.into_iter().collect();
+                    scope.respond(id, WorkerResponse::DataRequestExists(result));
+                }
+            }
             WorkerRequest::SchemaGet() => {
                 let _stop = Stopwatch::new("SqpackWorker::SchemaGet");
                 let scope = scope.clone();

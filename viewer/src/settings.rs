@@ -262,8 +262,49 @@ pub const CODE_SYNTAX_THEME: FKey<CodeTheme, Arc<egui::Style>> = FKey::new_with_
     },
 );
 
+pub const CURRENT_SHEET_LANGUAGES: TempKey<(String, Vec<Language>)> =
+    TempKey::new("current-sheet-languages");
 pub const TEMP_SCROLL_TO: TempKey<((u32, Option<u16>), u16)> = TempKey::new("temp-scroll-to");
 pub const TEMP_HIGHLIGHTED_ROW: TempKey<(u32, Option<u16>)> = TempKey::new("temp-highlighted-row");
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Region {
+    Global,
+    Korea,
+    China,
+    Taiwan,
+}
+
+impl Region {
+    pub fn slug(&self) -> Option<&'static str> {
+        match self {
+            Region::Global => Some("4e9a232b"),
+            Region::Korea => Some("de199059"),
+            Region::China => Some("c38effbc"),
+            // TODO(taiwan): Thaliak PR #102
+            Region::Taiwan => None,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Region::Global => "Global / JP",
+            Region::Korea => "Korea",
+            Region::China => "China",
+            Region::Taiwan => "Taiwan",
+        }
+    }
+
+    pub fn is_available(&self) -> bool {
+        self.slug().is_some()
+    }
+}
+
+impl Display for Region {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum InstallLocation {
@@ -271,7 +312,7 @@ pub enum InstallLocation {
     Sqpack(String),
     #[cfg(target_arch = "wasm32")]
     Worker(String),
-    Web(String, Option<GameVersion>),
+    Web(String, Region, Option<GameVersion>),
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]

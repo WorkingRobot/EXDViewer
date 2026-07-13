@@ -5,19 +5,23 @@ use tokio::{
     runtime::Handle, select, sync::oneshot, task::JoinHandle
 };
 use tokio_util::sync::CancellationToken;
-use xiv_core::file::version::GameVersion;
+use xiv_core::file::{slug::Slug, version::GameVersion};
 
-use crate::data::{GameData, VersionInfo};
+use crate::data::{GameData, RepositoryInfo, VersionInfo};
 
 #[derive(Debug, Clone)]
 pub enum RequestData {
-    Versions,
-    GetFile(Option<GameVersion>, String),
+    Versions(Option<Slug>),
+    GetFile(Option<Slug>, Option<GameVersion>, String),
+    Exists(Option<Slug>, Option<GameVersion>, Vec<String>),
+    Repositories,
 }
 
 pub enum Response {
     Versions(Option<VersionInfo>),
     GetFile(Result<Arc<Vec<u8>>, ironworks::Error>),
+    Exists(Result<Vec<bool>, ironworks::Error>),
+    Repositories(anyhow::Result<Vec<RepositoryInfo>>),
 }
 
 pub struct Request {
@@ -73,24 +77,46 @@ impl MessageQueue {
 
                                 let response = async {
                                     match request.data.clone() {
-                                        RequestData::Versions => {
-                                            Response::Versions(this.data.versions().await)
+                                        RequestData::Versions(slug) => {
+                                            let slug = this.data.resolve_slug(slug);
+                                            Response::Versions(this.data.versions(slug).await)
                                         }
-                                        RequestData::GetFile(version, path) => {
+                                        RequestData::Repositories => {
+                                            Response::Repositories(this.data.repositories().await)
+                                        }
+                                        RequestData::GetFile(slug, version, path) => {
+                                            let slug = this.data.resolve_slug(slug);
                                             let version = match version {
                                                 Some(v) => Ok(v),
                                                 None => {
-                                                    this.data.versions().await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
+                                                    this.data.versions(slug).await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
                                                 }
                                             };
-                                            let result = match version { 
+                                            let result = match version {
                                                 Ok(version) => {
-                                                    this.data.get(version, path).await
+                                                    this.data.get(slug, version, path).await
                                                 }
                                                 Err(e) => Err(e),
                                             };
 
                                             Response::GetFile(result)
+                                        }
+                                        RequestData::Exists(slug, version, files) => {
+                                            let slug = this.data.resolve_slug(slug);
+                                            let version = match version {
+                                                Some(v) => Ok(v),
+                                                None => {
+                                                    this.data.versions(slug).await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
+                                                }
+                                            };
+                                            let result = match version {
+                                                Ok(version) => {
+                                                    this.data.exists(slug, version, files).await
+                                                }
+                                                Err(e) => Err(e),
+                                            };
+
+                                            Response::Exists(result)
                                         }
                                     }
                                 };
@@ -116,10 +142,10 @@ impl MessageQueue {
         Ok(this)
     }
 
-    pub async fn versions(&self) -> Option<VersionInfo> {
+    pub async fn versions(&self, slug: Option<Slug>) -> Option<VersionInfo> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
-            data: RequestData::Versions,
+            data: RequestData::Versions(slug),
             tx,
         }).await.expect("Failed to send request to message queue");
 
@@ -129,10 +155,38 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_file(&self, version: Option<GameVersion>, path: String) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+    pub async fn repositories(&self) -> anyhow::Result<Vec<RepositoryInfo>> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
-            data: RequestData::GetFile(version, path),
+            data: RequestData::Repositories,
+            tx,
+        }).await.expect("Failed to send request to message queue");
+
+        match rx.await {
+            Ok(Response::Repositories(result)) => result,
+            _ => Err(anyhow::anyhow!("Failed to get repositories")),
+        }
+    }
+
+    pub async fn exists(&self, slug: Option<Slug>, version: Option<GameVersion>, files: Vec<String>) -> Result<Vec<bool>, ironworks::Error> {
+        let (tx, rx) = oneshot::channel();
+        self.0.tx.send(Request {
+            data: RequestData::Exists(slug, version, files),
+            tx,
+        }).await.expect("Failed to send request to message queue");
+
+        match rx.await {
+            Ok(Response::Exists(result)) => result,
+            _ => Err(ironworks::Error::Resource(Box::new(std::io::Error::other(
+                "Failed to check existence",
+            )))),
+        }
+    }
+
+    pub async fn get_file(&self, slug: Option<Slug>, version: Option<GameVersion>, path: String) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+        let (tx, rx) = oneshot::channel();
+        self.0.tx.send(Request {
+            data: RequestData::GetFile(slug, version, path),
             tx,
         }).await.expect("Failed to send request to message queue");
 

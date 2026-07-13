@@ -38,9 +38,14 @@ impl Backend {
                     BoxedExcelProvider::new_worker(WorkerFileProvider::new(handle).await?).await?
                 }
 
-                InstallLocation::Web(base_url, version) => {
-                    BoxedExcelProvider::new_web(WebFileProvider::new(&base_url, version).await?)
-                        .await?
+                InstallLocation::Web(base_url, region, version) => {
+                    let Some(slug) = region.slug() else {
+                        anyhow::bail!("Region {} is not yet available", region.name());
+                    };
+                    BoxedExcelProvider::new_web(
+                        WebFileProvider::new(&base_url, slug, version).await?,
+                    )
+                    .await?
                 }
             })
         };

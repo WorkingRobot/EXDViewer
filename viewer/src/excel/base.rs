@@ -24,6 +24,8 @@ pub trait FileProvider {
     async fn file<T: File>(&self, path: &str) -> anyhow::Result<T>;
 
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>>;
+
+    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>>;
 }
 
 #[async_trait(?Send)]
@@ -40,6 +42,8 @@ pub trait ExcelFileProvider {
         start_id: u32,
         language: Language,
     ) -> anyhow::Result<ExcelData>;
+
+    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>>;
 }
 
 #[async_trait(?Send)]
@@ -64,6 +68,10 @@ impl<T: FileProvider> ExcelFileProvider for T {
     ) -> anyhow::Result<ExcelData> {
         self.file(&path::exd(name, start_id, language)).await
     }
+
+    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>> {
+        FileProvider::exists_many(self, paths).await
+    }
 }
 
 #[async_trait(?Send)]
@@ -87,6 +95,10 @@ impl ExcelFileProvider for Box<dyn ExcelFileProvider> {
         language: Language,
     ) -> anyhow::Result<ExcelData> {
         self.as_ref().data(name, start_id, language).await
+    }
+
+    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>> {
+        self.as_ref().exists_many(paths).await
     }
 }
 
@@ -145,6 +157,32 @@ impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
         }
         future.into_shared().await.map_err(|e| e.into()).map(op)
     }
+
+    pub async fn get_available_languages(&self, name: &str) -> anyhow::Result<Vec<Language>> {
+        let (declared, start_id) = self
+            .use_entry(name, |a| {
+                let declared = a.header.languages().clone();
+                let start_id = a
+                    .header
+                    .row_intervals()
+                    .first()
+                    .map_or(0, |page| page.start_id());
+                (declared, start_id)
+            })
+            .await?;
+
+        let paths: Vec<String> = declared
+            .iter()
+            .map(|language| path::exd(name, start_id, *language))
+            .collect();
+        let exists = self.0.provider.exists_many(&paths).await?;
+
+        Ok(declared
+            .into_iter()
+            .zip(exists)
+            .filter_map(|(language, exists)| exists.then_some(language))
+            .collect())
+    }
 }
 
 #[async_trait(?Send)]
@@ -170,14 +208,30 @@ impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
             a.cache
                 .borrow_mut()
                 .get_or_set_ref(&language, || {
-                    let language = if a.header.languages().contains(&language) {
-                        language
+                    let requested = language;
+                    let resolved = if a.header.languages().contains(&requested) {
+                        Some(requested)
+                    } else if a.header.languages().contains(&Language::None) {
+                        Some(Language::None)
                     } else {
-                        Language::None
+                        None
                     };
                     let this = self.clone();
                     let header = a.header.clone();
+                    let available = a.header.languages().clone();
                     SharedFuture::new(async move {
+                        let Some(language) = resolved else {
+                            let available = available
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            return Err(anyhow::anyhow!(
+                                "Sheet {} has no data for {requested} (available: {available})",
+                                header.name(),
+                            )
+                            .into());
+                        };
                         Ok(BaseSheet::new(header, language, &this.0.provider).await?)
                     })
                 })

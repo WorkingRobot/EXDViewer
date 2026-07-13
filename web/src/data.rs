@@ -32,27 +32,46 @@ impl From<SlugData> for VersionInfo {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RepositoryInfo {
+    pub slug: Slug,
+    pub name: String,
+    pub latest: GameVersion,
+}
+
+impl RepositoryInfo {
+    fn from_slug_data(slug: Slug, value: SlugData) -> Self {
+        Self {
+            slug,
+            name: value.repository,
+            latest: value.latest_version,
+        }
+    }
+}
+
+type CacheIronworks = Ironworks<SqPack<VInstall<CacheVfs>>>;
+
 #[derive(Debug)]
 pub struct GameData {
     cache: Server,
-    slug: Slug,
+    default_slug: Slug,
     readahead_size: usize,
-    ironworks_cache: Cache<GameVersion, Arc<Ironworks<SqPack<VInstall<CacheVfs>>>>>,
-    file_cache: Cache<(GameVersion, String), Arc<Vec<u8>>>,
+    ironworks_cache: Cache<(Slug, GameVersion), Arc<CacheIronworks>>,
+    file_cache: Cache<(Slug, GameVersion, String), Arc<Vec<u8>>>,
 }
 
 impl GameData {
     pub async fn new(
         cache_config: ServerBuilder,
         asset_config: AssetCache,
-        slug: Slug,
+        default_slug: Slug,
         readahead_size: usize,
     ) -> anyhow::Result<Self> {
         let server = cache_config.build().await?;
 
         Ok(Self {
             cache: server,
-            slug,
+            default_slug,
             readahead_size,
             ironworks_cache: CacheBuilder::new(asset_config.version_capacity)
                 .time_to_live(Duration::from_secs(60 * asset_config.version_ttl_minutes))
@@ -63,27 +82,41 @@ impl GameData {
         })
     }
 
-    pub async fn versions(&self) -> Option<VersionInfo> {
-        self.cache
-            .get_slug(self.slug)
-            .await
-            .map(VersionInfo::from)
-            .ok()
+    pub fn resolve_slug(&self, slug: Option<Slug>) -> Slug {
+        slug.unwrap_or(self.default_slug)
+    }
+
+    pub async fn versions(&self, slug: Slug) -> Option<VersionInfo> {
+        self.cache.get_slug(slug).await.map(VersionInfo::from).ok()
+    }
+
+    pub async fn repositories(&self) -> anyhow::Result<Vec<RepositoryInfo>> {
+        let slugs = self.cache.get_slug_list().await?;
+        let mut repositories = Vec::with_capacity(slugs.len());
+        for slug in slugs {
+            if let Ok(slug_data) = self.cache.get_slug(slug).await {
+                repositories.push(RepositoryInfo::from_slug_data(slug, slug_data));
+            }
+        }
+        Ok(repositories)
     }
 
     async fn get_version(
         &self,
+        slug: Slug,
         version: GameVersion,
-    ) -> Result<Arc<Ironworks<SqPack<VInstall<CacheVfs>>>>, ironworks::Error> {
-        if let Some(ret) = self.ironworks_cache.get(&version) {
+    ) -> Result<Arc<CacheIronworks>, ironworks::Error> {
+        let key = (slug, version);
+        if let Some(ret) = self.ironworks_cache.get(&key) {
             return Ok(ret);
         }
+        let (slug, version) = key;
 
-        log::info!("Fetching ironworks for version: {version}");
+        log::info!("Fetching ironworks for slug: {slug}, version: {version}");
         let vfs = CacheVfs::new(
             self.cache.clone(),
             self.readahead_size,
-            self.slug,
+            slug,
             version.clone(),
         )
         .await
@@ -91,33 +124,48 @@ impl GameData {
         let resource = VInstall::at_sqpack(vfs);
         let resource = ironworks::sqpack::SqPack::new(resource);
         let ironworks = Arc::new(Ironworks::new().with_resource(resource));
-        self.ironworks_cache.insert(version, ironworks.clone());
+        self.ironworks_cache
+            .insert((slug, version), ironworks.clone());
         Ok(ironworks)
     }
 
     pub async fn get(
         &self,
+        slug: Slug,
         version: GameVersion,
         file: String,
     ) -> Result<Arc<Vec<u8>>, ironworks::Error> {
-        let key = (version, file);
+        let key = (slug, version, file);
         if let Some(ret) = self.file_cache.get(&key) {
             return Ok(ret);
         }
-        let (version, file) = key;
+        let (slug, version, file) = key;
 
-        let ironworks = self.get_version(version.clone()).await?;
+        let ironworks = self.get_version(slug, version.clone()).await?;
 
-        log::info!("Fetching file: {file} for version: {version}");
+        log::info!("Fetching file: {file} for slug: {slug}, version: {version}");
         let file_data = ironworks.file::<Vec<u8>>(&file)?;
         log::info!(
-            "File fetched: {file} for version: {version}, size: {}",
+            "File fetched: {file} for slug: {slug}, version: {version}, size: {}",
             file_data.len()
         );
 
         let data = Arc::new(file_data);
-        self.file_cache.insert((version, file), data.clone());
+        self.file_cache.insert((slug, version, file), data.clone());
         Ok(data)
+    }
+
+    pub async fn exists(
+        &self,
+        slug: Slug,
+        version: GameVersion,
+        files: Vec<String>,
+    ) -> Result<Vec<bool>, ironworks::Error> {
+        let ironworks = self.get_version(slug, version).await?;
+        Ok(files
+            .iter()
+            .map(|file| ironworks.exists(file).unwrap_or(false))
+            .collect())
     }
 
     pub async fn close(&self) -> anyhow::Result<()> {

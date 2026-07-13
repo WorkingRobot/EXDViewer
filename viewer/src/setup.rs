@@ -3,11 +3,11 @@ use egui::{Frame, Layout, Modal, Sense, TextEdit, UiBuilder, Vec2, WidgetText};
 use crate::{
     DEFAULT_API_URL,
     backend::Backend,
-    excel::web::{VersionInfo, WebFileProvider},
+    excel::web::{RepositoryInfo, VersionInfo, WebFileProvider},
     schema::web::WebProvider,
     settings::{
         BACKEND_CONFIG, BackendConfig, GithubSchemaBranch, GithubSchemaLocation, InstallLocation,
-        SchemaLocation,
+        Region, SchemaLocation,
     },
     utils::{ConvertiblePromise, PromiseKind, TrackedPromise, UnsendPromise},
 };
@@ -29,7 +29,8 @@ pub struct SetupWindow {
     setup_promise: Option<UnsendPromise<anyhow::Result<(Backend, BackendConfig)>>>,
     display_error: Option<anyhow::Error>,
 
-    web_version_promise: VersionPromiseHolder<String, VersionInfo>,
+    web_version_promise: VersionPromiseHolder<(String, Region), VersionInfo>,
+    web_repositories_promise: VersionPromiseHolder<String, Vec<RepositoryInfo>>,
     github_branch_promise: VersionPromiseHolder<(String, String), Vec<GithubSchemaBranch>>,
 }
 
@@ -40,11 +41,13 @@ impl SetupWindow {
             .and_then(|p| Some(InstallLocation::Sqpack(p.path().to_str()?.to_owned())))
             .unwrap_or(InstallLocation::Web(
                 super::DEFAULT_API_URL.to_string(),
+                Region::Global,
                 None,
             ));
 
         #[cfg(target_arch = "wasm32")]
-        let location = InstallLocation::Web(super::DEFAULT_API_URL.to_string(), None);
+        let location =
+            InstallLocation::Web(super::DEFAULT_API_URL.to_string(), Region::Global, None);
 
         Self {
             location,
@@ -61,6 +64,7 @@ impl SetupWindow {
             setup_promise: None,
             display_error: None,
             web_version_promise: None,
+            web_repositories_promise: None,
             github_branch_promise: None,
         }
     }
@@ -78,6 +82,7 @@ impl SetupWindow {
                 setup_promise: None,
                 display_error: None,
                 web_version_promise: None,
+                web_repositories_promise: None,
                 github_branch_promise: None,
             }
         } else {
@@ -162,11 +167,14 @@ impl SetupWindow {
                                 }
                                 if radio(
                                     col_1,
-                                    matches!(self.location, InstallLocation::Web(_, _)),
+                                    matches!(self.location, InstallLocation::Web(_, _, _)),
                                     "Web",
                                 ) {
-                                    self.location =
-                                        InstallLocation::Web(DEFAULT_API_URL.to_string(), None);
+                                    self.location = InstallLocation::Web(
+                                        DEFAULT_API_URL.to_string(),
+                                        Region::Global,
+                                        None,
+                                    );
                                 }
                             });
                         });
@@ -249,7 +257,7 @@ impl SetupWindow {
                                 }
                             }
 
-                            InstallLocation::Web(url, version) => {
+                            InstallLocation::Web(url, region, version) => {
                                 ui.horizontal(|ui| {
                                     ui.label("URL:");
                                     ui.add(
@@ -258,18 +266,112 @@ impl SetupWindow {
                                     );
                                 });
 
+                                // Fetch the list of available repositories (once per URL) to
+                                // drive which regions can be selected.
                                 if !url.is_empty()
                                     && self
-                                        .web_version_promise
+                                        .web_repositories_promise
                                         .as_ref()
                                         .is_none_or(|v| v.0 != *url)
                                 {
-                                    let url = url.clone();
-                                    self.web_version_promise = Some((
+                                    let repo_url = url.clone();
+                                    self.web_repositories_promise = Some((
                                         url.clone(),
                                         ConvertiblePromise::new_promise(
                                             TrackedPromise::spawn_local(async move {
-                                                WebFileProvider::get_versions(&url).await
+                                                WebFileProvider::get_repositories(&repo_url).await
+                                            }),
+                                        ),
+                                    ));
+                                }
+
+                                // Resolve the set of slugs the backend actually serves. If the
+                                // repositories endpoint isn't available (older backend), fall
+                                // back to enabling every region with a known slug.
+                                let available_slugs: Option<Vec<String>> =
+                                    if let Some((_, promise)) = &mut self.web_repositories_promise {
+                                        promise
+                                            .get_mut(|r| match r {
+                                                Ok(repos) => Some(repos),
+                                                Err(e) => {
+                                                    log::error!(
+                                                        "Error fetching repositories: {e}"
+                                                    );
+                                                    None
+                                                }
+                                            })
+                                            .and_then(|repos| {
+                                                repos.as_ref().map(|repos| {
+                                                    repos
+                                                        .iter()
+                                                        .map(|r| r.slug.clone())
+                                                        .collect()
+                                                })
+                                            })
+                                    } else {
+                                        None
+                                    };
+
+                                let is_region_available = |r: Region| {
+                                    r.is_available()
+                                        && available_slugs.as_ref().is_none_or(|slugs| {
+                                            r.slug()
+                                                .is_some_and(|slug| slugs.iter().any(|s| s == slug))
+                                        })
+                                };
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Region:");
+                                    egui::ComboBox::from_id_salt("setup_region")
+                                        .selected_text(region.name())
+                                        .width(ui.available_width())
+                                        .show_ui(ui, |ui| {
+                                            for r in [
+                                                Region::Global,
+                                                Region::Korea,
+                                                Region::China,
+                                                Region::Taiwan,
+                                            ] {
+                                                if is_region_available(r) {
+                                                    ui.selectable_value(region, r, r.name());
+                                                } else {
+                                                    ui.add_enabled(
+                                                        false,
+                                                        egui::Button::selectable(
+                                                            *region == r,
+                                                            r.name(),
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                        });
+                                });
+
+                                // (Re)fetch versions whenever the URL or region changes. On an
+                                // actual change (not the initial load of a persisted config),
+                                // reset the selected version so it can't dangle across regions.
+                                let version_key = (url.clone(), *region);
+                                let key_changed = self
+                                    .web_version_promise
+                                    .as_ref()
+                                    .is_some_and(|v| v.0 != version_key);
+                                if !url.is_empty()
+                                    && region.is_available()
+                                    && self
+                                        .web_version_promise
+                                        .as_ref()
+                                        .is_none_or(|v| v.0 != version_key)
+                                {
+                                    if key_changed {
+                                        *version = None;
+                                    }
+                                    let ver_url = url.clone();
+                                    let slug = region.slug().unwrap_or_default().to_string();
+                                    self.web_version_promise = Some((
+                                        version_key,
+                                        ConvertiblePromise::new_promise(
+                                            TrackedPromise::spawn_local(async move {
+                                                WebFileProvider::get_versions(&ver_url, &slug).await
                                             }),
                                         ),
                                     ));
@@ -666,7 +768,7 @@ impl SetupWindow {
             return false;
         }
 
-        if matches!(self.location, InstallLocation::Web(_, _))
+        if matches!(self.location, InstallLocation::Web(_, _, _))
             && self
                 .web_version_promise
                 .as_ref()

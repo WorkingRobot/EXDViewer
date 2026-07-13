@@ -92,4 +92,18 @@ impl FileProvider for WorkerFileProvider {
             ))
         }
     }
+
+    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>> {
+        log::info!("WorkerFileProvider: requesting existence of {paths:?}");
+        if let WorkerResponse::DataRequestExists(result) =
+            worker::transact(WorkerRequest::DataRequestExists(paths.to_vec())).await
+        {
+            result
+                .map_err(|e| anyhow::anyhow!("WorkerFileProvider: failed to check existence: {e}"))
+        } else {
+            Err(anyhow::anyhow!(
+                "WorkerFileProvider: invalid response from worker"
+            ))
+        }
+    }
 }

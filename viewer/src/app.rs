@@ -27,11 +27,11 @@ use crate::{
     router::{Router, path::Path, route::RouteResponse},
     schema::provider::SchemaProvider,
     settings::{
-        ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, DISPLAY_FIELD_SHOWN,
-        EVALUATE_STRINGS, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, SCHEMA_EDITOR_VISIBLE,
-        SELECTED_SHEET, SHEET_FILTER_OPTIONS, SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR,
-        SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES, TEXT_USE_SCROLL,
-        TEXT_WRAP_WIDTH,
+        ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, CURRENT_SHEET_LANGUAGES,
+        DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN,
+        SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET, SHEET_FILTER_OPTIONS, SHEET_FILTERS, SHEETS_FILTER,
+        SOLID_SCROLLBAR, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES,
+        TEXT_USE_SCROLL, TEXT_WRAP_WIDTH,
     },
     setup::{self, SetupWindow},
     sheet::{CellResponse, FilterInputType, GlobalContext, MatchOptions, SheetTable, TableContext},
@@ -55,6 +55,10 @@ type CachedSchemaEntry = String; // sheet name
 type CachedSchemaPromise = TrackedPromise<Option<Result<String>>>;
 type ConvertibleSchemaPromise = ConvertiblePromise<CachedSchemaPromise, Result<EditableSchema>>;
 
+type CachedLanguagesPromise = TrackedPromise<Result<Vec<Language>>>;
+type ConvertibleLanguagesPromise =
+    ConvertiblePromise<CachedLanguagesPromise, Result<Vec<Language>>>;
+
 pub struct App {
     router: Rc<OnceCell<Router<Self>>>,
     icon_manager: IconManager,
@@ -62,6 +66,7 @@ pub struct App {
     backend: Option<Backend>,
     sheet_data: LruCache<CachedSheetEntry, ConvertibleSheetPromise>,
     schema_data: LruCache<CachedSchemaEntry, ConvertibleSchemaPromise>,
+    sheet_languages: LruCache<String, ConvertibleLanguagesPromise>,
     sheet_matcher: FuzzyMatcher,
     sheet_filter_data: LruCache<(String, bool), Rc<Vec<(String, i32)>>>,
     save_promise: Option<TrackedPromise<()>>,
@@ -89,6 +94,7 @@ impl App {
             self.goto_window = Some(goto::GoToWindow::to_sheet());
         }
 
+        self.update_sheet_languages(ctx);
         self.draw_menubar(ctx);
         self.draw_logger(ctx);
 
@@ -99,6 +105,30 @@ impl App {
 
     fn draw_router(&mut self, ui: &mut egui::Ui) {
         self.router.clone().get().unwrap().ui(self, ui);
+    }
+
+    fn update_sheet_languages(&mut self, ctx: &egui::Context) {
+        let Some(backend) = self.backend.as_ref() else {
+            return;
+        };
+        let Some(sheet_name) = SELECTED_SHEET.get(ctx) else {
+            return;
+        };
+
+        let entry = self.sheet_languages.get_or_insert_mut_ref(&sheet_name, || {
+            let sheet_name = sheet_name.clone();
+            let excel = backend.excel().clone();
+            ConvertiblePromise::new_promise(TrackedPromise::spawn_local(async move {
+                excel.get_available_languages(&sheet_name).await
+            }))
+        });
+        let just_resolved = !entry.converted() && entry.should_swap();
+        if let Some(Ok(languages)) = entry.get(|r| r) {
+            CURRENT_SHEET_LANGUAGES.set(ctx, (sheet_name.clone(), languages.clone()));
+        }
+        if just_resolved {
+            ctx.request_repaint();
+        }
     }
 
     fn navigate(&self, path: impl Into<Path>) {
@@ -189,13 +219,28 @@ impl App {
                     });
 
                     ui.menu_button("Language", |ui| {
-                        let mut saved_lang = LANGUAGE.get(ctx);
+                        let saved_lang = LANGUAGE.get(ctx);
+                        let selected_sheet = SELECTED_SHEET.get(ctx);
+                        let sheet_languages = CURRENT_SHEET_LANGUAGES
+                            .try_get(ctx)
+                            .filter(|(name, _)| Some(name.as_str()) == selected_sheet.as_deref())
+                            .map(|(_, langs)| langs);
+                        let restrict = sheet_languages
+                            .as_ref()
+                            .is_some_and(|langs| langs.iter().any(|&l| l != Language::None));
                         for lang in Language::iter() {
-                            if lang != Language::None
-                                && ui
-                                    .selectable_value(&mut saved_lang, lang, lang.to_string())
-                                    .changed()
-                            {
+                            if lang == Language::None {
+                                continue;
+                            }
+                            let available = !restrict
+                                || sheet_languages
+                                    .as_ref()
+                                    .is_some_and(|langs| langs.contains(&lang));
+                            let response = ui.add_enabled(
+                                available,
+                                egui::Button::selectable(saved_lang == lang, lang.to_string()),
+                            );
+                            if response.clicked() {
                                 LANGUAGE.set(ctx, lang);
                                 ui.close();
                             }
@@ -849,6 +894,8 @@ impl App {
             self.backend = Some(backend);
             self.sheet_data.clear();
             self.schema_data.clear();
+            self.sheet_languages.clear();
+            CURRENT_SHEET_LANGUAGES.remove(ui.ctx());
 
             BACKEND_CONFIG.set(ui.ctx(), Some(config));
             if let Some(redirect_path) = path.query_pairs().get("redirect").map(|s| s.as_str()) {
@@ -1025,6 +1072,7 @@ impl App {
             backend: None,
             sheet_data: LruCache::new(NonZero::new(32).unwrap()),
             schema_data: LruCache::unbounded(),
+            sheet_languages: LruCache::unbounded(),
             sheet_matcher: FuzzyMatcher::new(),
             sheet_filter_data: LruCache::new(NonZero::new(8).unwrap()),
             save_promise: None,
