@@ -17,7 +17,7 @@ use actix_web_prom::PrometheusMetricsBuilder;
 use data::GameData;
 use prometheus::Registry;
 use shadow_rs::shadow;
-use std::{io, num::ParseIntError, sync::Arc};
+use std::{io, sync::Arc};
 use thiserror::Error;
 
 use crate::queue::MessageQueue;
@@ -34,8 +34,6 @@ pub enum ServerError {
     DotenvyError(#[from] dotenvy::Error),
     #[error("Prometheus error")]
     PrometheusError(#[from] prometheus::Error),
-    #[error("Slug conversion error")]
-    SlugConversionError(#[from] ParseIntError),
     #[error("Other error")]
     OtherError(#[from] anyhow::Error),
 }
@@ -73,7 +71,6 @@ async fn main() -> Result<(), ServerError> {
         GameData::new(
             config.cache.clone(),
             config.assets.clone(),
-            config.slug.parse()?,
             config.file_readahead,
         )
         .await?,

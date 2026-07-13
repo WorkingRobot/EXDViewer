@@ -11,9 +11,9 @@ use crate::data::{GameData, RepositoryInfo, VersionInfo};
 
 #[derive(Debug, Clone)]
 pub enum RequestData {
-    Versions(Option<Slug>),
-    GetFile(Option<Slug>, Option<GameVersion>, String),
-    Exists(Option<Slug>, Option<GameVersion>, Vec<String>),
+    Versions(Slug),
+    GetFile(Slug, Option<GameVersion>, String),
+    Exists(Slug, Option<GameVersion>, Vec<String>),
     Repositories,
 }
 
@@ -78,14 +78,12 @@ impl MessageQueue {
                                 let response = async {
                                     match request.data.clone() {
                                         RequestData::Versions(slug) => {
-                                            let slug = this.data.resolve_slug(slug);
                                             Response::Versions(this.data.versions(slug).await)
                                         }
                                         RequestData::Repositories => {
                                             Response::Repositories(this.data.repositories().await)
                                         }
                                         RequestData::GetFile(slug, version, path) => {
-                                            let slug = this.data.resolve_slug(slug);
                                             let version = match version {
                                                 Some(v) => Ok(v),
                                                 None => {
@@ -102,7 +100,6 @@ impl MessageQueue {
                                             Response::GetFile(result)
                                         }
                                         RequestData::Exists(slug, version, files) => {
-                                            let slug = this.data.resolve_slug(slug);
                                             let version = match version {
                                                 Some(v) => Ok(v),
                                                 None => {
@@ -142,7 +139,7 @@ impl MessageQueue {
         Ok(this)
     }
 
-    pub async fn versions(&self, slug: Option<Slug>) -> Option<VersionInfo> {
+    pub async fn versions(&self, slug: Slug) -> Option<VersionInfo> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
             data: RequestData::Versions(slug),
@@ -168,7 +165,7 @@ impl MessageQueue {
         }
     }
 
-    pub async fn exists(&self, slug: Option<Slug>, version: Option<GameVersion>, files: Vec<String>) -> Result<Vec<bool>, ironworks::Error> {
+    pub async fn exists(&self, slug: Slug, version: Option<GameVersion>, files: Vec<String>) -> Result<Vec<bool>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
             data: RequestData::Exists(slug, version, files),
@@ -183,7 +180,7 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_file(&self, slug: Option<Slug>, version: Option<GameVersion>, path: String) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+    pub async fn get_file(&self, slug: Slug, version: Option<GameVersion>, path: String) -> Result<Arc<Vec<u8>>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
             data: RequestData::GetFile(slug, version, path),

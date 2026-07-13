@@ -6,7 +6,7 @@
 [![Web Build](https://img.shields.io/github/actions/workflow/status/WorkingRobot/EXDViewer/build-web.yml?style=for-the-badge&label=Web%20Build
 )](https://github.com/WorkingRobot/EXDViewer/pkgs/container/exdviewer-web)
 [![License](https://img.shields.io/github/license/WorkingRobot/EXDViewer?style=for-the-badge&)](/LICENSE)
-[![FFXIV Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fexd.camora.dev%2Fapi%2Fversions&query=latest&style=for-the-badge&label=Latest%20XIV%20Version
+[![FFXIV Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fexd.camora.dev%2Fapi%2F4e9a232b%2Fversions&query=latest&style=for-the-badge&label=Latest%20XIV%20Version
 )](https://thaliak.xiv.dev/repository/4e9a232b)
 
 

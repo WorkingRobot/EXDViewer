@@ -54,7 +54,6 @@ type CacheIronworks = Ironworks<SqPack<VInstall<CacheVfs>>>;
 #[derive(Debug)]
 pub struct GameData {
     cache: Server,
-    default_slug: Slug,
     readahead_size: usize,
     ironworks_cache: Cache<(Slug, GameVersion), Arc<CacheIronworks>>,
     file_cache: Cache<(Slug, GameVersion, String), Arc<Vec<u8>>>,
@@ -64,14 +63,12 @@ impl GameData {
     pub async fn new(
         cache_config: ServerBuilder,
         asset_config: AssetCache,
-        default_slug: Slug,
         readahead_size: usize,
     ) -> anyhow::Result<Self> {
         let server = cache_config.build().await?;
 
         Ok(Self {
             cache: server,
-            default_slug,
             readahead_size,
             ironworks_cache: CacheBuilder::new(asset_config.version_capacity)
                 .time_to_live(Duration::from_secs(60 * asset_config.version_ttl_minutes))
@@ -80,10 +77,6 @@ impl GameData {
                 .time_to_live(Duration::from_secs(60 * asset_config.file_ttl_minutes))
                 .build(),
         })
-    }
-
-    pub fn resolve_slug(&self, slug: Option<Slug>) -> Slug {
-        slug.unwrap_or(self.default_slug)
     }
 
     pub async fn versions(&self, slug: Slug) -> Option<VersionInfo> {

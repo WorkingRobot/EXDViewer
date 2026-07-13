@@ -19,11 +19,9 @@ use crate::{data::RepositoryInfo, queue::MessageQueue};
 pub fn service() -> impl HttpServiceFactory {
     web::scope("/api")
         .service(get_repositories)
-        .service(get_versions)
         .service(get_versions_slug)
         .service(get_exists_slug)
         .service(get_file_slug)
-        .service(get_file)
         .wrap(
             ErrorHandlers::new()
                 .default_handler_client(|r| log_error(true, r))
@@ -74,7 +72,7 @@ impl Display for QueryGameVersion {
 
 async fn serve_file(
     data: &MessageQueue,
-    slug: Option<Slug>,
+    slug: Slug,
     version: QueryGameVersion,
     path: String,
 ) -> Result<HttpResponse> {
@@ -108,22 +106,13 @@ async fn serve_file(
     }
 }
 
-#[get("/{version}/{path:.*}/")]
-async fn get_file(
-    data: web::Data<MessageQueue>,
-    path_info: web::Path<(QueryGameVersion, String)>,
-) -> Result<HttpResponse> {
-    let (version, path) = path_info.into_inner();
-    serve_file(&data, None, version, path).await
-}
-
-#[get("/{slug:[0-9a-fA-F]{8}}/{version}/{path:.*}/")]
+#[get("/{slug}/{version}/{path:.*}/")]
 async fn get_file_slug(
     data: web::Data<MessageQueue>,
     path_info: web::Path<(Slug, QueryGameVersion, String)>,
 ) -> Result<HttpResponse> {
     let (slug, version, path) = path_info.into_inner();
-    serve_file(&data, Some(slug), version, path).await
+    serve_file(&data, slug, version, path).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,7 +128,7 @@ struct ExistsResponse {
 
 async fn serve_exists(
     data: &MessageQueue,
-    slug: Option<Slug>,
+    slug: Slug,
     version: QueryGameVersion,
     files_param: &str,
 ) -> Result<HttpResponse> {
@@ -174,17 +163,17 @@ async fn serve_exists(
     }
 }
 
-#[get("/{slug:[0-9a-fA-F]{8}}/{version}/exists/")]
+#[get("/{slug}/{version}/exists/")]
 async fn get_exists_slug(
     data: web::Data<MessageQueue>,
     path_info: web::Path<(Slug, QueryGameVersion)>,
     query: web::Query<ExistsQuery>,
 ) -> Result<HttpResponse> {
     let (slug, version) = path_info.into_inner();
-    serve_exists(&data, Some(slug), version, &query.files).await
+    serve_exists(&data, slug, version, &query.files).await
 }
 
-async fn serve_versions(data: &MessageQueue, slug: Option<Slug>) -> Result<HttpResponse> {
+async fn serve_versions(data: &MessageQueue, slug: Slug) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(
         data.versions(slug)
             .await
@@ -192,17 +181,12 @@ async fn serve_versions(data: &MessageQueue, slug: Option<Slug>) -> Result<HttpR
     ))
 }
 
-#[get("/versions/")]
-async fn get_versions(data: web::Data<MessageQueue>) -> Result<HttpResponse> {
-    serve_versions(&data, None).await
-}
-
-#[get("/{slug:[0-9a-fA-F]{8}}/versions/")]
+#[get("/{slug}/versions/")]
 async fn get_versions_slug(
     data: web::Data<MessageQueue>,
     path_info: web::Path<Slug>,
 ) -> Result<HttpResponse> {
-    serve_versions(&data, Some(path_info.into_inner())).await
+    serve_versions(&data, path_info.into_inner()).await
 }
 
 #[get("/repositories/")]

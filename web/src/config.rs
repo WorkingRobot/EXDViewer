@@ -19,7 +19,6 @@ pub struct Config {
     pub log_access_format: Option<String>,
     pub cache: ServerBuilder,
     pub assets: AssetCache,
-    pub slug: String,
     pub file_readahead: usize,
     pub api_workers: usize,
 }
@@ -46,7 +45,6 @@ impl Default for Config {
             log_access_format: None,
             cache: ServerBuilder::default(),
             assets: AssetCache::default(),
-            slug: "4e9a232b".parse().unwrap(),
             file_readahead: 0x800000, // 8 MiB
             api_workers: 1,
         }
