@@ -1,13 +1,11 @@
-use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc};
+use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc, sync::Arc};
 
+#[cfg(target_arch = "wasm32")]
+use crate::utils::{PromiseKind, UnsendPromise};
 use anyhow::Result;
 use egui::{
-    Button, CentralPanel, FontData, FontFamily, Layout, RichText, ScrollArea, TextEdit, Vec2,
-    Widget,
-    containers::menu::MenuButton,
-    epaint::text::{FontInsert, FontPriority, InsertFontFamily},
-    panel::Side,
-    style::ScrollStyle,
+    Button, CentralPanel, FontData, FontDefinitions, FontFamily, Layout, RichText, ScrollArea,
+    TextEdit, Vec2, Widget, containers::menu::MenuButton, panel::Side, style::ScrollStyle,
 };
 use egui_extras::install_image_loaders;
 use ironworks::excel::Language;
@@ -59,6 +57,56 @@ type CachedLanguagesPromise = TrackedPromise<Result<Vec<Language>>>;
 type ConvertibleLanguagesPromise =
     ConvertiblePromise<CachedLanguagesPromise, Result<Vec<Language>>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CjkFont {
+    Japanese,
+    Korean,
+    ChineseSimplified,
+    ChineseTraditional,
+}
+
+impl CjkFont {
+    fn for_language(language: Language) -> Option<Self> {
+        match language {
+            Language::Japanese => Some(Self::Japanese),
+            Language::Korean => Some(Self::Korean),
+            Language::ChineseSimplified => Some(Self::ChineseSimplified),
+            Language::ChineseTraditional | Language::TaiwanChinese => {
+                Some(Self::ChineseTraditional)
+            }
+            Language::None | Language::English | Language::German | Language::French => None,
+        }
+    }
+
+    fn family_name(self) -> &'static str {
+        match self {
+            Self::Japanese => "NotoSans-JP",
+            Self::Korean => "NotoSans-KR",
+            Self::ChineseSimplified => "NotoSans-SC",
+            Self::ChineseTraditional => "NotoSans-TC",
+        }
+    }
+
+    fn asset_file(self) -> &'static str {
+        match self {
+            Self::Japanese => "NotoSansJP-Regular.ttf",
+            Self::Korean => "NotoSansKR-Regular.ttf",
+            Self::ChineseSimplified => "NotoSansSC-Regular.ttf",
+            Self::ChineseTraditional => "NotoSansTC-Regular.ttf",
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn embedded_bytes(self) -> &'static [u8] {
+        match self {
+            Self::Japanese => include_bytes!("../assets/NotoSansJP-Regular.ttf"),
+            Self::Korean => include_bytes!("../assets/NotoSansKR-Regular.ttf"),
+            Self::ChineseSimplified => include_bytes!("../assets/NotoSansSC-Regular.ttf"),
+            Self::ChineseTraditional => include_bytes!("../assets/NotoSansTC-Regular.ttf"),
+        }
+    }
+}
+
 pub struct App {
     router: Rc<OnceCell<Router<Self>>>,
     icon_manager: IconManager,
@@ -71,6 +119,10 @@ pub struct App {
     sheet_filter_data: LruCache<(String, bool), Rc<Vec<(String, i32)>>>,
     save_promise: Option<TrackedPromise<()>>,
     goto_window: Option<goto::GoToWindow>,
+    /// `None` = Latin only
+    loaded_cjk: Option<CjkFont>,
+    #[cfg(target_arch = "wasm32")]
+    font_promise: Option<(CjkFont, UnsendPromise<anyhow::Result<Vec<u8>>>)>,
 }
 
 fn create_router(ctx: egui::Context) -> Result<Router<App>> {
@@ -94,6 +146,7 @@ impl App {
             self.goto_window = Some(goto::GoToWindow::to_sheet());
         }
 
+        self.update_fonts(ctx);
         self.update_sheet_languages(ctx);
         self.draw_menubar(ctx);
         self.draw_logger(ctx);
@@ -1062,7 +1115,7 @@ impl App {
     #[must_use]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_image_loaders(&cc.egui_ctx);
-        Self::setup_fonts(&cc.egui_ctx);
+        Self::apply_fonts(&cc.egui_ctx, None);
         Self::setup_theme(&cc.egui_ctx);
 
         Self {
@@ -1077,41 +1130,85 @@ impl App {
             sheet_filter_data: LruCache::new(NonZero::new(8).unwrap()),
             save_promise: None,
             goto_window: None,
+            loaded_cjk: None,
+            #[cfg(target_arch = "wasm32")]
+            font_promise: None,
         }
     }
 
-    fn setup_fonts(ctx: &egui::Context) {
-        ctx.add_font(FontInsert::new(
-            "NotoSans-SC",
-            FontData::from_static(include_bytes!("../assets/NotoSansSC-Medium.ttf")),
-            vec![InsertFontFamily {
-                family: FontFamily::Proportional,
-                priority: FontPriority::Lowest,
-            }],
-        ));
-        ctx.add_font(FontInsert::new(
-            "NotoSans-JP",
-            FontData::from_static(include_bytes!("../assets/NotoSansJP-Medium.ttf")),
-            vec![InsertFontFamily {
-                family: FontFamily::Proportional,
-                priority: FontPriority::Lowest,
-            }],
-        ));
-        ctx.add_font(FontInsert::new(
-            "NotoSans-KR",
-            FontData::from_static(include_bytes!("../assets/NotoSansKR-Medium.ttf")),
-            vec![InsertFontFamily {
-                family: FontFamily::Proportional,
-                priority: FontPriority::Lowest,
-            }],
-        ));
-        ctx.add_font(FontInsert::new(
-            "FFXIV-PrivateUseIcons",
-            FontData::from_static(include_bytes!("../assets/FFXIV_Lodestone_SSF.ttf")),
-            vec![InsertFontFamily {
-                family: FontFamily::Proportional,
-                priority: FontPriority::Lowest,
-            }],
+    fn apply_fonts(ctx: &egui::Context, cjk: Option<(String, Arc<FontData>)>) {
+        let mut fonts = FontDefinitions::default();
+
+        fonts.font_data.insert(
+            "FFXIV-PrivateUseIcons".to_owned(),
+            Arc::new(FontData::from_static(include_bytes!(
+                "../assets/FFXIV_Lodestone_SSF.ttf"
+            ))),
+        );
+        let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+        proportional.push("FFXIV-PrivateUseIcons".to_owned());
+
+        if let Some((name, data)) = cjk {
+            fonts.font_data.insert(name.clone(), data);
+            proportional.push(name);
+        }
+
+        ctx.set_fonts(fonts);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn update_fonts(&mut self, ctx: &egui::Context) {
+        let wanted = CjkFont::for_language(LANGUAGE.get(ctx));
+        if wanted == self.loaded_cjk {
+            return;
+        }
+        let cjk = wanted.map(|font| {
+            (
+                font.family_name().to_owned(),
+                Arc::new(FontData::from_static(font.embedded_bytes())),
+            )
+        });
+        Self::apply_fonts(ctx, cjk);
+        self.loaded_cjk = wanted;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn update_fonts(&mut self, ctx: &egui::Context) {
+        let wanted = CjkFont::for_language(LANGUAGE.get(ctx));
+        if wanted == self.loaded_cjk {
+            return;
+        }
+
+        let Some(font) = wanted else {
+            Self::apply_fonts(ctx, None);
+            self.loaded_cjk = None;
+            self.font_promise = None;
+            return;
+        };
+
+        if self.font_promise.as_ref().is_some_and(|(f, _)| *f == font) {
+            if !self.font_promise.as_ref().unwrap().1.ready() {
+                return;
+            }
+            let (_, promise) = self.font_promise.take().unwrap();
+            match promise.block_and_take() {
+                Ok(bytes) => Self::apply_fonts(
+                    ctx,
+                    Some((
+                        font.family_name().to_owned(),
+                        Arc::new(FontData::from_owned(bytes)),
+                    )),
+                ),
+                Err(error) => log::error!("Failed to fetch font {}: {error}", font.asset_file()),
+            }
+            self.loaded_cjk = Some(font);
+            return;
+        }
+
+        let file = font.asset_file().to_owned();
+        self.font_promise = Some((
+            font,
+            UnsendPromise::new(async move { crate::utils::fetch_url(file).await }),
         ));
     }
 
