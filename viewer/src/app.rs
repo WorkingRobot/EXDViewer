@@ -68,13 +68,16 @@ enum CjkFont {
 impl CjkFont {
     fn for_language(language: Language) -> Option<Self> {
         match language {
-            Language::Japanese => Some(Self::Japanese),
             Language::Korean => Some(Self::Korean),
             Language::ChineseSimplified => Some(Self::ChineseSimplified),
             Language::ChineseTraditional | Language::TaiwanChinese => {
                 Some(Self::ChineseTraditional)
             }
-            Language::None | Language::English | Language::German | Language::French => None,
+            Language::Japanese
+            | Language::None
+            | Language::English
+            | Language::German
+            | Language::French => Some(Self::Japanese),
         }
     }
 
