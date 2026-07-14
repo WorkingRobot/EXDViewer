@@ -25,10 +25,12 @@ use crate::{
     utils::FuzzyMatcher,
 };
 
+/// A shared, resolved set of (schema column, sheet column) pairs.
+type ColumnPairs = Rc<Vec<(SchemaColumn, SheetColumnDefinition)>>;
+
 pub struct FilterCache {
-    wildcard_cache:
-        LazyCell<RefCell<HashMap<Wildcard, Rc<Vec<(SchemaColumn, SheetColumnDefinition)>>>>>,
-    columns: RefCell<Rc<Vec<(SchemaColumn, SheetColumnDefinition)>>>,
+    wildcard_cache: LazyCell<RefCell<HashMap<Wildcard, ColumnPairs>>>,
+    columns: RefCell<ColumnPairs>,
     matcher: FuzzyMatcher,
 }
 

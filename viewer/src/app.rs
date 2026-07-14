@@ -5,7 +5,9 @@ use crate::utils::{PromiseKind, UnsendPromise};
 use anyhow::Result;
 use egui::{
     Button, CentralPanel, FontData, FontDefinitions, FontFamily, Layout, RichText, ScrollArea,
-    TextEdit, Vec2, Widget, containers::menu::MenuButton, panel::Side, style::ScrollStyle,
+    TextEdit, Vec2, Widget,
+    containers::{menu::MenuButton, panel::Panel},
+    style::ScrollStyle,
 };
 use egui_extras::install_image_loaders;
 use ironworks::excel::Language;
@@ -36,7 +38,7 @@ use crate::{
     shortcuts::{GOTO_ROW, GOTO_SHEET},
     utils::{
         CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, FuzzyMatcher, IconManager,
-        TrackedPromise, opt_slider, shortcut, tick_promises,
+        Side, TrackedPromise, opt_slider, shortcut, tick_promises,
     },
 };
 
@@ -56,6 +58,9 @@ type ConvertibleSchemaPromise = ConvertiblePromise<CachedSchemaPromise, Result<E
 type CachedLanguagesPromise = TrackedPromise<Result<Vec<Language>>>;
 type ConvertibleLanguagesPromise =
     ConvertiblePromise<CachedLanguagesPromise, Result<Vec<Language>>>;
+
+/// Fuzzy-matched sheet names (name + score) cached per (filter text, show-misc) key.
+type SheetFilterData = LruCache<(String, bool), Rc<Vec<(String, i32)>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CjkFont {
@@ -119,7 +124,7 @@ pub struct App {
     schema_data: LruCache<CachedSchemaEntry, ConvertibleSchemaPromise>,
     sheet_languages: LruCache<String, ConvertibleLanguagesPromise>,
     sheet_matcher: FuzzyMatcher,
-    sheet_filter_data: LruCache<(String, bool), Rc<Vec<(String, i32)>>>,
+    sheet_filter_data: SheetFilterData,
     save_promise: Option<TrackedPromise<()>>,
     goto_window: Option<goto::GoToWindow>,
     /// `None` = Latin only
@@ -138,23 +143,24 @@ fn create_router(ctx: egui::Context) -> Result<Router<App>> {
 }
 
 impl App {
-    fn draw(&mut self, ctx: &egui::Context) {
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
         self.router
             .get_or_init(|| create_router(ctx.clone()).unwrap());
 
-        if shortcut::consume(ctx, GOTO_ROW) {
+        if shortcut::consume(&ctx, GOTO_ROW) {
             self.goto_window = Some(goto::GoToWindow::to_row());
         }
-        if shortcut::consume(ctx, GOTO_SHEET) {
+        if shortcut::consume(&ctx, GOTO_SHEET) {
             self.goto_window = Some(goto::GoToWindow::to_sheet());
         }
 
-        self.update_fonts(ctx);
-        self.update_sheet_languages(ctx);
-        self.draw_menubar(ctx);
-        self.draw_logger(ctx);
+        self.update_fonts(&ctx);
+        self.update_sheet_languages(&ctx);
+        self.draw_menubar(ui);
+        self.draw_logger(ui.ctx());
 
-        CentralPanel::default().show(ctx, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             self.draw_router(ui);
         });
     }
@@ -245,12 +251,14 @@ impl App {
         }
     }
 
-    fn draw_menubar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top_panel")
+    fn draw_menubar(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
+        Panel::top("top_panel")
             .frame(
-                egui::Frame::side_top_panel(&ctx.style()).fill(ctx.style().visuals.code_bg_color),
+                egui::Frame::side_top_panel(&ctx.global_style())
+                    .fill(ctx.global_style().visuals.code_bg_color),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button("App", |ui| {
                         if ui.button("Configure").clicked() {
@@ -487,13 +495,14 @@ impl App {
         }
     }
 
-    fn draw_sheet_list(&mut self, ctx: &egui::Context) {
-        CollapsibleSidePanel::new("sheet_list", Side::Left).show(ctx, |ui, is_open| {
+    fn draw_sheet_list(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
+        CollapsibleSidePanel::new("sheet_list", Side::Left).show(ui, |ui, is_open| {
             if !is_open {
                 return;
             }
 
-            egui::TopBottomPanel::top("sheet_list_header").show_inside(ui, |ui| {
+            Panel::top("sheet_list_header").show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
@@ -534,7 +543,7 @@ impl App {
                 ui.add_space(4.0);
             });
 
-            egui::TopBottomPanel::bottom("sheet_list_status").show_inside(ui, |ui| {
+            Panel::bottom("sheet_list_status").show(ui, |ui| {
                 ScrollArea::horizontal()
                     .min_scrolled_width(0.0)
                     .show(ui, |ui| {
@@ -590,7 +599,7 @@ impl App {
                 })
                 .clone();
 
-            egui::CentralPanel::default().show_inside(ui, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 let row_height = ui.text_style_height(&egui::TextStyle::Button);
                 ScrollArea::both().auto_shrink(false).show_rows(
                     ui,
@@ -624,17 +633,18 @@ impl App {
         });
     }
 
-    fn draw_sheet_data(&mut self, ctx: &egui::Context) {
+    fn draw_sheet_data(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
         egui::CentralPanel::default()
             .frame(
-                egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin {
+                egui::Frame::central_panel(&ctx.global_style()).inner_margin(egui::Margin {
                     left: 8,
                     right: 8,
                     top: 2,
                     bottom: 8,
                 }),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 let backend = self.backend.as_ref().unwrap();
                 let sheet_name = SELECTED_SHEET.get(ctx).unwrap();
                 let language = LANGUAGE.get(ctx);
@@ -766,7 +776,7 @@ impl App {
                     Some((Ok(table), Ok(editor))) => (table, editor),
                 };
 
-                egui::TopBottomPanel::top("sheet_data_header").show_inside(ui, |ui| {
+                Panel::top("sheet_data_header").show(ui, |ui| {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if CollapsibleSidePanel::is_collapsed(ui.ctx(), "sheet_list") {
@@ -1036,14 +1046,14 @@ impl App {
     fn draw_unnamed_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
         self.draw_goto(ui.ctx());
 
-        self.draw_sheet_list(ui.ctx());
+        self.draw_sheet_list(ui);
     }
 
     fn draw_named_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
         self.draw_goto(ui.ctx());
 
-        self.draw_sheet_list(ui.ctx());
-        self.draw_sheet_data(ui.ctx());
+        self.draw_sheet_list(ui);
+        self.draw_sheet_data(ui);
     }
 
     fn get_modified_schemas(&self) -> Vec<(&String, &EditableSchema)> {
@@ -1229,9 +1239,9 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.draw(ctx);
-        tick_promises(ctx);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.draw(ui);
+        tick_promises(ui.ctx());
     }
 }
 

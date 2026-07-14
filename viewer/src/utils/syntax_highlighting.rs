@@ -51,6 +51,7 @@ pub fn highlight(
         mem.caches
             .cache::<HighlightCache>()
             .get((&font_id, theme, code, language))
+            .clone()
     })
 }
 
@@ -142,11 +143,12 @@ impl Highlighter {
     }
 }
 
-fn as_byte_range(whole: &str, range: &str) -> std::ops::Range<usize> {
+fn as_byte_range(whole: &str, range: &str) -> egui::text::ByteRange {
+    use egui::text::ByteIndex;
     let whole_start = whole.as_ptr() as usize;
     let range_start = range.as_ptr() as usize;
     assert!(whole_start <= range_start);
     assert!(range_start + range.len() <= whole_start + whole.len());
     let offset = range_start - whole_start;
-    offset..(offset + range.len())
+    ByteIndex(offset)..ByteIndex(offset + range.len())
 }

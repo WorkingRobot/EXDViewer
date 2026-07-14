@@ -54,7 +54,9 @@ impl RetrievalMethod {
     pub fn set<K: Keyable>(self, ctx: &egui::Context, id: egui::Id, value: K) {
         match self {
             RetrievalMethod::Persisted => ctx.data_mut(|d| d.insert_persisted(id, value)),
-            RetrievalMethod::Temporary => ctx.data_mut(|d| d.insert_temp(id, value)),
+            RetrievalMethod::Temporary => ctx.data_mut(|d| {
+                d.insert_temp(id, value);
+            }),
         }
     }
 
@@ -250,7 +252,7 @@ pub const COLOR_THEME: FKey<ColorTheme, ThemePreference> = FKey::new_with_prefli
 );
 pub const CODE_SYNTAX_THEME: FKey<CodeTheme, Arc<egui::Style>> = FKey::new_with_preflight(
     "syntax-theme",
-    |ctx| ctx.style(),
+    |ctx| ctx.global_style(),
     |_, style| CodeTheme {
         theme: if style.visuals.dark_mode {
             "base16-mocha.dark"

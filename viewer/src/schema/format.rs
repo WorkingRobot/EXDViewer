@@ -1,13 +1,13 @@
-use itertools::Itertools;
-use jsonschema::{
-    BasicOutput,
-    output::{ErrorDescription, OutputUnit},
-};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::LazyLock,
-};
+use std::{collections::HashMap, sync::LazyLock};
+
+/// A single schema-validation failure, with the JSON path it occurred at. Owned so it can outlive
+/// the validated value (jsonschema 0.47's `ValidationError` borrows the instance).
+#[derive(Debug, Clone)]
+pub struct SchemaError {
+    pub location: String,
+    pub description: String,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -73,25 +73,27 @@ static SCHEMA: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
 });
 
 impl Schema {
-    pub fn from_str(
-        s: &str,
-    ) -> anyhow::Result<Result<Self, VecDeque<OutputUnit<ErrorDescription>>>> {
+    pub fn from_str(s: &str) -> anyhow::Result<Result<Self, Vec<SchemaError>>> {
         let value: serde_json::Value = serde_yml::from_str(s)?;
-        match SCHEMA.apply(&value).basic() {
-            BasicOutput::Valid(_) => {
-                let schema: Schema = serde_json::from_value(value)?;
-                Ok(Ok(schema))
+        let errors: Vec<SchemaError> = SCHEMA
+            .iter_errors(&value)
+            .map(|error| SchemaError {
+                location: error.instance_path().to_string(),
+                description: error.to_string(),
+            })
+            .collect();
+        if errors.is_empty() {
+            let schema: Schema = serde_json::from_value(value)?;
+            Ok(Ok(schema))
+        } else {
+            for error in &errors {
+                log::error!(
+                    "Schema Error: {} at path {}",
+                    error.description,
+                    error.location
+                );
             }
-            BasicOutput::Invalid(errors) => {
-                for error in &errors {
-                    log::error!(
-                        "Schema Error: {} at path {}",
-                        error.error_description(),
-                        error.instance_location()
-                    );
-                }
-                Ok(Err(errors))
-            }
+            Ok(Err(errors))
         }
     }
 
@@ -103,7 +105,7 @@ impl Schema {
                     name: Some(format!("Unknown{i}")),
                     ..Default::default()
                 })
-                .collect_vec(),
+                .collect(),
             ..Default::default()
         }
     }

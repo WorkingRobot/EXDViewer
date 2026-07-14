@@ -89,7 +89,12 @@ async fn main() -> Result<(), ServerError> {
     log::info!("Binding to {}", config.server_addr);
     let server = HttpServer::new(move || {
         App::new()
-            .wrap(Helmet::new().add(XContentTypeOptions::nosniff()))
+            .wrap(
+                Helmet::new()
+                    .add(XContentTypeOptions::nosniff())
+                    .into_middleware()
+                    .expect("valid helmet config"),
+            )
             .wrap(
                 Cors::default()
                     .allowed_origin("http://localhost:3000")

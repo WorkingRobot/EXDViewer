@@ -1,7 +1,24 @@
 use egui::{
     Context, Id, InnerResponse, Response, Sense, Ui, collapsing_header::paint_default_icon,
-    panel::Side, pos2, remap, vec2,
+    containers::panel::Panel, pos2, remap, vec2,
 };
+
+/// Which edge a [`CollapsibleSidePanel`] docks to. egui 0.35 removed the public `Side` enum in
+/// favour of the `Panel::left`/`Panel::right` constructors, so we keep a small local one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    fn panel(self, id: impl Into<Id>) -> Panel {
+        match self {
+            Side::Left => Panel::left(id),
+            Side::Right => Panel::right(id),
+        }
+    }
+}
 
 pub struct CollapsibleSidePanel {
     id: Id,
@@ -25,24 +42,27 @@ impl CollapsibleSidePanel {
 
     pub fn show<R>(
         self,
-        ctx: &Context,
+        ui: &mut Ui,
         add_contents: impl FnOnce(&mut Ui, bool) -> R,
     ) -> Option<InnerResponse<R>> {
-        let is_expanded = !Self::is_collapsed(ctx, self.id);
-        let openness = Self::openness(ctx, self.id);
+        let is_expanded = !Self::is_collapsed(ui.ctx(), self.id);
+        let openness = Self::openness(ui.ctx(), self.id);
 
-        let collapsed_panel = egui::SidePanel::new(self.side, self.id.with("collapsed"))
+        let collapsed_panel = self
+            .side
+            .panel(self.id.with("collapsed"))
             .resizable(false)
-            .exact_width(self.collapsed_width.unwrap_or_default());
+            .exact_size(self.collapsed_width.unwrap_or_default());
 
         if openness != 0.0 || self.collapsed_width.is_some() {
-            egui::SidePanel::show_animated_between(
-                ctx,
-                is_expanded,
+            let mut is_expanded = is_expanded;
+            Some(Panel::show_switched(
+                ui,
+                &mut is_expanded,
                 collapsed_panel,
-                egui::SidePanel::new(self.side, self.id),
-                |ui, openness| add_contents(ui, openness != 0.0),
-            )
+                self.side.panel(self.id),
+                |ui, expanded| add_contents(ui, expanded),
+            ))
         } else {
             None
         }

@@ -11,8 +11,8 @@ name = "worker"
 path = "src/worker/runner.rs"
 
 [dependencies]
-egui = "0.33"
-eframe = { version = "0.33", default-features = false, features = [
+egui = "0.35"
+eframe = { version = "0.35", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -20,46 +20,46 @@ eframe = { version = "0.33", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
 ] }
 catppuccin-egui = { version = "5.6", default-features = false, features = [
-    "egui33",
+    "egui35",
 ] }
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 ironworks = { version = "0.4.1", features = ["excel", "sqpack", "tex"] }
-ehttp = { version = "0.6", features = ["streaming", "native-async"] }
-lru = "0.16"
+ehttp = { version = "0.7", features = ["streaming", "native-async"] }
+lru = "0.18"
 url = "2.5"
 nucleo-matcher = "0.3.1"
 anyhow = "1.0"
-intmap = "3.1.0"
+intmap = "3.1"
 binrw = "0.15"
 num-traits = "0.2"
-itertools = "0.14"
-rfd = "0.16"
-egui_table = "0.6"
+itertools = "0.15"
+rfd = "0.17"
+egui_table = "0.9"
 # egui_router = "0.4" Terrible library, don't use
-egui_extras = { version = "0.33", features = ["http", "image"] }
-syntect = { version = "5.2", default-features = false, features = [
+egui_extras = { version = "0.35", features = ["http", "image"] }
+syntect = { version = "5.3", default-features = false, features = [
     "default-fancy",
 ] }
-serde_yml = "0.0.12"
+serde_yml = "0.0.13"
 serde_json = "1.0"
-jsonschema = { version = "0.33", default-features = false }
+jsonschema = { version = "0.47", default-features = false }
 async-trait = "0.1"
 futures-util = "0.3"
-egui_logger = "0.9"
+egui_logger = "0.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 image_dds = { version = "0.7", default-features = false, features = ["image"] }
-either = { version = "1.15", features = ["serde"] }
+either = { version = "1.16", features = ["serde"] }
 replace_with = "0.1"
 pinned = "0.1"
 matchit = "0.9"
-zip = { version = "7.0", default-features = false }
+zip = { version = "8.6", default-features = false }
 base64 = "0.22"
-wildmatch = "2.5"
+wildmatch = "2.6"
 regex-lite = "0.1"
 pest = "2.8"
 pest_derive = "2.8"
-compact_str = { version = "0.9", features = ["smallvec"] }
+compact_str = { version = "0.10", features = ["smallvec"] }
 smallvec = { version = "1.15", features = ["union"] }
 
 # native:
@@ -91,7 +91,7 @@ web-sys = { version = "0.3", features = [
 getrandom = { version = "*", features = ["wasm_js"] }
 # Fix to allow building for wasm
 uuid = { version = "*", features = ["rng-getrandom"] }
-gloo-worker = "0.5"
+gloo-worker = "0.6"
 serde-wasm-bindgen = "0.6"
 indexed-db = "0.4"
 web-time = "1.1"
