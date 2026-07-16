@@ -241,6 +241,7 @@ pub const SHEET_FILTER_OPTIONS: DKey<MatchOptions> = DKey::new(
 );
 pub const SELECTED_SHEET: DKey<Option<String>> = DKey::new("selected-sheet", None);
 pub const MISC_SHEETS_SHOWN: DKey<bool> = DKey::new("misc-sheets-shown", false);
+pub const PR_CHANGED_ONLY: DKey<bool> = DKey::new("pr-changed-only", true);
 pub const SCHEMA_EDITOR_VISIBLE: DKey<bool> = DKey::new("schema-editor-visible", false);
 pub const SCHEMA_EDITOR_WORD_WRAP: DKey<bool> = DKey::new("schema-editor-word-wrap", false);
 pub const SCHEMA_EDITOR_ERRORS_SHOWN: DKey<bool> = DKey::new("schema-editor-errors-shown", false);

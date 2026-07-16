@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, io::Write, num::NonZero, rc::Rc, sync::Arc};
+use std::{cell::OnceCell, collections::HashSet, io::Write, num::NonZero, rc::Rc, sync::Arc};
 
 #[cfg(target_arch = "wasm32")]
 use crate::utils::{PromiseKind, UnsendPromise};
@@ -25,12 +25,13 @@ use crate::{
     },
     goto,
     router::{Router, path::Path, route::RouteResponse},
-    schema::provider::SchemaProvider,
+    schema::{provider::SchemaProvider, web::WebProvider},
     settings::{
-        ALWAYS_HIRES, BACKEND_CONFIG, CODE_SYNTAX_THEME, COLOR_THEME, CURRENT_SHEET_LANGUAGES,
-        DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN,
-        SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET, SHEET_FILTER_OPTIONS, SHEET_FILTERS, SHEETS_FILTER,
-        SOLID_SCROLLBAR, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES,
+        ALWAYS_HIRES, BACKEND_CONFIG, BackendConfig, CODE_SYNTAX_THEME, COLOR_THEME,
+        CURRENT_SHEET_LANGUAGES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, GithubSchemaBranch,
+        LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, PR_CHANGED_ONLY, SCHEMA_EDITOR_VISIBLE,
+        SELECTED_SHEET, SHEET_FILTER_OPTIONS, SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR,
+        SORTED_BY_OFFSET, SchemaLocation, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES,
         TEXT_USE_SCROLL, TEXT_WRAP_WIDTH,
     },
     setup::{self, SetupWindow},
@@ -61,6 +62,27 @@ type ConvertibleLanguagesPromise =
 
 /// Fuzzy-matched sheet names (name + score) cached per (filter text, show-misc) key.
 type SheetFilterData = LruCache<(String, bool), Rc<Vec<(String, i32)>>>;
+
+/// Identifies which pull request a changed-schema set belongs to: (owner, repo, number).
+type ChangedSchemasKey = (String, String, u32);
+
+type CachedChangedSchemasPromise = TrackedPromise<Result<Vec<String>>>;
+/// Converts to the set of PR-changed sheet names, or `None` if the fetch failed
+/// (in which case the changed-only filter is treated as inactive).
+type ConvertibleChangedSchemasPromise =
+    ConvertiblePromise<CachedChangedSchemasPromise, Option<Rc<HashSet<String>>>>;
+
+/// The state of the "changed schemas only" filter for the active schema source.
+enum PrChangedState {
+    /// The active schema source is not a pull request; the filter does not apply.
+    NotPr,
+    /// A pull request is active but its changed-file list is still loading.
+    Pending,
+    /// The changed-file list failed to load; the filter is inert (show everything).
+    Failed,
+    /// The set of sheet names the pull request changed.
+    Ready(Rc<HashSet<String>>),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CjkFont {
@@ -125,6 +147,7 @@ pub struct App {
     sheet_languages: LruCache<String, ConvertibleLanguagesPromise>,
     sheet_matcher: FuzzyMatcher,
     sheet_filter_data: SheetFilterData,
+    changed_schemas: Option<(ChangedSchemasKey, ConvertibleChangedSchemasPromise)>,
     save_promise: Option<TrackedPromise<()>>,
     goto_window: Option<goto::GoToWindow>,
     /// `None` = Latin only
@@ -495,8 +518,53 @@ impl App {
         }
     }
 
+    fn poll_changed_schemas(&mut self, ctx: &egui::Context) -> PrChangedState {
+        let key = match BACKEND_CONFIG.get(ctx) {
+            Some(BackendConfig {
+                schema: SchemaLocation::Github(location),
+                ..
+            }) => match &location.branch {
+                GithubSchemaBranch::PullRequest { number, .. } => {
+                    (location.owner.clone(), location.repo.clone(), *number)
+                }
+                _ => {
+                    self.changed_schemas = None;
+                    return PrChangedState::NotPr;
+                }
+            },
+            _ => {
+                self.changed_schemas = None;
+                return PrChangedState::NotPr;
+            }
+        };
+
+        if self.changed_schemas.as_ref().map(|(k, _)| k) != Some(&key) {
+            let (owner, repo, number) = key.clone();
+            self.changed_schemas = Some((
+                key,
+                ConvertiblePromise::new_promise(TrackedPromise::spawn_local(async move {
+                    WebProvider::fetch_github_pull_request_files(&owner, &repo, number).await
+                })),
+            ));
+        }
+
+        let (_, promise) = self.changed_schemas.as_mut().unwrap();
+        match promise.get(|result| match result {
+            Ok(names) => Some(Rc::new(names.into_iter().collect())),
+            Err(e) => {
+                log::error!("Error fetching PR-changed schemas: {e}");
+                None
+            }
+        }) {
+            None => PrChangedState::Pending,
+            Some(None) => PrChangedState::Failed,
+            Some(Some(set)) => PrChangedState::Ready(set.clone()),
+        }
+    }
+
     fn draw_sheet_list(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
+        let pr_changed = self.poll_changed_schemas(ctx);
         CollapsibleSidePanel::new("sheet_list", Side::Left).show(ui, |ui, is_open| {
             if !is_open {
                 return;
@@ -528,6 +596,23 @@ impl App {
                         .changed()
                     {
                         MISC_SHEETS_SHOWN.set(ctx, misc_sheets_shown);
+                    }
+
+                    if !matches!(pr_changed, PrChangedState::NotPr) {
+                        let mut changed_only = PR_CHANGED_ONLY.get(ctx);
+                        let hover = match &pr_changed {
+                            PrChangedState::Ready(_) => "Filter unchanged sheets",
+                            PrChangedState::Pending => "Filter unchanged sheets (loading…)",
+                            PrChangedState::Failed => "Filter unchanged sheets (failed to load)",
+                            PrChangedState::NotPr => unreachable!(),
+                        };
+                        if ui
+                            .toggle_value(&mut changed_only, "±")
+                            .on_hover_text(hover)
+                            .changed()
+                        {
+                            PR_CHANGED_ONLY.set(ctx, changed_only);
+                        }
                     }
 
                     if ui
@@ -598,6 +683,17 @@ impl App {
                     Rc::new(sheets)
                 })
                 .clone();
+
+            let sheets = match &pr_changed {
+                PrChangedState::Ready(changed) if PR_CHANGED_ONLY.get(ctx) => Rc::new(
+                    sheets
+                        .iter()
+                        .filter(|(name, _)| changed.contains(name))
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                ),
+                _ => sheets,
+            };
 
             egui::CentralPanel::default().show(ui, |ui| {
                 let row_height = ui.text_style_height(&egui::TextStyle::Button);
@@ -1141,6 +1237,7 @@ impl App {
             sheet_languages: LruCache::unbounded(),
             sheet_matcher: FuzzyMatcher::new(),
             sheet_filter_data: LruCache::new(NonZero::new(8).unwrap()),
+            changed_schemas: None,
             save_promise: None,
             goto_window: None,
             loaded_cjk: None,

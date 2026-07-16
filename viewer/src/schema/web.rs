@@ -53,6 +53,11 @@ pub struct GithubPullRequestRepo {
     pub full_name: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubPullRequestFile {
+    pub filename: String,
+}
+
 impl WebProvider {
     pub fn new(base_url: String) -> Self {
         WebProvider { base_url }
@@ -128,6 +133,42 @@ impl WebProvider {
             .collect_vec();
 
         Ok(pulls)
+    }
+
+    pub async fn fetch_github_pull_request_files(
+        owner: &str,
+        repo: &str,
+        number: u32,
+    ) -> anyhow::Result<Vec<String>> {
+        if !Self::is_valid_github_name(owner) || !Self::is_valid_github_name(repo) {
+            return Err(anyhow::anyhow!("Invalid GitHub repository format"));
+        }
+
+        const PER_PAGE: usize = 100;
+        let mut ret = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let url = format!(
+                "https://api.github.com/repos/{owner}/{repo}/pulls/{number}/files?per_page={PER_PAGE}&page={page}"
+            );
+            let resp = fetch_url(url).await?;
+
+            let files: Vec<GithubPullRequestFile> = serde_json::from_slice(&resp)?;
+            let count = files.len();
+
+            ret.extend(files.into_iter().filter_map(|file| {
+                file.filename
+                    .strip_suffix(".yml")
+                    .map(|name| name.to_string())
+            }));
+
+            if count < PER_PAGE {
+                break;
+            }
+            page += 1;
+        }
+
+        Ok(ret)
     }
 }
 
