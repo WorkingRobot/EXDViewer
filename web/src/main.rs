@@ -101,7 +101,7 @@ async fn main() -> Result<(), ServerError> {
                     .allowed_origin("http://localhost:8080")
                     .allowed_origin("http://127.0.0.1:3000")
                     .allowed_origin("http://127.0.0.1:8080")
-                    .allowed_methods(vec!["GET"])
+                    .allowed_methods(vec!["GET", "POST"])
                     .allowed_headers(vec!["Content-Type"]),
             )
             .wrap(NormalizePath::new(TrailingSlash::Always))

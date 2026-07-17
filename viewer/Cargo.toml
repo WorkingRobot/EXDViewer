@@ -36,14 +36,13 @@ num-traits = "0.2"
 itertools = "0.15"
 rfd = "0.17"
 egui_table = "0.9"
-# egui_router = "0.4" Terrible library, don't use
 egui_extras = { version = "0.35", features = ["http", "image"] }
 syntect = { version = "5.3", default-features = false, features = [
     "default-fancy",
 ] }
 serde_yml = "0.0.13"
 serde_json = "1.0"
-jsonschema = { version = "0.47", default-features = false }
+jsonschema = { version = "0.48", default-features = false }
 async-trait = "0.1"
 futures-util = "0.3"
 egui_logger = "0.11"
@@ -55,6 +54,7 @@ pinned = "0.1"
 matchit = "0.9"
 zip = { version = "8.6", default-features = false }
 base64 = "0.22"
+sha2 = "0.11"
 wildmatch = "2.6"
 regex-lite = "0.1"
 pest = "2.8"
@@ -86,6 +86,9 @@ web-sys = { version = "0.3", features = [
     "History",
     "PopStateEvent",
     "HtmlCollection",
+    "Location",
+    "Storage",
+    "UrlSearchParams",
 ] }
 # Fix to allow building for wasm
 getrandom = { version = "*", features = ["wasm_js"] }

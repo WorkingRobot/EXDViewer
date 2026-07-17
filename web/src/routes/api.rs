@@ -1,5 +1,6 @@
 use std::{fmt::Display, str::FromStr};
 
+use actix_web::post;
 use actix_web::{
     HttpResponse, Result,
     body::{EitherBody, MessageBody},
@@ -12,12 +13,15 @@ use actix_web::{
 };
 use actix_web_lab::header::{CacheControl, CacheDirective};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use xiv_core::file::{slug::Slug, version::GameVersion};
 
-use crate::{data::RepositoryInfo, queue::MessageQueue};
+use crate::{config::Config, data::RepositoryInfo, queue::MessageQueue};
 
 pub fn service() -> impl HttpServiceFactory {
     web::scope("/api")
+        .service(get_github_oauth_config)
+        .service(post_github_oauth_token)
         .service(get_repositories)
         .service(get_versions_slug)
         .service(get_exists_slug)
@@ -196,6 +200,63 @@ async fn get_repositories(data: web::Data<MessageQueue>) -> Result<HttpResponse>
         .await
         .map_err(ErrorInternalServerError)?;
     Ok(HttpResponse::Ok().json(RepositoriesInfo { repositories }))
+}
+
+#[derive(Debug, Serialize)]
+struct GithubOAuthConfig {
+    client_id: String,
+}
+
+#[get("/github/oauth/config/")]
+async fn get_github_oauth_config(config: web::Data<Config>) -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(GithubOAuthConfig {
+        client_id: config.github_client_id.clone(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubOAuthRequest {
+    code: String,
+    code_verifier: Option<String>,
+    redirect_uri: Option<String>,
+}
+
+#[post("/github/oauth/token/")]
+async fn post_github_oauth_token(
+    config: web::Data<Config>,
+    body: web::Json<GithubOAuthRequest>,
+) -> Result<HttpResponse> {
+    if config.github_client_id.is_empty() || config.github_client_secret.is_empty() {
+        return Err(ErrorInternalServerError("GitHub OAuth is not configured"));
+    }
+
+    let mut params = Map::new();
+    params.insert(
+        "client_id".into(),
+        Value::String(config.github_client_id.clone()),
+    );
+    params.insert(
+        "client_secret".into(),
+        Value::String(config.github_client_secret.clone()),
+    );
+    params.insert("code".into(), Value::String(body.code.clone()));
+    if let Some(verifier) = &body.code_verifier {
+        params.insert("code_verifier".into(), Value::String(verifier.clone()));
+    }
+    if let Some(redirect_uri) = &body.redirect_uri {
+        params.insert("redirect_uri".into(), Value::String(redirect_uri.clone()));
+    }
+
+    let response = reqwest::Client::new()
+        .post("https://github.com/login/oauth/access_token")
+        .header("Accept", "application/json")
+        .json(&params)
+        .send()
+        .await
+        .map_err(ErrorInternalServerError)?;
+
+    let value: Value = response.json().await.map_err(ErrorInternalServerError)?;
+    Ok(HttpResponse::Ok().json(value))
 }
 
 fn log_error<B: MessageBody + 'static>(

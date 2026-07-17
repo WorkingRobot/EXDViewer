@@ -23,7 +23,9 @@ use crate::{
         base::BaseSheet,
         provider::{ExcelHeader, ExcelProvider},
     },
+    github::CALLBACK_PATH,
     goto,
+    pr_window::{self, PrAction, PrWindow},
     router::{Router, path::Path, route::RouteResponse},
     schema::{provider::SchemaProvider, web::WebProvider},
     settings::{
@@ -149,6 +151,7 @@ pub struct App {
     sheet_filter_data: SheetFilterData,
     changed_schemas: Option<(ChangedSchemasKey, ConvertibleChangedSchemasPromise)>,
     save_promise: Option<TrackedPromise<()>>,
+    pr_window: PrWindow,
     goto_window: Option<goto::GoToWindow>,
     /// `None` = Latin only
     loaded_cjk: Option<CjkFont>,
@@ -162,6 +165,11 @@ fn create_router(ctx: egui::Context) -> Result<Router<App>> {
     builder.add_route("/", App::on_setup, App::draw_setup)?;
     builder.add_route("/sheet", App::on_unnamed_sheet, App::draw_unnamed_sheet)?;
     builder.add_route("/sheet/{*name}", App::on_named_sheet, App::draw_named_sheet)?;
+    builder.add_route(
+        CALLBACK_PATH,
+        App::on_auth_callback,
+        App::draw_auth_callback,
+    )?;
     Ok(builder)
 }
 
@@ -180,6 +188,7 @@ impl App {
 
         self.update_fonts(&ctx);
         self.update_sheet_languages(&ctx);
+        self.pr_window.poll(&ctx);
         self.draw_menubar(ui);
         self.draw_logger(ui.ctx());
 
@@ -634,29 +643,37 @@ impl App {
                     .show(ui, |ui| {
                         ui.horizontal_centered(|ui| {
                             let modified_schemas = self.get_modified_schemas();
+                            let can_pr = pr_window::github_source(ctx).is_some();
+                            let mut save = false;
+                            let mut open_pr = false;
                             if !modified_schemas.is_empty() {
+                                let count = modified_schemas.len();
                                 ui.label(format!(
-                                    "{} modified schema{}",
-                                    modified_schemas.len(),
-                                    if modified_schemas.len() > 1 { "s" } else { "" }
+                                    "{count} modified schema{}",
+                                    if count > 1 { "s" } else { "" }
                                 ))
                                 .on_hover_text(
                                     modified_schemas.iter().map(|(name, _)| name).join("\n"),
                                 );
-                                let resp = ui
-                                    .with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.button(if modified_schemas.len() > 1 {
-                                            "Save All"
-                                        } else {
-                                            "Save"
-                                        })
-                                    })
-                                    .inner;
-                                if resp.clicked() {
-                                    self.command_save_all_schemas();
-                                }
+                                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui
+                                        .button(if count > 1 { "Save All" } else { "Save" })
+                                        .clicked()
+                                    {
+                                        save = true;
+                                    }
+                                    if can_pr && ui.button("Create PR").clicked() {
+                                        open_pr = true;
+                                    }
+                                });
                             } else {
                                 powered_by_egui_and_eframe(ui);
+                            }
+                            if save {
+                                self.command_save_all_schemas();
+                            }
+                            if open_pr {
+                                self.command_open_pr();
                             }
                         });
                     });
@@ -1068,6 +1085,19 @@ impl App {
         }
     }
 
+    fn on_auth_callback(
+        &mut self,
+        _ui: &mut egui::Ui,
+        _path: &Path,
+        _params: &Params<'_, '_>,
+    ) -> RouteResponse {
+        RouteResponse::Title("Signing in…".to_string())
+    }
+
+    fn draw_auth_callback(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
+        pr_window::draw_auth_callback(ui);
+    }
+
     fn ensure_backend(&self, path: &Path) -> Option<RouteResponse> {
         if self.backend.is_none() {
             return Some(RouteResponse::Redirect(Path::with_params(
@@ -1141,15 +1171,46 @@ impl App {
 
     fn draw_unnamed_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
         self.draw_goto(ui.ctx());
+        self.draw_pr_window(ui.ctx());
 
         self.draw_sheet_list(ui);
     }
 
     fn draw_named_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
         self.draw_goto(ui.ctx());
+        self.draw_pr_window(ui.ctx());
 
         self.draw_sheet_list(ui);
         self.draw_sheet_data(ui);
+    }
+
+    fn command_open_pr(&mut self) {
+        let names: Vec<String> = self
+            .get_modified_schemas()
+            .iter()
+            .map(|(name, _)| (*name).clone())
+            .collect();
+        self.pr_window.open(&names);
+    }
+
+    fn draw_pr_window(&mut self, ctx: &egui::Context) {
+        let location = pr_window::github_source(ctx);
+        let modified: Vec<(String, Option<String>)> = self
+            .get_modified_schemas()
+            .iter()
+            .map(|(name, schema)| ((*name).clone(), schema.invalid_reason()))
+            .collect();
+        if let Some(PrAction::Submit { title, body }) =
+            self.pr_window.draw(ctx, location.as_ref(), &modified)
+            && let Some(location) = &location
+        {
+            let files: Vec<(String, String)> = self
+                .get_modified_schemas()
+                .into_iter()
+                .map(|(name, schema)| (format!("{name}.yml"), schema.get_text().clone()))
+                .collect();
+            self.pr_window.submit(location, title, body, files);
+        }
     }
 
     fn get_modified_schemas(&self) -> Vec<(&String, &EditableSchema)> {
@@ -1239,6 +1300,7 @@ impl App {
             sheet_filter_data: LruCache::new(NonZero::new(8).unwrap()),
             changed_schemas: None,
             save_promise: None,
+            pr_window: PrWindow::default(),
             goto_window: None,
             loaded_cjk: None,
             #[cfg(target_arch = "wasm32")]
@@ -1346,7 +1408,7 @@ fn add_links(ui: &mut egui::Ui) {
     ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
         ui.add(
             egui::Hyperlink::from_label_and_url(
-                "Contibute to EXDSchema",
+                "Contribute to EXDSchema",
                 "https://github.com/xivdev/EXDSchema",
             )
             .open_in_new_tab(true),

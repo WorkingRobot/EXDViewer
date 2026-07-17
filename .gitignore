@@ -17,3 +17,7 @@ exd_cache/
 cache/
 massif.out.*
 callgrind.out.*
+
+# Local secrets / dotenv
+.env
+.secrets.env

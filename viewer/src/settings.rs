@@ -346,6 +346,15 @@ impl GithubSchemaLocation {
             )
         }
     }
+
+    pub fn base_branch(&self) -> String {
+        match &self.branch {
+            GithubSchemaBranch::Latest => "latest".to_string(),
+            GithubSchemaBranch::Other(name) => name.clone(),
+            GithubSchemaBranch::Version(v) => format!("ver/{}", v.0),
+            GithubSchemaBranch::PullRequest { .. } => "latest".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

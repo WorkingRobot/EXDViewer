@@ -33,5 +33,5 @@ pub use syntax_highlighting::{CodeTheme, highlight};
 pub use tracked_promise::{TrackedPromise, tick_promises};
 pub use unsend_promise::UnsendPromise;
 pub use version::GameVersion;
-pub use webreq::{fetch_url, fetch_url_str};
+pub use webreq::{HttpResponse, fetch_url, fetch_url_str, request};
 pub use yield_now::yield_to_ui;

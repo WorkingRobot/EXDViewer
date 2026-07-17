@@ -75,6 +75,27 @@ impl EditableSchema {
         self.schema.as_ref().ok().and_then(|r| r.as_ref().ok())
     }
 
+    pub fn invalid_reason(&self) -> Option<String> {
+        match &self.schema {
+            Ok(Ok(_)) => None,
+            Ok(Err(errors)) => {
+                let first = errors.first()?;
+                let at = if first.location.is_empty() {
+                    String::new()
+                } else {
+                    format!(" at {}", first.location)
+                };
+                let more = if errors.len() > 1 {
+                    format!(" (+{} more)", errors.len() - 1)
+                } else {
+                    String::new()
+                };
+                Some(format!("{}{at}{more}", first.description))
+            }
+            Err(e) => Some(e.to_string()),
+        }
+    }
+
     pub fn draw(&mut self, ui: &mut egui::Ui, provider: &BoxedSchemaProvider) -> Response {
         let resp = self.draw_internal(ui, provider);
         if resp.changed() {
