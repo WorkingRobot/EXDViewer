@@ -27,14 +27,18 @@ pub fn draw(ctx: &egui::Context, open: &mut bool) {
                             .open_in_new_tab(true),
                         );
                         ui.label(
-                            RichText::new(format!("v{}", crate::build::PKG_VERSION))
-                                .size(version_size),
+                            RichText::new(format!(
+                                "v{} {}",
+                                crate::build::PKG_VERSION,
+                                to_title_case(crate::build::BUILD_RUST_CHANNEL)
+                            ))
+                            .size(version_size),
                         );
                         ui.label(
                             RichText::new(format!(
                                 "{} · {}",
-                                crate::build::SHORT_COMMIT,
-                                crate::build::COMMIT_DATE
+                                crate::build::BUILD_TIME,
+                                crate::build::BUILD_TARGET_ARCH,
                             ))
                             .small()
                             .weak(),
@@ -119,4 +123,11 @@ fn centered_inline(ui: &mut egui::Ui, measure: &str, add: impl FnOnce(&mut egui:
         ui.add_space(((ui.available_width() - width) * 0.5).max(0.0));
         add(ui);
     });
+}
+
+fn to_title_case(s: &str) -> String {
+    s.chars().next().map_or_else(
+        || String::new(),
+        |first| first.to_uppercase().collect::<String>() + &s[first.len_utf8()..],
+    )
 }
