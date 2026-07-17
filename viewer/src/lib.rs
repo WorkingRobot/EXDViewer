@@ -21,6 +21,7 @@
     rust_2024_compatibility
 )]
 
+mod about;
 mod app;
 mod backend;
 mod editable_schema;
@@ -40,9 +41,24 @@ mod utils;
 pub mod worker;
 
 pub use app::App;
+use shadow_rs::shadow;
 
 pub const IS_WEB: bool = cfg!(target_arch = "wasm32");
+pub const SCHEMA_REPO_URL: &str = "https://github.com/xivdev/EXDSchema";
+pub const REPO_URL: &str = "https://github.com/WorkingRobot/EXDViewer";
+pub const AUTHOR_URL: &str = "https://github.com/WorkingRobot";
+pub const KOFI_URL: &str = "https://ko-fi.com/camora";
+
+pub const ACKWELL_URL: &str = "https://github.com/ackwell";
+pub const IRONWORKS_URL: &str = "https://github.com/ackwell/ironworks";
+pub const EGUI_URL: &str = "https://github.com/emilk/egui";
+pub const EFRAME_URL: &str = "https://github.com/emilk/egui/tree/master/crates/eframe";
+pub const CREATE_PAT_URL: &str =
+    "https://github.com/settings/tokens/new?scopes=public_repo&description=EXDViewer";
+
 pub const DEFAULT_API_URL: &str = "https://exd.camora.dev/api";
 pub const DEFAULT_SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/xivdev/EXDSchema/refs/heads/latest";
 pub const DEFAULT_GITHUB_REPO: (&str, &str) = ("xivdev", "EXDSchema");
+
+shadow!(build);

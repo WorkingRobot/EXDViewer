@@ -288,29 +288,28 @@ impl SetupWindow {
                                 // Resolve the set of slugs the backend actually serves. If the
                                 // repositories endpoint isn't available (older backend), fall
                                 // back to enabling every region with a known slug.
-                                let available_slugs: Option<Vec<String>> =
-                                    if let Some((_, promise)) = &mut self.web_repositories_promise {
-                                        promise
-                                            .get_mut(|r| match r {
-                                                Ok(repos) => Some(repos),
-                                                Err(e) => {
-                                                    log::error!(
-                                                        "Error fetching repositories: {e}"
-                                                    );
-                                                    None
-                                                }
+                                let available_slugs: Option<Vec<String>> = if let Some((
+                                    _,
+                                    promise,
+                                )) =
+                                    &mut self.web_repositories_promise
+                                {
+                                    promise
+                                        .get_mut(|r| match r {
+                                            Ok(repos) => Some(repos),
+                                            Err(e) => {
+                                                log::error!("Error fetching repositories: {e}");
+                                                None
+                                            }
+                                        })
+                                        .and_then(|repos| {
+                                            repos.as_ref().map(|repos| {
+                                                repos.iter().map(|r| r.slug.clone()).collect()
                                             })
-                                            .and_then(|repos| {
-                                                repos.as_ref().map(|repos| {
-                                                    repos
-                                                        .iter()
-                                                        .map(|r| r.slug.clone())
-                                                        .collect()
-                                                })
-                                            })
-                                    } else {
-                                        None
-                                    };
+                                        })
+                                } else {
+                                    None
+                                };
 
                                 let is_region_available = |r: Region| {
                                     r.is_available()
@@ -748,6 +747,7 @@ impl SetupWindow {
         };
 
         Modal::default_area("setup-modal".into())
+            .order(egui::Order::Middle)
             .show(ctx, |ui| {
                 ui.scope_builder(UiBuilder::new().sense(Sense::CLICK | Sense::DRAG), |ui| {
                     egui::containers::Frame::window(ui.style())

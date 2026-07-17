@@ -386,11 +386,12 @@ impl PrWindow {
                             ui.label(RichText::new("Needs").small().weak());
                             ui.label(RichText::new("public_repo").monospace().size(small));
                             ui.label(RichText::new("scope.").small().weak());
-                            if ui.link(RichText::new("Create one ↗").small()).clicked() {
-                                ui.ctx().open_url(egui::OpenUrl::new_tab(
-                                    "https://github.com/settings/tokens/new?scopes=public_repo&description=EXDViewer",
-                                ));
-                            }
+                            ui.add(
+                                egui::Hyperlink::from_label_and_url(
+                                    RichText::new("Create one").small(),
+                                    crate::CREATE_PAT_URL,
+                                ).open_in_new_tab(true),
+                            );
                         });
                     } else if !client_id_ready {
                         ui.label(RichText::new("Preparing sign-in…").small().weak());

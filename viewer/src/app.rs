@@ -17,6 +17,7 @@ use matchit::Params;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::{
+    about,
     backend::Backend,
     editable_schema::EditableSchema,
     excel::{
@@ -153,6 +154,7 @@ pub struct App {
     save_promise: Option<TrackedPromise<()>>,
     pr_window: PrWindow,
     goto_window: Option<goto::GoToWindow>,
+    about_open: bool,
     /// `None` = Latin only
     loaded_cjk: Option<CjkFont>,
     #[cfg(target_arch = "wasm32")]
@@ -189,8 +191,10 @@ impl App {
         self.update_fonts(&ctx);
         self.update_sheet_languages(&ctx);
         self.pr_window.poll(&ctx);
+        about::draw(&ctx, &mut self.about_open);
         self.draw_menubar(ui);
         self.draw_logger(ui.ctx());
+        self.draw_pr_window(ui.ctx());
 
         CentralPanel::default().show(ui, |ui| {
             self.draw_router(ui);
@@ -509,7 +513,7 @@ impl App {
                         }
                     });
 
-                    add_links(ui);
+                    add_links(ui, &mut self.about_open);
                 });
             });
     }
@@ -637,47 +641,53 @@ impl App {
                 ui.add_space(4.0);
             });
 
-            Panel::bottom("sheet_list_status").show(ui, |ui| {
-                ScrollArea::horizontal()
-                    .min_scrolled_width(0.0)
-                    .show(ui, |ui| {
-                        ui.horizontal_centered(|ui| {
-                            let modified_schemas = self.get_modified_schemas();
-                            let can_pr = pr_window::github_source(ctx).is_some();
-                            let mut save = false;
-                            let mut open_pr = false;
-                            if !modified_schemas.is_empty() {
-                                let count = modified_schemas.len();
-                                ui.label(format!(
-                                    "{count} modified schema{}",
-                                    if count > 1 { "s" } else { "" }
-                                ))
-                                .on_hover_text(
-                                    modified_schemas.iter().map(|(name, _)| name).join("\n"),
-                                );
-                                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui
-                                        .button(if count > 1 { "Save All" } else { "Save" })
-                                        .clicked()
-                                    {
-                                        save = true;
-                                    }
-                                    if can_pr && ui.button("Create PR").clicked() {
-                                        open_pr = true;
-                                    }
-                                });
-                            } else {
-                                powered_by_egui_and_eframe(ui);
-                            }
-                            if save {
-                                self.command_save_all_schemas();
-                            }
-                            if open_pr {
-                                self.command_open_pr();
+            let modified_schemas = self.get_modified_schemas();
+            if !modified_schemas.is_empty() {
+                let count = modified_schemas.len();
+                let modified_tooltip = modified_schemas.iter().map(|(name, _)| name).join("\n");
+                drop(modified_schemas);
+                let save_label = if count > 1 { "Save All" } else { "Save" };
+
+                Panel::bottom("sheet_list_status").show(ui, |ui| {
+                    let can_pr = pr_window::github_source(ctx).is_some();
+                    ui.vertical_centered(|ui| {
+                        ui.label(format!(
+                            "{count} modified schema{}",
+                            if count > 1 { "s" } else { "" }
+                        ))
+                        .on_hover_text(modified_tooltip);
+                    });
+
+                    let mut save = false;
+                    let mut open_pr = false;
+                    if can_pr {
+                        ui.columns_const(|[c1, c2]| {
+                            c1.vertical_centered_justified(|ui| {
+                                if ui.button("Create PR").clicked() {
+                                    open_pr = true;
+                                }
+                            });
+                            c2.vertical_centered_justified(|ui| {
+                                if ui.button(save_label).clicked() {
+                                    save = true;
+                                }
+                            });
+                        });
+                    } else {
+                        ui.vertical_centered_justified(|ui| {
+                            if ui.button(save_label).clicked() {
+                                save = true;
                             }
                         });
-                    });
-            });
+                    }
+                    if save {
+                        self.command_save_all_schemas();
+                    }
+                    if open_pr {
+                        self.command_open_pr();
+                    }
+                });
+            }
 
             let sheets_filter = SHEETS_FILTER.get(ctx);
             let misc_sheets_shown = MISC_SHEETS_SHOWN.get(ctx);
@@ -1171,14 +1181,12 @@ impl App {
 
     fn draw_unnamed_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
         self.draw_goto(ui.ctx());
-        self.draw_pr_window(ui.ctx());
 
         self.draw_sheet_list(ui);
     }
 
     fn draw_named_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
         self.draw_goto(ui.ctx());
-        self.draw_pr_window(ui.ctx());
 
         self.draw_sheet_list(ui);
         self.draw_sheet_data(ui);
@@ -1302,6 +1310,7 @@ impl App {
             save_promise: None,
             pr_window: PrWindow::default(),
             goto_window: None,
+            about_open: false,
             loaded_cjk: None,
             #[cfg(target_arch = "wasm32")]
             font_promise: None,
@@ -1404,35 +1413,22 @@ impl eframe::App for App {
     }
 }
 
-fn add_links(ui: &mut egui::Ui) {
+fn add_links(ui: &mut egui::Ui, open_about: &mut bool) {
     ui.with_layout(Layout::right_to_left(ui.layout().vertical_align()), |ui| {
-        ui.add(
-            egui::Hyperlink::from_label_and_url(
-                "Contribute to EXDSchema",
-                "https://github.com/xivdev/EXDSchema",
-            )
-            .open_in_new_tab(true),
-        );
+        if ui
+            .link(format!("EXDViewer v{}", crate::build::PKG_VERSION))
+            .clicked()
+        {
+            *open_about = true;
+        }
         ui.label("/");
         ui.add(
             egui::Hyperlink::from_label_and_url(
                 format!("Star me on {}", egui::special_emojis::GITHUB),
-                "https://github.com/WorkingRobot/EXDViewer",
+                crate::REPO_URL,
             )
             .open_in_new_tab(true),
         );
         egui::warn_if_debug_build(ui);
     });
-}
-
-fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
-    ui.spacing_mut().item_spacing.x = 0.0;
-    ui.label("Powered by ");
-    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-    ui.label(" and ");
-    ui.hyperlink_to(
-        "eframe",
-        "https://github.com/emilk/egui/tree/master/crates/eframe",
-    );
-    ui.label(".");
 }

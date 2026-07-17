@@ -7314,6 +7314,7 @@ dependencies = [
  "serde_json",
  "serde_yml",
  "sha2",
+ "shadow-rs 2.0.0",
  "smallvec",
  "syntect",
  "url",
