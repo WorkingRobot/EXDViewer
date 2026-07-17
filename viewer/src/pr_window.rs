@@ -1,14 +1,12 @@
 use anyhow::Result;
-use egui::{Button, Label, Layout, Margin, RichText, ScrollArea, Sense, TextEdit};
+use egui::{Button, Hyperlink, Layout, Margin, RichText, ScrollArea, TextEdit};
 use itertools::Itertools;
 
 use crate::{
-    github::{
+    about::centered_inline, github::{
         GithubAuth, GithubClient, PrDraft, PrResult, RelayResult, build_auth_start, exchange_code,
         fetch_client_id, relay_and_close, take_relayed_result,
-    },
-    settings::{BACKEND_CONFIG, BackendConfig, GithubSchemaLocation, SchemaLocation},
-    utils::{PromiseKind, TrackedPromise},
+    }, settings::{BACKEND_CONFIG, BackendConfig, GithubSchemaLocation, SchemaLocation}, utils::{PromiseKind, TrackedPromise},
 };
 
 pub type PrOutcome = std::result::Result<PrResult, String>;
@@ -235,47 +233,23 @@ impl PrWindow {
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
                 
-                // One clickable label so the prefix + ref stay squished and can be
-                // centered as a unit (a horizontal row grabs full width and can't).
-                ui.vertical_centered(|ui| {
-                    let font = egui::TextStyle::Body.resolve(ui.style());
-                    let dest = format!(
-                        "{}/{} @ {}",
-                        location.owner,
-                        location.repo,
-                        location.base_branch()
-                    );
-                    let mut job = egui::text::LayoutJob::default();
-                    job.append(
-                        "Merging into ",
-                        0.0,
-                        egui::TextFormat {
-                            font_id: font.clone(),
-                            color: ui.visuals().weak_text_color(),
-                            ..Default::default()
-                        },
-                    );
-                    job.append(
-                        &dest,
-                        0.0,
-                        egui::TextFormat {
-                            font_id: font,
-                            color: ui.visuals().hyperlink_color,
-                            ..Default::default()
-                        },
-                    );
-                    if ui
-                        .add(Label::new(job).selectable(false).sense(Sense::click()))
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+                let dest = format!(
+                    "{}/{} @ {}",
+                    location.owner,
+                    location.repo,
+                    location.base_branch()
+                );
+                centered_inline(ui, &format!("Merging into {dest}"), |ui| {
+                    ui.label("Merging into ");
+                    ui.add(
+                        Hyperlink::from_label_and_url(dest, format!(
                             "https://github.com/{}/{}/tree/{}",
                             location.owner,
                             location.repo,
                             location.base_branch()
-                        )));
-                    }
+                        ))
+                            .open_in_new_tab(true),
+                    );
                 });
 
                 if modified.is_empty() {
@@ -412,7 +386,14 @@ impl PrWindow {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
+                        // Once a PR is open, the primary action becomes "view" so the same
+                        // changes can't be submitted twice. Reopening the dialog clears the
+                        // outcome and allows a fresh submission.
+                        if let Some(Ok(pr)) = &self.pr_outcome {
+                            if ui.button("View pull request").clicked() {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(pr.html_url.clone()));
+                            }
+                        } else if ui
                             .add_enabled(can_submit, Button::new("Create pull request"))
                             .clicked()
                         {
@@ -425,11 +406,13 @@ impl PrWindow {
                         ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| {
                             match &self.pr_outcome {
                                 Some(Ok(pr)) => {
-                                    ui.label(RichText::new("✅ Pull request opened").strong());
-                                    if ui.link(format!("#{} ↗", pr.number)).clicked() {
-                                        ui.ctx()
-                                            .open_url(egui::OpenUrl::new_tab(pr.html_url.clone()));
-                                    }
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "✅ Pull request #{} opened",
+                                            pr.number
+                                        ))
+                                        .strong(),
+                                    );
                                 }
                                 Some(Err(err)) => {
                                     ui.colored_label(

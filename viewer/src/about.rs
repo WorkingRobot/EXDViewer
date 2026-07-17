@@ -111,7 +111,7 @@ pub fn draw(ctx: &egui::Context, open: &mut bool) {
         });
 }
 
-fn centered_inline(ui: &mut egui::Ui, measure: &str, add: impl FnOnce(&mut egui::Ui)) {
+pub fn centered_inline(ui: &mut egui::Ui, measure: &str, add: impl FnOnce(&mut egui::Ui)) {
     let font = egui::TextStyle::Body.resolve(ui.style());
     let width = ui
         .painter()
