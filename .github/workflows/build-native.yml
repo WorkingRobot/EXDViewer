@@ -48,24 +48,28 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install ALSA
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
       - name: Build
         uses: houseabsolute/actions-rust-cross@v1
         with:
           target: ${{ matrix.platform.target }}
           args: "--locked --release --bin viewer"
           strip: true
-      
+
       - name: Rename Binary
         shell: bash
         run: |
           mv -f target/${{ matrix.platform.target }}/release/viewer${{ matrix.platform.binary-ext }} exdviewer-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
-      
+
       - name: Attest
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: |
             exdviewer-${{ matrix.platform.os-name }}${{ matrix.platform.binary-ext }}
-      
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
