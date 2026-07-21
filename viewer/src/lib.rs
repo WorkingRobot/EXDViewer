@@ -23,12 +23,14 @@
 
 mod about;
 mod app;
+pub mod audio;
 mod backend;
 mod data;
 mod editable_schema;
 mod excel;
 mod github;
 mod goto;
+mod music;
 mod pr_window;
 mod router;
 mod schema;

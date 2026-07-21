@@ -25,7 +25,7 @@ use crate::{
         provider::{ExcelHeader, ExcelProvider},
     },
     github::CALLBACK_PATH,
-    goto,
+    goto, music,
     pr_window::{self, PrAction, PrWindow},
     router::{Router, path::Path, route::RouteResponse},
     schema::{provider::SchemaProvider, web::WebProvider},
@@ -155,6 +155,7 @@ pub struct App {
     pr_window: PrWindow,
     goto_window: Option<goto::GoToWindow>,
     about_open: bool,
+    music: music::MusicPlayer,
     /// `None` = Latin only
     loaded_cjk: Option<CjkFont>,
     #[cfg(target_arch = "wasm32")]
@@ -167,6 +168,7 @@ fn create_router(ctx: egui::Context) -> Result<Router<App>> {
     builder.add_route("/", App::on_setup, App::draw_setup)?;
     builder.add_route("/sheet", App::on_unnamed_sheet, App::draw_unnamed_sheet)?;
     builder.add_route("/sheet/{*name}", App::on_named_sheet, App::draw_named_sheet)?;
+    builder.add_route("/music", App::on_music, App::draw_music)?;
     builder.add_route(
         CALLBACK_PATH,
         App::on_auth_callback,
@@ -317,6 +319,10 @@ impl App {
                             ui.close();
                         }
                     });
+
+                    if ui.button("Music").clicked() {
+                        self.navigate("/music");
+                    }
 
                     ui.menu_button("Language", |ui| {
                         let saved_lang = LANGUAGE.get(ctx);
@@ -1192,6 +1198,19 @@ impl App {
         self.draw_sheet_data(ui);
     }
 
+    fn on_music(&mut self, _ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) -> RouteResponse {
+        if let Some(r) = self.ensure_backend(path) {
+            return r;
+        }
+        RouteResponse::Title("Music".to_string())
+    }
+
+    fn draw_music(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
+        if let Some(backend) = self.backend.clone() {
+            self.music.ui(ui, &backend);
+        }
+    }
+
     fn command_open_pr(&mut self) {
         let names: Vec<String> = self
             .get_modified_schemas()
@@ -1311,6 +1330,7 @@ impl App {
             pr_window: PrWindow::default(),
             goto_window: None,
             about_open: false,
+            music: music::MusicPlayer::default(),
             loaded_cjk: None,
             #[cfg(target_arch = "wasm32")]
             font_promise: None,

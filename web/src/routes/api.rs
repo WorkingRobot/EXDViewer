@@ -1,4 +1,9 @@
-use std::{fmt::Display, str::FromStr};
+use std::{
+    fmt::Display,
+    str::FromStr,
+    sync::{Arc, LazyLock, Mutex},
+    time::{Duration, Instant},
+};
 
 use actix_web::post;
 use actix_web::{
@@ -26,6 +31,7 @@ pub fn service() -> impl HttpServiceFactory {
         .service(get_versions_slug)
         .service(get_exists_slug)
         .service(get_file_slug)
+        .service(get_songs)
         .wrap(
             ErrorHandlers::new()
                 .default_handler_client(|r| log_error(true, r))
@@ -257,6 +263,97 @@ async fn post_github_oauth_token(
 
     let value: Value = response.json().await.map_err(ErrorInternalServerError)?;
     Ok(HttpResponse::Ok().json(value))
+}
+
+/// BGM song metadata proxied from the OrchestrionPlugin Google Sheet (no CORS headers, so
+/// the browser can't fetch it directly), keyed by BGM row id.
+const SONGS_SHEET: &str = "https://docs.google.com/spreadsheets/d/1s-xJjxqp6pwS7oewNy1aOQnr3gaJbewvIBbyYchZ6No/gviz/tq?tqx=out:csv&sheet=";
+const SONGS_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+type SongsCache = Mutex<Option<(Instant, Arc<String>)>>;
+static SONGS_CACHE: LazyLock<SongsCache> = LazyLock::new(|| Mutex::new(None));
+
+#[get("/songs/")]
+async fn get_songs() -> Result<HttpResponse> {
+    let cached = SONGS_CACHE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|(fetched, _)| fetched.elapsed() < SONGS_TTL)
+        .map(|(_, json)| json.clone());
+
+    let json = match cached {
+        Some(json) => json,
+        None => {
+            let json = Arc::new(build_songs().await.map_err(ErrorInternalServerError)?);
+            *SONGS_CACHE.lock().unwrap() = Some((Instant::now(), json.clone()));
+            json
+        }
+    };
+
+    Ok(HttpResponse::Ok()
+        .insert_header(CacheControl(vec![
+            CacheDirective::Public,
+            CacheDirective::MaxAge(60 * 60 * 6),
+        ]))
+        .content_type("application/json")
+        .body(json.as_ref().clone()))
+}
+
+async fn build_songs() -> anyhow::Result<String> {
+    let client = reqwest::Client::new();
+    let meta_csv = client
+        .get(format!("{SONGS_SHEET}metadata"))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let en_csv = client
+        .get(format!("{SONGS_SHEET}en"))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    // metadata sheet: id, duration (seconds)
+    let mut durations = std::collections::HashMap::new();
+    for record in csv::Reader::from_reader(meta_csv.as_bytes()).records() {
+        let record = record?;
+        if let (Some(Ok(id)), Some(Ok(duration))) = (
+            record.get(0).map(str::parse::<u32>),
+            record.get(1).map(str::parse::<f64>),
+        ) {
+            durations.insert(id, duration.round() as u64);
+        }
+    }
+
+    // en sheet: id, title, alt title, special mode title, locations, comments
+    let mut songs = Map::new();
+    for record in csv::Reader::from_reader(en_csv.as_bytes()).records() {
+        let record = record?;
+        let Some(Ok(id)) = record.get(0).map(str::parse::<u32>) else {
+            continue;
+        };
+        let title = record.get(1).unwrap_or("").trim();
+        if title.is_empty() || title == "None" {
+            continue;
+        }
+        let mut song = Map::new();
+        song.insert("t".into(), Value::from(title));
+        for (key, column) in [("a", 2), ("s", 3), ("l", 4), ("i", 5)] {
+            let value = record.get(column).unwrap_or("").trim();
+            if !value.is_empty() {
+                song.insert(key.into(), Value::from(value));
+            }
+        }
+        if let Some(&duration) = durations.get(&id).filter(|&&d| d > 0) {
+            song.insert("d".into(), Value::from(duration));
+        }
+        songs.insert(id.to_string(), Value::Object(song));
+    }
+
+    Ok(serde_json::to_string(&Value::Object(songs))?)
 }
 
 fn log_error<B: MessageBody + 'static>(

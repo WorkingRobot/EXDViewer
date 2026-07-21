@@ -17,3 +17,19 @@ catppuccin-egui = { git = "https://github.com/WorkingRobot/egui.git", branch = "
 [profile.release-dbg]
 inherits = "release"
 debug = true
+
+# Optimize the audio decoders in dev builds; unoptimized vorbis/HCA decode is ~30x slower.
+[profile.dev.package.symphonia]
+opt-level = 3
+[profile.dev.package.symphonia-core]
+opt-level = 3
+[profile.dev.package.symphonia-codec-vorbis]
+opt-level = 3
+[profile.dev.package.symphonia-format-ogg]
+opt-level = 3
+[profile.dev.package.symphonia-metadata]
+opt-level = 3
+[profile.dev.package.symphonia-utils-xiph]
+opt-level = 3
+[profile.dev.package.cridecoder]
+opt-level = 3
