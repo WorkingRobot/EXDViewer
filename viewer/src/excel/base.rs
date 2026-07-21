@@ -7,7 +7,6 @@ use intmap::IntMap;
 use ironworks::{
     excel::{Language, path},
     file::{
-        File,
         exd::{ExcelData, RowHeader, SubrowHeader},
         exh::{ColumnDefinition, PageDefinition, SheetKind},
     },
@@ -15,103 +14,23 @@ use ironworks::{
 use std::{cell::RefCell, collections::HashMap, num::NonZeroUsize, ops::Range, rc::Rc, sync::Arc};
 use url::Url;
 
+use crate::data::{FileProvider, FileProviderExt};
 use crate::utils::{CloneableResult, KeyedCache, SharedFuture};
 
 use super::provider::{ExcelHeader, ExcelPage, ExcelProvider, ExcelRow, ExcelSheet};
 
-#[async_trait(?Send)]
-pub trait FileProvider {
-    async fn file<T: File>(&self, path: &str) -> anyhow::Result<T>;
+/// Excel provider that caches parsed sheets and headers on top of a shared
+/// [`FileProvider`].
+pub struct CachedProvider(Arc<CachedProviderImpl>);
 
-    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>>;
-
-    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>>;
-}
-
-#[async_trait(?Send)]
-pub trait ExcelFileProvider {
-    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>>;
-
-    async fn list(&self) -> anyhow::Result<ironworks::file::exl::ExcelList>;
-
-    async fn header(&self, name: &str) -> anyhow::Result<ironworks::file::exh::ExcelHeader>;
-
-    async fn data(
-        &self,
-        name: &str,
-        start_id: u32,
-        language: Language,
-    ) -> anyhow::Result<ExcelData>;
-
-    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>>;
-}
-
-#[async_trait(?Send)]
-impl<T: FileProvider> ExcelFileProvider for T {
-    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
-        self.get_icon(icon_id, hires).await
-    }
-
-    async fn list(&self) -> anyhow::Result<ironworks::file::exl::ExcelList> {
-        self.file(path::exl()).await
-    }
-
-    async fn header(&self, name: &str) -> anyhow::Result<ironworks::file::exh::ExcelHeader> {
-        self.file(&path::exh(name)).await
-    }
-
-    async fn data(
-        &self,
-        name: &str,
-        start_id: u32,
-        language: Language,
-    ) -> anyhow::Result<ExcelData> {
-        self.file(&path::exd(name, start_id, language)).await
-    }
-
-    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>> {
-        FileProvider::exists_many(self, paths).await
-    }
-}
-
-#[async_trait(?Send)]
-impl ExcelFileProvider for Box<dyn ExcelFileProvider> {
-    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
-        self.as_ref().get_icon(icon_id, hires).await
-    }
-
-    async fn list(&self) -> anyhow::Result<ironworks::file::exl::ExcelList> {
-        self.as_ref().list().await
-    }
-
-    async fn header(&self, name: &str) -> anyhow::Result<ironworks::file::exh::ExcelHeader> {
-        self.as_ref().header(name).await
-    }
-
-    async fn data(
-        &self,
-        name: &str,
-        start_id: u32,
-        language: Language,
-    ) -> anyhow::Result<ExcelData> {
-        self.as_ref().data(name, start_id, language).await
-    }
-
-    async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>> {
-        self.as_ref().exists_many(paths).await
-    }
-}
-
-pub struct CachedProvider<T: ExcelFileProvider + 'static>(Arc<CachedProviderImpl<T>>);
-
-impl<T: ExcelFileProvider + 'static> Clone for CachedProvider<T> {
+impl Clone for CachedProvider {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
-struct CachedProviderImpl<T: ExcelFileProvider + 'static> {
-    provider: T,
+struct CachedProviderImpl {
+    files: Rc<dyn FileProvider>,
     entries: HashMap<String, i32>,
     cache: RefCell<lru::LruCache<String, SharedFuture<CloneableResult<Rc<CacheEntry>>>>>,
 }
@@ -121,11 +40,15 @@ struct CacheEntry {
     pub cache: RefCell<KeyedCache<Language, SharedFuture<CloneableResult<BaseSheet>>>>,
 }
 
-impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
-    pub async fn new(provider: T, size: NonZeroUsize) -> anyhow::Result<Self> {
+impl CachedProvider {
+    pub async fn new(files: Rc<dyn FileProvider>, size: NonZeroUsize) -> anyhow::Result<Self> {
+        let entries = files
+            .file::<ironworks::file::exl::ExcelList>(path::exl())
+            .await?
+            .0;
         Ok(Self(Arc::new(CachedProviderImpl {
-            entries: provider.list().await?.0,
-            provider,
+            files,
+            entries,
             cache: RefCell::new(lru::LruCache::new(size)),
         })))
     }
@@ -145,7 +68,11 @@ impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
                 let this = self.clone();
                 let future_name = name.to_owned();
                 let future = SharedFuture::new(async move {
-                    let header = this.0.provider.header(&future_name).await?;
+                    let header = this
+                        .0
+                        .files
+                        .file::<ironworks::file::exh::ExcelHeader>(&path::exh(&future_name))
+                        .await?;
                     Ok(Rc::new(CacheEntry {
                         header: BaseHeader::new(future_name, header),
                         cache: RefCell::new(KeyedCache::new()),
@@ -175,7 +102,7 @@ impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
             .iter()
             .map(|language| path::exd(name, start_id, *language))
             .collect();
-        let exists = self.0.provider.exists_many(&paths).await?;
+        let exists = self.0.files.exists_many(&paths).await?;
 
         Ok(declared
             .into_iter()
@@ -186,7 +113,7 @@ impl<T: ExcelFileProvider + 'static> CachedProvider<T> {
 }
 
 #[async_trait(?Send)]
-impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
+impl ExcelProvider for CachedProvider {
     type Header = BaseHeader;
 
     type Sheet = BaseSheet;
@@ -196,7 +123,7 @@ impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
     }
 
     async fn get_icon(&self, icon_id: u32, hires: bool) -> Result<Either<Url, RgbaImage>> {
-        self.0.provider.get_icon(icon_id, hires).await
+        self.0.files.get_icon(icon_id, hires).await
     }
 
     async fn get_header(&self, name: &str) -> Result<BaseHeader> {
@@ -232,7 +159,7 @@ impl<T: ExcelFileProvider> ExcelProvider for CachedProvider<T> {
                             )
                             .into());
                         };
-                        Ok(BaseSheet::new(header, language, &this.0.provider).await?)
+                        Ok(BaseSheet::new(header, language, &*this.0.files).await?)
                     })
                 })
                 .clone()
@@ -318,11 +245,22 @@ struct BaseSheetImpl {
     row_id_lookup: Vec<(u32, Range<u32>)>,
 }
 
+async fn read_page(
+    files: &dyn FileProvider,
+    name: &str,
+    start_id: u32,
+    language: Language,
+) -> Result<ExcelData> {
+    files
+        .file::<ExcelData>(&path::exd(name, start_id, language))
+        .await
+}
+
 impl BaseSheet {
     pub async fn new(
         header: BaseHeader,
         language: Language,
-        provider: &impl ExcelFileProvider,
+        files: &dyn FileProvider,
     ) -> Result<Self> {
         if !header.languages().contains(&language) {
             return Err(anyhow::anyhow!(
@@ -351,7 +289,7 @@ impl BaseSheet {
             .header
             .pages()
             .iter()
-            .map(|page_def| provider.data(&header_name, page_def.start_id(), language))
+            .map(|page_def| read_page(files, &header_name, page_def.start_id(), language))
             .collect();
         while let Some(data) = page_futures.next().await {
             let data = data?;

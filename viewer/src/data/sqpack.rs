@@ -1,12 +1,11 @@
 use crate::utils::tex_loader;
 
-use super::{base::FileProvider, get_icon_path};
+use super::{FileProvider, get_icon_path};
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
 use ironworks::{
     Ironworks,
-    file::File,
     sqpack::{Install, SqPack},
 };
 use std::{path::PathBuf, str::FromStr};
@@ -25,8 +24,8 @@ impl SqpackFileProvider {
 
 #[async_trait(?Send)]
 impl FileProvider for SqpackFileProvider {
-    async fn file<T: File>(&self, path: &str) -> anyhow::Result<T> {
-        Ok(self.0.file(path)?)
+    async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>> {
+        Ok(self.0.file::<Vec<u8>>(path)?)
     }
 
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {

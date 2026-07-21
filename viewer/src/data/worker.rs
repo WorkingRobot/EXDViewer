@@ -3,12 +3,10 @@ use crate::{
     worker::{WorkerDirectory, WorkerRequest, WorkerResponse},
 };
 
-use super::{base::FileProvider, get_icon_path};
+use super::{FileProvider, get_icon_path};
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
-use ironworks::file::File;
-use std::io::Cursor;
 use url::Url;
 
 pub struct WorkerFileProvider(());
@@ -57,14 +55,14 @@ impl WorkerFileProvider {
 
 #[async_trait(?Send)]
 impl FileProvider for WorkerFileProvider {
-    async fn file<T: File>(&self, path: &str) -> anyhow::Result<T> {
+    async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>> {
         log::info!("WorkerFileProvider: requesting file {path:?}");
         if let WorkerResponse::DataRequestFile(result) =
             worker::transact(WorkerRequest::DataRequestFile(path.to_string())).await
         {
             let file =
                 result.map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))?;
-            Ok(T::read(Cursor::new(file))?)
+            Ok(file)
         } else {
             Err(anyhow::anyhow!(
                 "WorkerFileProvider: invalid response from worker"

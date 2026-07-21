@@ -1,12 +1,10 @@
 use crate::utils::{GameVersion, fetch_url};
 
-use super::{base::FileProvider, get_icon_path, get_xivapi_asset_url};
+use super::{FileProvider, get_icon_path, get_xivapi_asset_url};
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
-use ironworks::file::File;
 use serde::Deserialize;
-use std::io::Cursor;
 use url::Url;
 
 pub struct WebFileProvider(Url);
@@ -112,7 +110,7 @@ impl WebFileProvider {
 
 #[async_trait(?Send)]
 impl FileProvider for WebFileProvider {
-    async fn file<T: File>(&self, path: &str) -> anyhow::Result<T> {
+    async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>> {
         let mut url = self.0.clone();
 
         url.path_segments_mut()
@@ -124,9 +122,7 @@ impl FileProvider for WebFileProvider {
             })?
             .extend(path.split('/'));
 
-        let resp = fetch_url(url).await?;
-
-        Ok(T::read(Cursor::new(resp))?)
+        Ok(fetch_url(url).await?)
     }
 
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {

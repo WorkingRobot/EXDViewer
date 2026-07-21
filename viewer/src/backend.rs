@@ -1,8 +1,9 @@
 use anyhow::Result;
-use std::rc::Rc;
+use std::{num::NonZeroUsize, rc::Rc};
 
 use crate::{
-    excel::{boxed::BoxedExcelProvider, web::WebFileProvider},
+    data::{FileProvider, web::WebFileProvider},
+    excel::base::CachedProvider,
     schema::{boxed::BoxedSchemaProvider, web::WebProvider},
     settings::{BackendConfig, InstallLocation, SchemaLocation},
 };
@@ -11,43 +12,47 @@ use crate::{
 pub struct Backend(Rc<BackendImpl>);
 
 struct BackendImpl {
-    excel_provider: BoxedExcelProvider,
+    files: Rc<dyn FileProvider>,
+    excel_provider: CachedProvider,
     schema_provider: BoxedSchemaProvider,
 }
 
 impl Backend {
     pub async fn new(config: BackendConfig) -> Result<Self> {
         let excel = async {
-            anyhow::Result::<_>::Ok(match config.location {
+            let (files, cache_size): (Rc<dyn FileProvider>, usize) = match config.location {
                 #[cfg(not(target_arch = "wasm32"))]
                 InstallLocation::Sqpack(path) => {
-                    BoxedExcelProvider::new_sqpack(crate::excel::sqpack::SqpackFileProvider::new(
-                        &path,
-                    ))
-                    .await?
+                    let files: Rc<dyn FileProvider> =
+                        Rc::new(crate::data::sqpack::SqpackFileProvider::new(&path));
+                    (files, 64)
                 }
                 #[cfg(target_arch = "wasm32")]
                 InstallLocation::Worker(path) => {
-                    use crate::excel::worker::WorkerFileProvider;
+                    use crate::data::worker::WorkerFileProvider;
                     let handle = WorkerFileProvider::folders()
                         .await?
                         .into_iter()
                         .find(|f| f.0.name() == path)
                         .ok_or_else(|| anyhow::anyhow!("WorkerFileProvider: Entry not found"))?;
                     WorkerFileProvider::verify_folder(handle.clone()).await?;
-                    BoxedExcelProvider::new_worker(WorkerFileProvider::new(handle).await?).await?
+                    let files: Rc<dyn FileProvider> =
+                        Rc::new(WorkerFileProvider::new(handle).await?);
+                    (files, 64)
                 }
 
                 InstallLocation::Web(base_url, region, version) => {
                     let Some(slug) = region.slug() else {
                         anyhow::bail!("Region {} is not yet available", region.name());
                     };
-                    BoxedExcelProvider::new_web(
-                        WebFileProvider::new(&base_url, slug, version).await?,
-                    )
-                    .await?
+                    let files: Rc<dyn FileProvider> =
+                        Rc::new(WebFileProvider::new(&base_url, slug, version).await?);
+                    (files, 256)
                 }
-            })
+            };
+            let excel_provider =
+                CachedProvider::new(files.clone(), NonZeroUsize::new(cache_size).unwrap()).await?;
+            anyhow::Result::<_>::Ok((files, excel_provider))
         };
         let schema = async {
             anyhow::Result::<_>::Ok(match config.schema {
@@ -76,14 +81,22 @@ impl Backend {
                 }
             })
         };
-        let (excel, schema) = futures_util::try_join!(excel, schema)?;
+        let ((files, excel_provider), schema) = futures_util::try_join!(excel, schema)?;
         Ok(Self(Rc::new(BackendImpl {
-            excel_provider: excel,
+            files,
+            excel_provider,
             schema_provider: schema,
         })))
     }
 
-    pub fn excel(&self) -> &BoxedExcelProvider {
+    /// The shared raw-file provider. Read any game file with
+    /// [`FileProviderExt::file`](crate::data::FileProviderExt::file), e.g.
+    /// `backend.files().file::<Vec<u8>>(path)`.
+    pub fn files(&self) -> &Rc<dyn FileProvider> {
+        &self.0.files
+    }
+
+    pub fn excel(&self) -> &CachedProvider {
         &self.0.excel_provider
     }
 

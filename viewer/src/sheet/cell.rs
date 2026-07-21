@@ -11,10 +11,8 @@ use ironworks::file::exh::ColumnKind;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    excel::{
-        get_icon_path,
-        provider::{ExcelProvider, ExcelRow, ExcelSheet},
-    },
+    data::get_icon_path,
+    excel::provider::{ExcelProvider, ExcelRow, ExcelSheet},
     settings::{ALWAYS_HIRES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, TEXT_MAX_LINES},
     sheet::{
         compact_sestring::CompactSeString,

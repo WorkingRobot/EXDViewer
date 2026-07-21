@@ -3,7 +3,7 @@ use egui::{Frame, Layout, Modal, Sense, TextEdit, UiBuilder, Vec2, WidgetText};
 use crate::{
     DEFAULT_API_URL,
     backend::Backend,
-    excel::web::{RepositoryInfo, VersionInfo, WebFileProvider},
+    data::web::{RepositoryInfo, VersionInfo, WebFileProvider},
     schema::web::WebProvider,
     settings::{
         BACKEND_CONFIG, BackendConfig, GithubSchemaBranch, GithubSchemaLocation, InstallLocation,
@@ -202,7 +202,7 @@ impl SetupWindow {
 
                             #[cfg(target_arch = "wasm32")]
                             InstallLocation::Worker(name) => {
-                                use crate::excel::worker::WorkerFileProvider;
+                                use crate::data::worker::WorkerFileProvider;
                                 use web_sys::FileSystemPermissionMode;
 
                                 if !*IS_DIRECTORY_PICKER_SUPPORTED {

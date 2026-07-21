@@ -24,6 +24,7 @@
 mod about;
 mod app;
 mod backend;
+mod data;
 mod editable_schema;
 mod excel;
 mod github;
