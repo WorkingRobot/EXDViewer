@@ -7,7 +7,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
     AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextOptions, AudioContextState,
-    GainNode, HtmlAudioElement, MediaMetadata, MediaPositionState, MediaSession, MediaSessionAction,
+    GainNode, MediaMetadata, MediaPositionState, MediaSession, MediaSessionAction,
     MediaSessionPlaybackState,
 };
 
@@ -15,15 +15,11 @@ use super::Decoded;
 
 type SourceCell = Rc<RefCell<Option<AudioBufferSourceNode>>>;
 
-/// Web Audio output with OS media controls (Media Session API). The `AudioContext` starts
-/// suspended until a user gesture resumes it.
+/// Web Audio output
 pub struct Player {
     context: AudioContext,
     gain: GainNode,
     source: SourceCell,
-    /// Hidden `<audio>` the output routes through; browsers require audible
-    /// `HTMLMediaElement` playback to enable OS media controls.
-    anchor: Option<HtmlAudioElement>,
     buffer: Option<AudioBuffer>,
     loop_region: Option<(f64, f64)>,
     duration: f64,
@@ -39,16 +35,8 @@ impl Player {
         let context =
             AudioContext::new_with_context_options(&options).map_err(js("AudioContext"))?;
         let gain = context.create_gain().map_err(js("create_gain"))?;
-
-        let anchor = match setup_anchor(&context, &gain) {
-            Ok(anchor) => Some(anchor),
-            Err(error) => {
-                log::warn!("media-session anchor unavailable, using context destination: {error}");
-                gain.connect_with_audio_node(&context.destination())
-                    .map_err(js("connect gain"))?;
-                None
-            }
-        };
+        gain.connect_with_audio_node(&context.destination())
+            .map_err(js("connect gain"))?;
 
         let source: SourceCell = Rc::new(RefCell::new(None));
         let handlers = register_media_session(&context, &source);
@@ -56,7 +44,6 @@ impl Player {
             context,
             gain,
             source,
-            anchor,
             buffer: None,
             loop_region: None,
             duration: 0.0,
@@ -73,7 +60,11 @@ impl Player {
         let rate = f64::from(audio.sample_rate);
         let buffer = self
             .context
-            .create_buffer(audio.channels as u32, frames as u32, audio.sample_rate as f32)
+            .create_buffer(
+                audio.channels as u32,
+                frames as u32,
+                audio.sample_rate as f32,
+            )
             .map_err(js("create_buffer"))?;
 
         let mut channel = vec![0f32; frames];
@@ -94,11 +85,8 @@ impl Player {
         self.buffer = Some(buffer);
 
         self.start_source(0.0)?;
-        // play() runs in a user gesture, so resume and anchor.play() are allowed.
+        // play() runs in a user gesture, so resume is allowed.
         let _ = self.context.resume();
-        if let Some(anchor) = &self.anchor {
-            let _ = anchor.play();
-        }
         set_playback_state(MediaSessionPlaybackState::Playing);
         self.publish_position();
         Ok(())
@@ -192,13 +180,8 @@ impl Player {
         self.gain.gain().set_value(volume);
     }
 
-    /// Resume the context (and anchor) from within a user gesture, satisfying the autoplay
-    /// policy before audio is scheduled asynchronously.
     pub fn unlock(&self) {
         let _ = self.context.resume();
-        if let Some(anchor) = &self.anchor {
-            let _ = anchor.play();
-        }
     }
 
     pub fn is_playing(&self) -> bool {
@@ -220,29 +203,6 @@ impl Player {
     }
 }
 
-/// Route `gain` into a hidden `<audio>` via a `MediaStreamAudioDestinationNode`.
-fn setup_anchor(context: &AudioContext, gain: &GainNode) -> Result<HtmlAudioElement> {
-    let destination = context
-        .create_media_stream_destination()
-        .map_err(js("stream destination"))?;
-    gain.connect_with_audio_node(&destination)
-        .map_err(js("connect anchor"))?;
-
-    let document = web_sys::window()
-        .and_then(|window| window.document())
-        .ok_or_else(|| anyhow!("no document"))?;
-    let audio = document
-        .create_element("audio")
-        .map_err(js("create audio element"))?
-        .dyn_into::<HtmlAudioElement>()
-        .map_err(|_| anyhow!("not an audio element"))?;
-    audio.set_src_object(Some(&destination.stream()));
-    if let Some(body) = document.body() {
-        let _ = body.append_child(audio.unchecked_ref());
-    }
-    Ok(audio)
-}
-
 fn media_session() -> Option<MediaSession> {
     Some(web_sys::window()?.navigator().media_session())
 }
@@ -255,7 +215,10 @@ fn set_playback_state(state: MediaSessionPlaybackState) {
 
 /// Wire lock-screen / media-key handlers. The returned closures must be kept alive for the
 /// handlers to stay attached.
-fn register_media_session(context: &AudioContext, source: &SourceCell) -> Vec<Closure<dyn FnMut()>> {
+fn register_media_session(
+    context: &AudioContext,
+    source: &SourceCell,
+) -> Vec<Closure<dyn FnMut()>> {
     let Some(session) = media_session() else {
         return Vec::new();
     };
@@ -285,9 +248,18 @@ fn register_media_session(context: &AudioContext, source: &SourceCell) -> Vec<Cl
         })
     };
 
-    session.set_action_handler(MediaSessionAction::Play, Some(play.as_ref().unchecked_ref()));
-    session.set_action_handler(MediaSessionAction::Pause, Some(pause.as_ref().unchecked_ref()));
-    session.set_action_handler(MediaSessionAction::Stop, Some(stop.as_ref().unchecked_ref()));
+    session.set_action_handler(
+        MediaSessionAction::Play,
+        Some(play.as_ref().unchecked_ref()),
+    );
+    session.set_action_handler(
+        MediaSessionAction::Pause,
+        Some(pause.as_ref().unchecked_ref()),
+    );
+    session.set_action_handler(
+        MediaSessionAction::Stop,
+        Some(stop.as_ref().unchecked_ref()),
+    );
 
     vec![play, pause, stop]
 }
