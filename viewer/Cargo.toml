@@ -100,7 +100,6 @@ web-sys = { version = "0.3", features = [
     "Storage",
     "UrlSearchParams",
     "AudioContext",
-    "AudioContextOptions",
     "AudioContextState",
     "BaseAudioContext",
     "AudioBuffer",

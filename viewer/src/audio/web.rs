@@ -6,9 +6,8 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
-    AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextOptions, AudioContextState,
-    GainNode, MediaMetadata, MediaPositionState, MediaSession, MediaSessionAction,
-    MediaSessionPlaybackState,
+    AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextState, GainNode, MediaMetadata,
+    MediaPositionState, MediaSession, MediaSessionAction, MediaSessionPlaybackState,
 };
 
 use super::Decoded;
@@ -29,11 +28,7 @@ pub struct Player {
 
 impl Player {
     pub fn new() -> Result<Self> {
-        // 44.1 kHz (the BGM rate) so Web Audio doesn't resample buffers.
-        let options = AudioContextOptions::new();
-        options.set_sample_rate(44_100.0);
-        let context =
-            AudioContext::new_with_context_options(&options).map_err(js("AudioContext"))?;
+        let context = AudioContext::new().map_err(js("AudioContext"))?;
         let gain = context.create_gain().map_err(js("create_gain"))?;
         gain.connect_with_audio_node(&context.destination())
             .map_err(js("connect gain"))?;
