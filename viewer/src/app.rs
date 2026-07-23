@@ -156,6 +156,7 @@ pub struct App {
     goto_window: Option<goto::GoToWindow>,
     about_open: bool,
     music: music::MusicPlayer,
+    last_system_theme: Option<egui::Theme>,
     /// `None` = Latin only
     loaded_cjk: Option<CjkFont>,
     #[cfg(target_arch = "wasm32")]
@@ -1198,7 +1199,12 @@ impl App {
         self.draw_sheet_data(ui);
     }
 
-    fn on_music(&mut self, _ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) -> RouteResponse {
+    fn on_music(
+        &mut self,
+        _ui: &mut egui::Ui,
+        path: &Path,
+        _params: &Params<'_, '_>,
+    ) -> RouteResponse {
         if let Some(r) = self.ensure_backend(path) {
             return r;
         }
@@ -1331,6 +1337,7 @@ impl App {
             goto_window: None,
             about_open: false,
             music: music::MusicPlayer::default(),
+            last_system_theme: None,
             loaded_cjk: None,
             #[cfg(target_arch = "wasm32")]
             font_promise: None,
@@ -1424,10 +1431,22 @@ impl App {
             };
         });
     }
+
+    fn follow_system_theme(&mut self, ctx: &egui::Context) {
+        if COLOR_THEME.get(ctx) != ColorTheme::System {
+            return;
+        }
+        let system = ctx.system_theme();
+        if system != self.last_system_theme {
+            self.last_system_theme = system;
+            ColorTheme::System.apply(ctx);
+        }
+    }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.follow_system_theme(ui.ctx());
         self.draw(ui);
         tick_promises(ui.ctx());
     }
