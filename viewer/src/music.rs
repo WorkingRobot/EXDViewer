@@ -49,8 +49,8 @@ enum Index {
     Failed(String),
 }
 
-/// Which track paths this backend serves (web installs are ffxiv-only). Tracks are treated
-/// as available until this resolves.
+/// Which track paths this backend actually serves. Tracks are treated as available until this
+/// resolves.
 enum Avail {
     Idle,
     Loading(TrackedPromise<Result<HashSet<String>>>),
@@ -407,7 +407,7 @@ impl MusicPlayer {
                     &mut self.show_unavailable,
                     format!("Show {unavailable_count} unavailable"),
                 )
-                .on_hover_text("Tracks not served by this data source (the web backend is ffxiv/ARR only)");
+                .on_hover_text("Tracks not served by this data source");
             }
         });
 
