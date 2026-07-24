@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use egui::{
-    Align, Button, CentralPanel, Color32, Label, Layout, Rect, RichText, ScrollArea, Sense, Slider,
+    Align, Button, CentralPanel, Color32, Layout, Rect, RichText, ScrollArea, Sense, Slider,
     TextEdit, UiBuilder, Vec2, Widget, containers::panel::Panel, pos2, vec2,
 };
 use ironworks::excel::Language;
@@ -157,7 +157,6 @@ impl Default for MusicPlayer {
 
 enum Cmd {
     Toggle,
-    Stop,
     Scrub(f64),
     Seek(f64),
     Volume(f32),
@@ -178,6 +177,9 @@ impl MusicPlayer {
             None => None,
         };
         self.poll(backend, api_url, LANGUAGE.get(ui.ctx()));
+        if let Some(player) = &mut self.player {
+            player.take_media_action();
+        }
 
         let playing = self.player.as_ref().is_some_and(Player::is_playing);
         if playing && self.show_visualizer && self.now_playing.is_some() {
@@ -381,11 +383,11 @@ impl MusicPlayer {
         };
         let player = self.player.as_mut().unwrap();
         player.set_volume(self.volume);
+        player.set_metadata(&name);
         if let Err(error) = player.play(decoded) {
             log::error!("BGM playback failed: {error}");
             return;
         }
-        player.set_metadata(&name);
         self.now_playing = Some(now_playing);
     }
 
@@ -637,7 +639,6 @@ impl MusicPlayer {
                 .layout(Layout::top_down(Align::Center)),
             |ui| {
                 let sp = ui.spacing().item_spacing.x;
-                let h = ui.spacing().interact_size.y;
 
                 ui.add_space(16.0);
                 if show_viz {
@@ -651,27 +652,22 @@ impl MusicPlayer {
                 }
                 ui.add_space(18.0);
 
-                let time_w = 44.0;
                 ui.horizontal(|ui| {
-                    ui.add_sized(
-                        vec2(time_w, h),
-                        Label::new(RichText::new(format_time(bar_position)).weak()),
-                    );
-                    ui.spacing_mut().slider_width = (col_w - 2.0 * (time_w + sp)).max(80.0);
-                    let mut seek = bar_position;
-                    let response = ui.add_enabled(
-                        duration > 0.0,
-                        Slider::new(&mut seek, 0.0..=duration.max(0.001)).show_value(false),
-                    );
-                    if response.dragged() {
-                        cmd = Some(Cmd::Scrub(seek));
-                    } else if response.drag_stopped() || response.changed() {
-                        cmd = Some(Cmd::Seek(seek));
-                    }
-                    ui.add_sized(
-                        vec2(time_w, h),
-                        Label::new(RichText::new(format_time(duration)).weak()),
-                    );
+                    ui.label(RichText::new(format_time(bar_position)).weak());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new(format_time(duration)).weak());
+                        ui.spacing_mut().slider_width = (ui.available_width() - sp).max(80.0);
+                        let mut seek = bar_position;
+                        let response = ui.add_enabled(
+                            duration > 0.0,
+                            Slider::new(&mut seek, 0.0..=duration.max(0.001)).show_value(false),
+                        );
+                        if response.dragged() {
+                            cmd = Some(Cmd::Scrub(seek));
+                        } else if response.drag_stopped() || response.changed() {
+                            cmd = Some(Cmd::Seek(seek));
+                        }
+                    });
                 });
                 ui.add_space(14.0);
 
@@ -686,10 +682,11 @@ impl MusicPlayer {
                         cmd = Some(Cmd::Toggle);
                     }
                     if ui
-                        .add_sized(vec2(38.0, 34.0), Button::new(RichText::new("⏹").size(17.0)))
+                        .add_sized(vec2(40.0, 34.0), Button::selectable(show_viz, "📊"))
+                        .on_hover_text("Visualizer")
                         .clicked()
                     {
-                        cmd = Some(Cmd::Stop);
+                        cmd = Some(Cmd::ToggleVisualizer);
                     }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -701,13 +698,6 @@ impl MusicPlayer {
                             cmd = Some(Cmd::Volume(volume));
                         }
                         ui.label("🔊");
-                        if ui
-                            .add_sized(vec2(40.0, 34.0), Button::selectable(show_viz, "📊"))
-                            .on_hover_text("Visualizer")
-                            .clicked()
-                        {
-                            cmd = Some(Cmd::ToggleVisualizer);
-                        }
                     });
                 });
                 ui.add_space(18.0);
@@ -733,13 +723,6 @@ impl MusicPlayer {
                         player.resume();
                     }
                 }
-            }
-            Some(Cmd::Stop) => {
-                if let Some(player) = &mut self.player {
-                    player.stop();
-                }
-                self.now_playing = None;
-                self.scrub = None;
             }
             Some(Cmd::Scrub(seconds)) => self.scrub = Some(seconds),
             Some(Cmd::Seek(seconds)) => {
@@ -837,11 +820,7 @@ fn draw_info(
     };
     let sep = "   ·   ";
     let line1 = [codec_name(info.codec).to_string(), freq, chan].join(sep);
-    let mut parts = vec![
-        format!("{bitrate} kbps"),
-        format_size(info.file_size),
-        format_time(duration),
-    ];
+    let mut parts = vec![format!("{bitrate} kbps"), format_size(info.file_size)];
     if looping {
         parts.push("Looping".to_string());
     }

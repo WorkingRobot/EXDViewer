@@ -7605,6 +7605,7 @@ dependencies = [
  "intmap",
  "ironworks",
  "itertools 0.15.0",
+ "js-sys",
  "jsonschema",
  "log",
  "lru",

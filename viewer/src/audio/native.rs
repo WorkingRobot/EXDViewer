@@ -109,6 +109,9 @@ impl Player {
         out.fill(0);
     }
 
+    /// No OS media controls on the native backend (souvlaki is deferred).
+    pub fn take_media_action(&mut self) {}
+
     pub fn is_playing(&self) -> bool {
         self.sink
             .as_ref()

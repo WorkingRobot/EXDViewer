@@ -165,7 +165,7 @@ pub struct App {
 
 fn create_router(ctx: egui::Context) -> Result<Router<App>> {
     let mut builder = Router::<App>::new(ctx);
-    builder.set_title_formatter(|title| format!("EXDViewer - {title}"));
+    builder.set_title_formatter(|title| format!("{title} - EXDViewer"));
     builder.add_route("/", App::on_setup, App::draw_setup)?;
     builder.add_route("/sheet", App::on_unnamed_sheet, App::draw_unnamed_sheet)?;
     builder.add_route("/sheet/{*name}", App::on_named_sheet, App::draw_named_sheet)?;
