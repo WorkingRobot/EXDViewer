@@ -170,6 +170,7 @@ fn create_router(ctx: egui::Context) -> Result<Router<App>> {
     builder.add_route("/sheet", App::on_unnamed_sheet, App::draw_unnamed_sheet)?;
     builder.add_route("/sheet/{*name}", App::on_named_sheet, App::draw_named_sheet)?;
     builder.add_route("/music", App::on_music, App::draw_music)?;
+    builder.add_route("/music/{id}", App::on_music_track, App::draw_music)?;
     builder.add_route(
         CALLBACK_PATH,
         App::on_auth_callback,
@@ -184,10 +185,18 @@ impl App {
         self.router
             .get_or_init(|| create_router(ctx.clone()).unwrap());
 
-        if shortcut::consume(&ctx, GOTO_ROW) {
+        let on_music = self
+            .router
+            .get()
+            .unwrap()
+            .current_path()
+            .path()
+            .starts_with("/music");
+
+        if !on_music && shortcut::consume(&ctx, GOTO_ROW) {
             self.goto_window = Some(goto::GoToWindow::to_row());
         }
-        if shortcut::consume(&ctx, GOTO_SHEET) {
+        if !on_music && shortcut::consume(&ctx, GOTO_SHEET) {
             self.goto_window = Some(goto::GoToWindow::to_sheet());
         }
 
@@ -195,7 +204,7 @@ impl App {
         self.update_sheet_languages(&ctx);
         self.pr_window.poll(&ctx);
         about::draw(&ctx, &mut self.about_open);
-        self.draw_menubar(ui);
+        self.draw_menubar(ui, on_music);
         self.draw_logger(ui.ctx());
         self.draw_pr_window(ui.ctx());
 
@@ -290,7 +299,7 @@ impl App {
         }
     }
 
-    fn draw_menubar(&mut self, ui: &mut egui::Ui) {
+    fn draw_menubar(&mut self, ui: &mut egui::Ui, on_music: bool) {
         let ctx = &ui.ctx().clone();
         Panel::top("top_panel")
             .frame(
@@ -299,6 +308,9 @@ impl App {
             )
             .show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
+                    let bar_left = ui.min_rect().left();
+                    let bar_width = ui.available_width();
+
                     ui.menu_button("App", |ui| {
                         if ui.button("Configure").clicked() {
                             self.navigate("/");
@@ -310,19 +322,17 @@ impl App {
                         }
                     });
 
-                    ui.menu_button("Go", |ui| {
-                        if shortcut::button(ui, "Go to Row…", GOTO_ROW).clicked() {
-                            self.goto_window = Some(goto::GoToWindow::to_row());
-                            ui.close();
-                        }
-                        if shortcut::button(ui, "Go to Sheet…", GOTO_SHEET).clicked() {
-                            self.goto_window = Some(goto::GoToWindow::to_sheet());
-                            ui.close();
-                        }
-                    });
-
-                    if ui.button("Music").clicked() {
-                        self.navigate("/music");
+                    if !on_music {
+                        ui.menu_button("Go", |ui| {
+                            if shortcut::button(ui, "Go to Row…", GOTO_ROW).clicked() {
+                                self.goto_window = Some(goto::GoToWindow::to_row());
+                                ui.close();
+                            }
+                            if shortcut::button(ui, "Go to Sheet…", GOTO_SHEET).clicked() {
+                                self.goto_window = Some(goto::GoToWindow::to_sheet());
+                                ui.close();
+                            }
+                        });
                     }
 
                     ui.menu_button("Language", |ui| {
@@ -519,6 +529,26 @@ impl App {
                             }
                         }
                     });
+
+                    let seg = egui::vec2(72.0, ui.spacing().interact_size.y);
+                    let switcher_w = 2.0 * seg.x + ui.spacing().item_spacing.x;
+                    let target_left = bar_left + bar_width / 2.0 - switcher_w / 2.0;
+                    let space = target_left - ui.cursor().left();
+                    if space > 0.0 {
+                        ui.add_space(space);
+                    }
+                    if ui
+                        .add_sized(seg, Button::selectable(!on_music, "Sheets"))
+                        .clicked()
+                    {
+                        self.navigate("/sheet");
+                    }
+                    if ui
+                        .add_sized(seg, Button::selectable(on_music, "Music"))
+                        .clicked()
+                    {
+                        self.navigate("/music");
+                    }
 
                     add_links(ui, &mut self.about_open);
                 });
@@ -1211,9 +1241,26 @@ impl App {
         RouteResponse::Title("Music".to_string())
     }
 
+    fn on_music_track(
+        &mut self,
+        _ui: &mut egui::Ui,
+        path: &Path,
+        params: &Params<'_, '_>,
+    ) -> RouteResponse {
+        if let Some(r) = self.ensure_backend(path) {
+            return r;
+        }
+        if let Some(id) = params.get("id").and_then(|id| id.parse::<u32>().ok()) {
+            self.music.request(id);
+        }
+        RouteResponse::Title("Music".to_string())
+    }
+
     fn draw_music(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
-        if let Some(backend) = self.backend.clone() {
-            self.music.ui(ui, &backend);
+        if let Some(backend) = self.backend.clone()
+            && let Some(row_id) = self.music.ui(ui, &backend)
+        {
+            self.navigate(format!("/music/{row_id}"));
         }
     }
 

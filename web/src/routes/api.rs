@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::Display,
     str::FromStr,
     sync::{Arc, LazyLock, Mutex},
@@ -265,27 +266,32 @@ async fn post_github_oauth_token(
     Ok(HttpResponse::Ok().json(value))
 }
 
-/// BGM song metadata proxied from the OrchestrionPlugin Google Sheet (no CORS headers, so
-/// the browser can't fetch it directly), keyed by BGM row id.
+/// BGM song metadata proxied from OrchestrionPlugin Google Sheet, keyed by BGM row id and language.
 const SONGS_SHEET: &str = "https://docs.google.com/spreadsheets/d/1s-xJjxqp6pwS7oewNy1aOQnr3gaJbewvIBbyYchZ6No/gviz/tq?tqx=out:csv&sheet=";
+const SONG_SHEETS: [&str; 5] = ["en", "ja", "fr", "de", "zh"];
 const SONGS_TTL: Duration = Duration::from_secs(6 * 60 * 60);
-type SongsCache = Mutex<Option<(Instant, Arc<String>)>>;
-static SONGS_CACHE: LazyLock<SongsCache> = LazyLock::new(|| Mutex::new(None));
+type SongsCache = Mutex<HashMap<&'static str, (Instant, Arc<String>)>>;
+static SONGS_CACHE: LazyLock<SongsCache> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[get("/songs/")]
-async fn get_songs() -> Result<HttpResponse> {
+#[get("/songs/{lang}/")]
+async fn get_songs(lang: web::Path<String>) -> Result<HttpResponse> {
+    let sheet = SONG_SHEETS.into_iter().find(|&s| s == lang).unwrap_or("en");
+
     let cached = SONGS_CACHE
         .lock()
         .unwrap()
-        .as_ref()
+        .get(sheet)
         .filter(|(fetched, _)| fetched.elapsed() < SONGS_TTL)
         .map(|(_, json)| json.clone());
 
     let json = match cached {
         Some(json) => json,
         None => {
-            let json = Arc::new(build_songs().await.map_err(ErrorInternalServerError)?);
-            *SONGS_CACHE.lock().unwrap() = Some((Instant::now(), json.clone()));
+            let json = Arc::new(build_songs(sheet).await.map_err(ErrorInternalServerError)?);
+            SONGS_CACHE
+                .lock()
+                .unwrap()
+                .insert(sheet, (Instant::now(), json.clone()));
             json
         }
     };
@@ -299,7 +305,7 @@ async fn get_songs() -> Result<HttpResponse> {
         .body(json.as_ref().clone()))
 }
 
-async fn build_songs() -> anyhow::Result<String> {
+async fn build_songs(sheet: &str) -> anyhow::Result<String> {
     let client = reqwest::Client::new();
     let meta_csv = client
         .get(format!("{SONGS_SHEET}metadata"))
@@ -308,8 +314,8 @@ async fn build_songs() -> anyhow::Result<String> {
         .error_for_status()?
         .text()
         .await?;
-    let en_csv = client
-        .get(format!("{SONGS_SHEET}en"))
+    let lang_csv = client
+        .get(format!("{SONGS_SHEET}{sheet}"))
         .send()
         .await?
         .error_for_status()?
@@ -328,9 +334,9 @@ async fn build_songs() -> anyhow::Result<String> {
         }
     }
 
-    // en sheet: id, title, alt title, special mode title, locations, comments
+    // language sheet: id, title, alt title, special mode title, locations, comments
     let mut songs = Map::new();
-    for record in csv::Reader::from_reader(en_csv.as_bytes()).records() {
+    for record in csv::Reader::from_reader(lang_csv.as_bytes()).records() {
         let record = record?;
         let Some(Ok(id)) = record.get(0).map(str::parse::<u32>) else {
             continue;

@@ -7,7 +7,7 @@ use rodio::{OutputStream, OutputStreamHandle, Sink, Source};
 
 use super::Decoded;
 
-/// Native audio output via rodio; plays one looping track at a time.
+/// Native audio output via rodio
 pub struct Player {
     _stream: OutputStream,
     handle: OutputStreamHandle,
@@ -56,7 +56,9 @@ impl Player {
 
     pub fn position(&self) -> f64 {
         match &self.audio {
-            Some(audio) => self.position.load(Ordering::Relaxed) as f64 / f64::from(audio.sample_rate),
+            Some(audio) => {
+                self.position.load(Ordering::Relaxed) as f64 / f64::from(audio.sample_rate)
+            }
             None => 0.0,
         }
     }
@@ -64,7 +66,8 @@ impl Player {
     pub fn duration(&self) -> f64 {
         match &self.audio {
             Some(audio) => {
-                (audio.samples.len() / audio.channels as usize) as f64 / f64::from(audio.sample_rate)
+                (audio.samples.len() / audio.channels as usize) as f64
+                    / f64::from(audio.sample_rate)
             }
             None => 0.0,
         }
@@ -101,6 +104,11 @@ impl Player {
     /// No-op on native; on web this resumes the audio context in a user gesture.
     pub fn unlock(&self) {}
 
+    /// No spectrum analyser on the native backend; the visualizer is web-only.
+    pub fn spectrum(&self, out: &mut [u8]) {
+        out.fill(0);
+    }
+
     pub fn is_playing(&self) -> bool {
         self.sink
             .as_ref()
@@ -108,7 +116,6 @@ impl Player {
     }
 }
 
-/// Interleaved PCM that jumps `loop_end → loop_start` forever, publishing its frame position.
 struct LoopingSource {
     audio: Arc<Decoded>,
     index: usize,
@@ -171,6 +178,8 @@ impl Source for LoopingSource {
             return None;
         }
         let frames = self.audio.samples.len() as f64 / f64::from(self.audio.channels);
-        Some(Duration::from_secs_f64(frames / f64::from(self.audio.sample_rate)))
+        Some(Duration::from_secs_f64(
+            frames / f64::from(self.audio.sample_rate),
+        ))
     }
 }

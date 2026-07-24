@@ -6,8 +6,8 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use web_sys::{
-    AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextState, GainNode, MediaMetadata,
-    MediaPositionState, MediaSession, MediaSessionAction, MediaSessionPlaybackState,
+    AnalyserNode, AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextState, GainNode,
+    MediaMetadata, MediaPositionState, MediaSession, MediaSessionAction, MediaSessionPlaybackState,
 };
 
 use super::Decoded;
@@ -18,6 +18,7 @@ type SourceCell = Rc<RefCell<Option<AudioBufferSourceNode>>>;
 pub struct Player {
     context: AudioContext,
     gain: GainNode,
+    analyser: AnalyserNode,
     source: SourceCell,
     buffer: Option<AudioBuffer>,
     loop_region: Option<(f64, f64)>,
@@ -30,14 +31,23 @@ impl Player {
     pub fn new() -> Result<Self> {
         let context = AudioContext::new().map_err(js("AudioContext"))?;
         let gain = context.create_gain().map_err(js("create_gain"))?;
-        gain.connect_with_audio_node(&context.destination())
+        let analyser = context.create_analyser().map_err(js("create_analyser"))?;
+        analyser.set_fft_size(8192);
+        analyser.set_smoothing_time_constant(0.6);
+        analyser.set_min_decibels(-85.0);
+        analyser.set_max_decibels(-25.0);
+        gain.connect_with_audio_node(&analyser)
             .map_err(js("connect gain"))?;
+        analyser
+            .connect_with_audio_node(&context.destination())
+            .map_err(js("connect analyser"))?;
 
         let source: SourceCell = Rc::new(RefCell::new(None));
         let handlers = register_media_session(&context, &source);
         Ok(Self {
             context,
             gain,
+            analyser,
             source,
             buffer: None,
             loop_region: None,
@@ -45,6 +55,10 @@ impl Player {
             started_at: 0.0,
             _handlers: handlers,
         })
+    }
+
+    pub fn spectrum(&self, out: &mut [u8]) {
+        self.analyser.get_byte_frequency_data(out);
     }
 
     pub fn play(&mut self, audio: Decoded) -> Result<()> {
