@@ -275,7 +275,10 @@ static SONGS_CACHE: LazyLock<SongsCache> = LazyLock::new(|| Mutex::new(HashMap::
 
 #[get("/songs/{lang}/")]
 async fn get_songs(lang: web::Path<String>) -> Result<HttpResponse> {
-    let sheet = SONG_SHEETS.into_iter().find(|&s| s == lang).unwrap_or("en");
+    let sheet = SONG_SHEETS
+        .into_iter()
+        .find(|&s| s == lang.as_str())
+        .unwrap_or("en");
 
     let cached = SONGS_CACHE
         .lock()
