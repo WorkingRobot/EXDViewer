@@ -10,9 +10,11 @@ server_addr: 0.0.0.0:3000
 # Uncomment to enable the metrics server.
 # metrics_server_addr: 0.0.0.0:4000
 cache:
-  max_concurrent_downloads: 8
-  # Uncomment to enable on-disk caching of downloaded files.
-  # storage_directory: cache
-  # storage_capacity_bytes: 1073741824 # 1GiB
+  max_concurrent_downloads: 4
+  storage_directory: cache
+  storage_capacity_bytes: 1073741824 # 1GiB
 # How much of a file to download at once. Larger values reduces amortized latency.
 file_readahead: 8388608 # 8 MiB
+path_list:
+  # Presence maps are immutable once built.
+  cache_directory: cache/paths

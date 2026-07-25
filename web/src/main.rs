@@ -1,6 +1,7 @@
 mod blocking_stream;
 mod config;
 mod data;
+mod paths;
 mod queue;
 mod routes;
 mod smart_bufreader;
@@ -20,7 +21,7 @@ use shadow_rs::shadow;
 use std::{io, sync::Arc};
 use thiserror::Error;
 
-use crate::queue::MessageQueue;
+use crate::{paths::PathIndex, queue::MessageQueue};
 
 shadow!(build);
 
@@ -84,7 +85,8 @@ async fn main() -> Result<(), ServerError> {
                 .expect("Unknown error from prometheus builder")
         })?;
     let server_config = config.clone();
-    let server_game_data = MessageQueue::new(game_data.clone(), config.api_workers)?;
+    let path_index = Arc::new(PathIndex::new(config.path_list.clone()));
+    let server_game_data = MessageQueue::new(game_data.clone(), path_index, config.api_workers)?;
 
     log::info!("Binding to {}", config.server_addr);
     let server = HttpServer::new(move || {

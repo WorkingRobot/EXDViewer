@@ -1,6 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
 use async_channel::Sender;
+use bytes::Bytes;
 use tokio::{
     runtime::Handle, select, sync::oneshot, task::JoinHandle
 };
@@ -8,12 +9,15 @@ use tokio_util::sync::CancellationToken;
 use xiv_core::file::{slug::Slug, version::GameVersion};
 
 use crate::data::{GameData, RepositoryInfo, VersionInfo};
+use crate::paths::PathIndex;
 
 #[derive(Debug, Clone)]
 pub enum RequestData {
     Versions(Slug),
     GetFile(Slug, Option<GameVersion>, String),
     Exists(Slug, Option<GameVersion>, Vec<String>),
+    GlobalPaths,
+    Presence(Slug, Option<GameVersion>),
     Repositories,
 }
 
@@ -21,6 +25,8 @@ pub enum Response {
     Versions(Option<VersionInfo>),
     GetFile(Result<Arc<Vec<u8>>, ironworks::Error>),
     Exists(Result<Vec<bool>, ironworks::Error>),
+    GlobalPaths(anyhow::Result<Bytes>),
+    Presence(anyhow::Result<Bytes>),
     Repositories(anyhow::Result<Vec<RepositoryInfo>>),
 }
 
@@ -36,6 +42,7 @@ pub struct MessageQueue(Arc<MessageQueueImpl>);
 #[derive(Debug)]
 struct MessageQueueImpl {
     data: Arc<GameData>,
+    paths: Arc<PathIndex>,
 
     threads: OnceLock<Vec<JoinHandle<()>>>,
     cancel_token: CancellationToken,
@@ -43,10 +50,11 @@ struct MessageQueueImpl {
 }
 
 impl MessageQueue {
-    pub fn new(data: Arc<GameData>, workers: usize) -> anyhow::Result<Self> {
+    pub fn new(data: Arc<GameData>, paths: Arc<PathIndex>, workers: usize) -> anyhow::Result<Self> {
         let (thread_tx, thread_rx) = async_channel::unbounded();
         let this = Self(Arc::new(MessageQueueImpl {
             data,
+            paths,
             threads: OnceLock::new(),
             cancel_token: CancellationToken::new(),
             tx: thread_tx,
@@ -115,6 +123,21 @@ impl MessageQueue {
 
                                             Response::Exists(result)
                                         }
+                                        RequestData::GlobalPaths => {
+                                            Response::GlobalPaths(this.paths.global().await)
+                                        }
+                                        RequestData::Presence(slug, version) => {
+                                            let version = match version {
+                                                Some(v) => Some(v),
+                                                None => this.data.versions(slug).await.map(|v| v.latest),
+                                            };
+                                            let result = match version {
+                                                Some(version) => this.paths.presence(&this.data, slug, version).await,
+                                                None => Err(anyhow::anyhow!("No version info available")),
+                                            };
+
+                                            Response::Presence(result)
+                                        }
                                     }
                                 };
 
@@ -177,6 +200,32 @@ impl MessageQueue {
             _ => Err(ironworks::Error::Resource(Box::new(std::io::Error::other(
                 "Failed to check existence",
             )))),
+        }
+    }
+
+    pub async fn get_global_paths(&self) -> anyhow::Result<Bytes> {
+        let (tx, rx) = oneshot::channel();
+        self.0.tx.send(Request {
+            data: RequestData::GlobalPaths,
+            tx,
+        }).await.expect("Failed to send request to message queue");
+
+        match rx.await {
+            Ok(Response::GlobalPaths(result)) => result,
+            _ => Err(anyhow::anyhow!("Failed to get the global path list")),
+        }
+    }
+
+    pub async fn get_presence(&self, slug: Slug, version: Option<GameVersion>) -> anyhow::Result<Bytes> {
+        let (tx, rx) = oneshot::channel();
+        self.0.tx.send(Request {
+            data: RequestData::Presence(slug, version),
+            tx,
+        }).await.expect("Failed to send request to message queue");
+
+        match rx.await {
+            Ok(Response::Presence(result)) => result,
+            _ => Err(anyhow::anyhow!("Failed to get the presence map")),
         }
     }
 

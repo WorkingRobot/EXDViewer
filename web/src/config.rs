@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::path::PathBuf;
 use xiv_cache::builder::ServerBuilder;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -8,6 +9,14 @@ pub struct AssetCache {
     pub version_ttl_minutes: u64,
     pub file_capacity: u64,
     pub file_ttl_minutes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PathList {
+    pub url: String,
+    pub ttl_minutes: u64,
+    pub cache_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -23,6 +32,7 @@ pub struct Config {
     pub api_workers: usize,
     pub github_client_id: String,
     pub github_client_secret: String,
+    pub path_list: PathList,
 }
 
 impl Default for AssetCache {
@@ -32,6 +42,16 @@ impl Default for AssetCache {
             version_ttl_minutes: 60,
             file_capacity: 50,
             file_ttl_minutes: 5,
+        }
+    }
+}
+
+impl Default for PathList {
+    fn default() -> Self {
+        Self {
+            url: "https://rl2.perchbird.dev/download/export/PathList.gz".to_string(),
+            ttl_minutes: 12 * 60,
+            cache_directory: Some(PathBuf::from("cache/paths")),
         }
     }
 }
@@ -51,6 +71,7 @@ impl Default for Config {
             api_workers: 1,
             github_client_id: String::new(),
             github_client_secret: String::new(),
+            path_list: PathList::default(),
         }
     }
 }

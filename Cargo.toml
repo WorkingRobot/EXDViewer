@@ -29,7 +29,7 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.symphonia-metadata]
 opt-level = 3
-[profile.dev.package.symphonia-utils-xiph]
+[profile.dev.package.symphonia-common]
 opt-level = 3
 [profile.dev.package.cridecoder]
 opt-level = 3

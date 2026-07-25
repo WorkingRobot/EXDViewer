@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::StreamExt;
 use ironworks::{
     Ironworks,
     sqpack::{SqPack, VInstall, Vfs},
@@ -99,7 +100,7 @@ impl GameData {
         Ok(repositories)
     }
 
-    async fn get_version(
+    pub async fn get_version(
         &self,
         slug: Slug,
         version: GameVersion,
@@ -151,6 +152,49 @@ impl GameData {
         let data = Arc::new(file_data);
         self.file_cache.insert((slug, version, file), data.clone());
         Ok(data)
+    }
+
+    pub async fn warm_indexes(&self, slug: Slug, version: GameVersion) -> anyhow::Result<()> {
+        let mut indexes = Vec::new();
+        for (slug, version) in game_contributions(&self.cache, slug, version).await? {
+            let clut = self.cache.get_clut(slug, version.clone()).await?;
+            indexes.extend(
+                clut.files
+                    .keys()
+                    .filter(|path| path.ends_with(".index") || path.ends_with(".index2"))
+                    .map(|path| (slug, version.clone(), path.clone())),
+            );
+        }
+
+        // Each read buffers a whole index file, so this is bounded rather than unleashed.
+        const CONCURRENCY: usize = 12;
+
+        let started = std::time::Instant::now();
+        let count = indexes.len();
+        let failures: Vec<_> =
+            futures_util::stream::iter(indexes.into_iter().map(|(slug, version, path)| {
+                let server = self.cache.clone();
+                async move {
+                    let file = CacheFile::new(server, slug, version, path.clone())
+                        .await
+                        .map_err(|e| (path.clone(), e))?;
+                    let mut buffer = vec![0u8; file.len() as usize];
+                    file.pread(0, &mut buffer).await.map_err(|e| (path, e))
+                }
+            }))
+            .buffer_unordered(CONCURRENCY)
+            .filter_map(|result| std::future::ready(result.err()))
+            .collect()
+            .await;
+        log::info!(
+            "Warmed {} of {count} sqpack indexes in {:?}",
+            count - failures.len(),
+            started.elapsed()
+        );
+        for (path, error) in failures.iter().take(5) {
+            log::warn!("Could not warm {path}: {error}");
+        }
+        Ok(())
     }
 
     pub async fn exists(
@@ -323,7 +367,10 @@ impl Vfs for CacheVfs {
         self.files.contains_key(path_str)
             || self.folders.contains(path_str)
             || self.files.keys().chain(self.folders.iter()).any(|k| {
-                Path::new(k).parent().map(|parent| parent == path).unwrap_or(false)
+                Path::new(k)
+                    .parent()
+                    .map(|parent| parent == path)
+                    .unwrap_or(false)
                     || Path::new(k).ancestors().any(|a| a == path)
             })
     }
@@ -341,7 +388,13 @@ impl Vfs for CacheVfs {
 
         let file = tokio::task::block_in_place(|| {
             Handle::current().block_on(async move {
-                CacheFile::new(self.server.clone(), *slug, version.clone(), path.to_string()).await
+                CacheFile::new(
+                    self.server.clone(),
+                    *slug,
+                    version.clone(),
+                    path.to_string(),
+                )
+                .await
             })
         })?;
 
