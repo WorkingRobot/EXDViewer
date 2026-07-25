@@ -7588,6 +7588,7 @@ dependencies = [
  "catppuccin-egui",
  "compact_str",
  "cridecoder",
+ "csv",
  "eframe",
  "egui",
  "egui_extras",

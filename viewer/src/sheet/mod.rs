@@ -1,6 +1,7 @@
 mod cell;
 mod cell_iter;
 mod compact_sestring;
+mod csv;
 mod filter;
 mod global_context;
 mod schema_column;
@@ -13,6 +14,7 @@ use std::{fmt::Write, sync::Arc};
 use base64::{Engine, prelude::BASE64_STANDARD};
 pub use cell::{CellResponse, MatchOptions};
 use compact_str::ToCompactString;
+pub use csv::export_csv;
 use egui::{
     Align, Color32, Direction, FontSelection, Galley, Label, Layout, Response, RichText, Sense,
     text::LayoutJob,

@@ -190,6 +190,13 @@ impl TableContext {
             .collect()
     }
 
+    pub fn has_pending_references(&self) -> bool {
+        self.0.referenced_sheets.borrow().values().any(|promise| {
+            let promise = promise.borrow();
+            !promise.converted() && !promise.should_swap()
+        })
+    }
+
     pub fn columns(&self) -> anyhow::Result<Vec<(SchemaColumn, SheetColumnDefinition)>> {
         (0..self.0.sheet_columns.len() as u32)
             .map(|i| self.get_column_by_offset(i))

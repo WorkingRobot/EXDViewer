@@ -67,6 +67,7 @@ pest = "2.8"
 pest_derive = "2.8"
 compact_str = { version = "0.10", features = ["smallvec"] }
 smallvec = { version = "1.15", features = ["union"] }
+csv = "1.4"
 
 [build-dependencies]
 shadow-rs = { version = "2.0", default-features = false, features = ["build"] }
