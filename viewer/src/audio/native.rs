@@ -3,15 +3,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use rodio::{OutputStream, OutputStreamHandle, Sink, Source};
+use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, Source};
 
 use super::Decoded;
 
 /// Native audio output via rodio
 pub struct Player {
-    _stream: OutputStream,
-    handle: OutputStreamHandle,
-    sink: Option<Sink>,
+    device: MixerDeviceSink,
+    sink: Option<rodio::Player>,
     audio: Option<Arc<Decoded>>,
     position: Arc<AtomicU64>,
     volume: f32,
@@ -19,10 +18,8 @@ pub struct Player {
 
 impl Player {
     pub fn new() -> Result<Self> {
-        let (stream, handle) = OutputStream::try_default()?;
         Ok(Self {
-            _stream: stream,
-            handle,
+            device: DeviceSinkBuilder::open_default_sink()?,
             sink: None,
             audio: None,
             position: Arc::new(AtomicU64::new(0)),
@@ -47,7 +44,7 @@ impl Player {
             return Ok(());
         };
         self.position.store(frame, Ordering::Relaxed);
-        let sink = Sink::try_new(&self.handle)?;
+        let sink = rodio::Player::connect_new(self.device.mixer());
         sink.set_volume(self.volume);
         sink.append(LoopingSource::new(audio, frame, self.position.clone()));
         self.sink = Some(sink);
@@ -164,16 +161,16 @@ impl Iterator for LoopingSource {
 }
 
 impl Source for LoopingSource {
-    fn current_frame_len(&self) -> Option<usize> {
+    fn current_span_len(&self) -> Option<usize> {
         None
     }
 
-    fn channels(&self) -> u16 {
-        self.audio.channels
+    fn channels(&self) -> ChannelCount {
+        ChannelCount::new(self.audio.channels).unwrap()
     }
 
-    fn sample_rate(&self) -> u32 {
-        self.audio.sample_rate
+    fn sample_rate(&self) -> SampleRate {
+        SampleRate::new(self.audio.sample_rate).unwrap()
     }
 
     fn total_duration(&self) -> Option<Duration> {

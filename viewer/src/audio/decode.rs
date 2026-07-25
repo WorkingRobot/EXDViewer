@@ -2,13 +2,12 @@ use std::io::Cursor;
 
 use anyhow::{Result, anyhow};
 use ironworks::file::scd::{Codec, SoundEntry};
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::{MetadataOptions, MetadataRevision};
-use symphonia::core::probe::Hint;
+use symphonia::core::meta::MetadataOptions;
 
 /// Decoded interleaved f32 PCM plus its loop region.
 pub struct Decoded {
@@ -35,67 +34,54 @@ fn decode_ogg(data: &[u8]) -> Result<Decoded> {
     let stream = MediaSourceStream::new(Box::new(Cursor::new(data.to_vec())), Default::default());
     let mut hint = Hint::new();
     hint.with_extension("ogg");
-    let mut probed = symphonia::default::get_probe().format(
+    let mut format = symphonia::default::get_probe().probe(
         &hint,
         stream,
-        &FormatOptions {
-            enable_gapless: true,
-            ..Default::default()
-        },
-        &MetadataOptions::default(),
+        FormatOptions::default(),
+        MetadataOptions::default(),
     )?;
-    let mut format = probed.format;
 
     let (mut loop_start, mut loop_end) = (None, None);
-    let mut scan = |revision: &MetadataRevision| {
-        for tag in revision.tags() {
-            match tag.key.to_ascii_uppercase().as_str() {
-                "LOOPSTART" => loop_start = tag.value.to_string().parse().ok(),
-                "LOOPEND" => loop_end = tag.value.to_string().parse().ok(),
+    if let Some(revision) = format.metadata().current() {
+        for tag in &revision.media.tags {
+            match tag.raw.key.to_ascii_uppercase().as_str() {
+                "LOOPSTART" => loop_start = tag.raw.value.to_string().parse().ok(),
+                "LOOPEND" => loop_end = tag.raw.value.to_string().parse().ok(),
                 _ => {}
             }
         }
-    };
-    if let Some(revision) = probed.metadata.get().as_ref().and_then(|meta| meta.current()) {
-        scan(revision);
-    }
-    if let Some(revision) = format.metadata().current() {
-        scan(revision);
     }
 
     let track = format
-        .default_track()
+        .default_track(TrackType::Audio)
         .ok_or_else(|| anyhow!("ogg has no default track"))?;
-    let channels = track
+    let params = track
         .codec_params
+        .as_ref()
+        .and_then(|params| params.audio())
+        .ok_or_else(|| anyhow!("ogg track has no audio codec parameters"))?;
+    let channels = params
         .channels
+        .as_ref()
         .ok_or_else(|| anyhow!("ogg track has no channel layout"))?
         .count() as u16;
-    let sample_rate = track
-        .codec_params
+    let sample_rate = params
         .sample_rate
         .ok_or_else(|| anyhow!("ogg track has no sample rate"))?;
     let track_id = track.id;
-    let mut decoder =
-        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(params, &AudioDecoderOptions::default())?;
 
     let mut samples = Vec::new();
-    let mut buffer: Option<SampleBuffer<f32>> = None;
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(SymphoniaError::IoError(_)) => break, // end of stream
-            Err(error) => return Err(error.into()),
-        };
-        if packet.track_id() != track_id {
+    let mut block = Vec::new();
+    while let Some(packet) = format.next_packet()? {
+        if packet.track_id != track_id {
             continue;
         }
         match decoder.decode(&packet) {
             Ok(audio) => {
-                let buffer = buffer
-                    .get_or_insert_with(|| SampleBuffer::new(audio.capacity() as u64, *audio.spec()));
-                buffer.copy_interleaved_ref(audio);
-                samples.extend_from_slice(buffer.samples());
+                audio.copy_to_vec_interleaved(&mut block);
+                samples.extend_from_slice(&block);
             }
             Err(SymphoniaError::DecodeError(_)) => continue,
             Err(error) => return Err(error.into()),

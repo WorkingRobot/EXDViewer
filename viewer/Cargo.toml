@@ -11,7 +11,7 @@ name = "worker"
 path = "src/worker/runner.rs"
 
 [dependencies]
-shadow-rs = { version = "2.0", default-features = false }
+shadow-rs = { version = "2", default-features = false }
 egui = "0.35"
 eframe = { version = "0.35", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
@@ -20,63 +20,64 @@ eframe = { version = "0.35", default-features = false, features = [
     "persistence",   # Enable restoring app state when restarting the app.
     "wayland",       # To support Linux (and CI)
 ] }
-catppuccin-egui = { version = "5.6", default-features = false, features = [
+catppuccin-egui = { version = "5", default-features = false, features = [
     "egui35",
 ] }
 log = "0.4"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 ironworks = { version = "0.4.1", features = ["excel", "sqpack", "tex", "scd"] }
-symphonia = { version = "0.5", default-features = false, features = [
+pathlist = { path = "../pathlist", default-features = false }
+symphonia = { version = "0.6", default-features = false, features = [
     "ogg",
     "vorbis",
 ] }
 cridecoder = "0.3"
 ehttp = { version = "0.7", features = ["streaming", "native-async"] }
 lru = "0.18"
-url = "2.5"
-nucleo-matcher = "0.3.1"
-anyhow = "1.0"
-intmap = "3.1"
+url = "2"
+nucleo-matcher = "0.3"
+anyhow = "1"
+intmap = "3"
 binrw = "0.15"
 num-traits = "0.2"
 itertools = "0.15"
 rfd = "0.17"
 egui_table = "0.9"
 egui_extras = { version = "0.35", features = ["http", "image"] }
-syntect = { version = "5.3", default-features = false, features = [
+syntect = { version = "5", default-features = false, features = [
     "default-fancy",
 ] }
 serde_yml = "0.0.13"
-serde_json = "1.0"
-jsonschema = { version = "0.48", default-features = false }
+serde_json = "1"
+jsonschema = { version = "0.49", default-features = false }
 async-trait = "0.1"
 futures-util = "0.3"
 egui_logger = "0.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 image_dds = { version = "0.7", default-features = false, features = ["image"] }
-either = { version = "1.16", features = ["serde"] }
+either = { version = "1", features = ["serde"] }
 replace_with = "0.1"
 pinned = "0.1"
 matchit = "0.9"
-zip = { version = "8.6", default-features = false }
-base64 = "0.22"
+zip = { version = "8", default-features = false }
+base64 = "0.23"
 sha2 = "0.11"
-wildmatch = "2.6"
+wildmatch = "2"
 regex-lite = "0.1"
-pest = "2.8"
-pest_derive = "2.8"
+pest = "2"
+pest_derive = "2"
 compact_str = { version = "0.10", features = ["smallvec"] }
-smallvec = { version = "1.15", features = ["union"] }
-csv = "1.4"
+smallvec = { version = "1", features = ["union"] }
+csv = "1"
 
 [build-dependencies]
-shadow-rs = { version = "2.0", default-features = false, features = ["build"] }
+shadow-rs = { version = "2", default-features = false, features = ["build"] }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11"
 poll-promise = { version = "0.3", features = ["smol"] }
-rodio = { version = "0.19", default-features = false }
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -134,4 +135,4 @@ wasm-bindgen = "0.2"
 gloo-worker = "0.6"
 serde-wasm-bindgen = "0.6"
 indexed-db = "0.4"
-web-time = "1.1"
+web-time = "1"
