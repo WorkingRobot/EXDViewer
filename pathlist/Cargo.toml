@@ -1,0 +1,18 @@
+[package]
+name = "pathlist"
+description = "Encoded FFXIV path listings"
+authors.workspace = true
+repository.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "pathlist"
+
+[features]
+default = ["encode"]
+encode = ["dep:zstd"]
+
+[dependencies]
+anyhow = "1"
+zstd = { version = "0.13", optional = true }
