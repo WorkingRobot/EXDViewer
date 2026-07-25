@@ -9,7 +9,7 @@ use wasm_bindgen::closure::Closure;
 use web_sys::{
     AnalyserNode, AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextState, GainNode,
     HtmlAudioElement, MediaMetadata, MediaPositionState, MediaSession, MediaSessionAction,
-    MediaSessionActionDetails, MediaSessionPlaybackState,
+    MediaSessionActionDetails, MediaSessionPlaybackState, js_sys::Reflect,
 };
 
 use super::Decoded;
@@ -356,7 +356,7 @@ fn register_seek_handlers(seek: &SeekCell) -> Vec<Closure<dyn FnMut(MediaSession
     // `MediaSessionActionDetails` is a JS dict web-sys only exposes as setters, so read the
     // incoming fields by reflection.
     fn field(details: &MediaSessionActionDetails, name: &str) -> Option<f64> {
-        js_sys::Reflect::get(details.as_ref(), &JsValue::from_str(name))
+        Reflect::get(details.as_ref(), &JsValue::from_str(name))
             .ok()
             .and_then(|value| value.as_f64())
     }
