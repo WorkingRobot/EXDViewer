@@ -46,10 +46,10 @@ pub enum FilterKey {
 /// - `^=Hello` (starts with "Hello")
 /// - `$=World` (ends with "World")
 /// - `*= "lo Wo"` (contains "lo Wo")
-/// - `~ "Hlo Wrd"` (fuzzy match "Hlo Wrd")
+/// - `~= "Hlo Wrd"` (fuzzy match "Hlo Wrd")
 /// - `?="H*o W?rld"` (wildcard match "H*o W?rld")
 /// - `/="^Hello.*World$"` (regex match "^Hello.*World$")
-/// - `=10..20` (range between 10 and 20, inclusive)
+/// - `|=10..20` (range between 10 and 20, inclusive)
 /// - `!$=Test` (not ends with "Test")
 /// - `!/= "^Test.*"` (not regex match "^Test.*")
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -79,7 +79,7 @@ pub enum FilterValue {
     Wildcard(Wildcard),
 
     /// Check if the value matches the regular expression
-    /// Uses '~'
+    /// Uses '/='
     Regex(RegexWrapper),
 
     /// Check if the value is within a range (inclusive) with optional bounds (only for numeric values)

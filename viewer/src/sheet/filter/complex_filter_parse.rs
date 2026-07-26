@@ -408,6 +408,7 @@ fn unquote_string(s: &str) -> Result<String, String> {
     Ok(result)
 }
 
+#[cfg(test)]
 mod tests {
     use std::str::FromStr;
 
@@ -594,6 +595,23 @@ mod tests {
     fn test_double_negation() {
         let filter_str = r#"NOT Column1 !^= "Hello""#;
         test_filter(filter_str);
+    }
+
+    #[test]
+    fn test_subrow_row_id() {
+        test_filter(r#"# = 12.3"#);
+        test_filter(r#"Column1 = 1.5"#);
+        test_filter(r#"Column1 = 1-2"#);
+    }
+
+    #[test]
+    fn test_zero() {
+        test_filter(r#"Column1 > 0"#);
+        test_filter(r#"Column1 <= 0"#);
+        test_filter(r#"Column1 |= 0..10"#);
+        test_filter(r#"Column1 |= ..0"#);
+        test_filter(r#"# = 0"#);
+        test_filter(r#"Column1 |= -10..0"#);
     }
 
     #[test]

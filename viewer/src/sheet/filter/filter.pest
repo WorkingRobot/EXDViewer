@@ -94,7 +94,7 @@ GREATER     = { ">" }
 LESSER      = { "<" }
 
 // Values
-strnum_value = { number | string_value }
+strnum_value = ${ number ~ !bare_char | string_value }
 string_value = { quoted_string | bare_string }
 regex_value  = { regex | string_value }
 range_value  = { range | number }
@@ -109,7 +109,8 @@ quoted_normal  = @{ !(PEEK | "\\") ~ ANY }
 QUOTE          =  { "\"" | "'" }
 
 // Bare string: unquoted, for simple values, can include keywords like 'and', 'or', 'not'
-bare_string = @{ (ASCII_ALPHANUMERIC | "_" | "-" | "." | "/")+ }
+bare_string = @{ bare_char+ }
+bare_char   = _{ ASCII_ALPHANUMERIC | "_" | "-" | "." | "/" }
 
 // Regex: /.../ with escaping and optional flags
 regex           = ${ PUSH(REGEX_SEPARATOR) ~ regex_charseq ~ POP ~ regex_flags }
@@ -122,7 +123,7 @@ regex_flag      =  { "i" | "m" | "s" | "U" | "R" | "x" | "u" }
 REGEX_SEPARATOR =  { "/" }
 
 // Number: integer, no leading zeros except for zero itself, optional leading minus
-number = @{ "-"? ~ !"0" ~ ASCII_DIGIT+ }
+number = @{ "-"? ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) }
 
 // Range: two numbers separated by "..", or open-ended
 range           = { (number ~ RANGE_SEPARATOR ~ number) | (RANGE_SEPARATOR ~ number) | (number ~ RANGE_SEPARATOR) }

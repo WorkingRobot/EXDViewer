@@ -1,5 +1,5 @@
 use std::{
-    cell::{LazyCell, RefCell},
+    cell::{Cell, LazyCell, RefCell},
     collections::HashMap,
     num::NonZeroU32,
     rc::Rc,
@@ -31,6 +31,7 @@ type ColumnPairs = Rc<Vec<(SchemaColumn, SheetColumnDefinition)>>;
 pub struct FilterCache {
     wildcard_cache: LazyCell<RefCell<HashMap<Wildcard, ColumnPairs>>>,
     columns: RefCell<ColumnPairs>,
+    generation: Cell<u32>,
     matcher: FuzzyMatcher,
 }
 
@@ -45,6 +46,7 @@ impl FilterCache {
                     .map(|(a, b)| (a.clone(), b.clone()))
                     .collect_vec(),
             )),
+            generation: Cell::new(0),
             matcher: FuzzyMatcher::new(),
         }
     }
@@ -54,8 +56,9 @@ impl FilterCache {
         input: &FilterInput,
         options: MatchOptions,
     ) -> anyhow::Result<CompiledFilterInput> {
+        let generation = self.generation.get();
         if input.is_empty() {
-            return Ok(CompiledFilterInput::new(None, options));
+            return Ok(CompiledFilterInput::new(None, options, generation));
         }
         let data = match input {
             FilterInput::Equals(s) => self.compile_equals(s),
@@ -63,12 +66,13 @@ impl FilterCache {
             FilterInput::Complex(f) => self.compile_complex(f)?,
         };
 
-        Ok(CompiledFilterInput::new(Some(data), options))
+        Ok(CompiledFilterInput::new(Some(data), options, generation))
     }
 
     pub fn invalidate_cache(&self, ctx: &TableContext) -> anyhow::Result<()> {
         self.wildcard_cache.borrow_mut().clear();
         *self.columns.borrow_mut() = Rc::new(ctx.columns()?);
+        self.generation.set(self.generation.get().wrapping_add(1));
         Ok(())
     }
 

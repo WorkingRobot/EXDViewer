@@ -66,6 +66,7 @@ pub struct SheetTable {
     current_filter: Result<Option<CompiledFilterInput>, String>,
     current_filter_promise: Option<FilterPromise>,
     current_filter_cancel_token: Option<Rc<Cell<bool>>>,
+    filter_refreshed: bool,
 }
 
 impl SheetTable {
@@ -101,6 +102,7 @@ impl SheetTable {
             current_filter: Ok(None),
             current_filter_promise: None,
             current_filter_cancel_token: None,
+            filter_refreshed: false,
         };
 
         ret.size_all_rows(ui);
@@ -211,13 +213,33 @@ impl SheetTable {
         &self.context
     }
 
-    fn search_filtered_row_nr(&mut self, row_id: u32, subrow_id: Option<u16>) -> Option<u64> {
-        let max = self.get_filtered_row_count() as u64;
-        let result = (0..max).collect_vec().binary_search_by(|i| {
-            let (i_row, i_subrow) = self.get_row_id(self.get_filtered_row_nr(*i)).unwrap();
-            i_row.cmp(&row_id).then_with(|| i_subrow.cmp(&subrow_id))
-        });
-        result.ok().map(|i| i as u64)
+    fn search_filtered_row_nr(&self, row_id: u32, subrow_id: Option<u16>) -> Option<u64> {
+        let count = self.get_filtered_row_count() as u64;
+        let target = (
+            row_id,
+            subrow_id.or_else(|| self.subrow_lookup.is_some().then_some(0)),
+        );
+        let row_at = |i: u64| self.get_row_id(self.get_filtered_row_nr(i)).ok();
+
+        // A fuzzy filter orders its rows by score, so they can only be scanned.
+        if self
+            .active_filter_key()
+            .and_then(CompiledFilterInput::input)
+            .is_some_and(|filter| filter.has_fuzzy)
+        {
+            return (0..count).find(|&i| row_at(i) == Some(target));
+        }
+
+        let (mut start, mut end) = (0, count);
+        while start < end {
+            let mid = start + (end - start) / 2;
+            if row_at(mid)? < target {
+                start = mid + 1;
+            } else {
+                end = mid;
+            }
+        }
+        (start < count && row_at(start)? == target).then_some(start)
     }
 
     fn get_row_id(&self, row_nr: u64) -> anyhow::Result<(u32, Option<u16>)> {
@@ -279,8 +301,16 @@ impl SheetTable {
         matches!(self.current_filter, Ok(Some(..)))
     }
 
-    pub fn get_filter_error(&self) -> Option<&str> {
-        self.current_filter.as_ref().err().map(|e| e.as_str())
+    pub fn get_filter_error(&self) -> Option<String> {
+        if let Err(error) = &self.current_filter {
+            return Some(error.clone());
+        }
+        let filter = self.current_filter.as_ref().ok()?.as_ref()?;
+        self.filtered_rows
+            .borrow()
+            .peek(filter)
+            .and_then(|value| value.filter_result.as_ref().err())
+            .map(anyhow::Error::to_string)
     }
 
     fn set_compiled_filter(&mut self, filter: Result<Option<CompiledFilterInput>, String>) {
@@ -288,17 +318,18 @@ impl SheetTable {
             return;
         }
 
-        if self
-            .current_filter
-            .as_ref()
-            .unwrap_or(&None)
-            .as_ref()
-            .is_none_or(|f| self.filtered_rows.get_mut().get(f).is_some())
+        // Only fall back onto a filter whose rows are still around; an unparseable filter
+        // otherwise wipes the fallback and snaps the table back to unfiltered mid-typing.
+        if let Ok(current) = &self.current_filter
+            && current
+                .as_ref()
+                .is_none_or(|f| self.filtered_rows.get_mut().get(f).is_some())
         {
-            self.last_filter = self.current_filter.clone().unwrap_or_default();
+            self.last_filter.clone_from(current);
         }
 
         self.current_filter.clone_from(&filter);
+        self.filter_refreshed = false;
         if let Some(token) = &self.current_filter_cancel_token {
             token.set(true);
         }
@@ -310,6 +341,10 @@ impl SheetTable {
             return;
         }
 
+        self.spawn_filter(filter);
+    }
+
+    fn spawn_filter(&mut self, filter: CompiledFilterInput) {
         let token = Rc::new(Cell::new(false));
         let ctx = self.context().clone();
         let promise_token = token.clone();
@@ -396,7 +431,6 @@ impl SheetTable {
                 filtered_rows = scored_rows.into_iter().map(|(row_nr, _)| row_nr).collect();
             } else {
                 filtered_rows = Vec::new();
-                let mut is_in_progress = false;
                 FILTER_TOTAL_STOPWATCH.reset();
                 FILTER_ROW_STOPWATCH.reset();
                 FILTER_CELL_GRAB_STOPWATCH.reset();
@@ -438,57 +472,53 @@ impl SheetTable {
         self.current_filter_promise = Some(promise);
     }
 
-    fn get_filtered_row_count(&mut self) -> usize {
-        if let Ok(Some(current_filter)) = &self.current_filter {
-            if let Some(filter_value) = self.filtered_rows.get_mut().get(current_filter)
-                && let Ok(filter_output) = &filter_value.filter_result
-            {
-                return filter_output.filtered_rows.len();
-            }
-            if let Some(last_filter) = &self.last_filter
-                && let Some(filter_value) = self.filtered_rows.get_mut().get(last_filter)
-                && let Ok(filter_output) = &filter_value.filter_result
-            {
-                return filter_output.filtered_rows.len();
-            }
+    /// The filter whose rows are on screen: the current one once it has finished, otherwise the
+    /// last one that did, so the table keeps its rows while a filter recomputes or fails to parse.
+    fn active_filter_key(&self) -> Option<&CompiledFilterInput> {
+        let current = match &self.current_filter {
+            Ok(None) => return None,
+            Ok(Some(filter)) => Some(filter),
+            Err(_) => None,
+        };
+        let rows = self.filtered_rows.borrow();
+        let is_ready = |filter: &CompiledFilterInput| {
+            rows.peek(filter).is_some_and(|v| v.filter_result.is_ok())
+        };
+        if let Some(filter) = current
+            && is_ready(filter)
+        {
+            return Some(filter);
         }
-        self.context.sheet().subrow_count() as usize
+        self.last_filter.as_ref().filter(|f| is_ready(f))
+    }
+
+    fn with_filter_output<T>(&self, func: impl FnOnce(&FilterOutput) -> T) -> Option<T> {
+        let key = self.active_filter_key()?;
+        let rows = self.filtered_rows.borrow();
+        let value = rows.peek(key)?;
+        value.filter_result.as_ref().ok().map(func)
+    }
+
+    fn get_filtered_row_count(&self) -> usize {
+        self.with_filter_output(|output| output.filtered_rows.len())
+            .unwrap_or_else(|| self.context.sheet().subrow_count() as usize)
     }
 
     fn get_filtered_row_nr(&self, filtered_row_nr: u64) -> u64 {
-        if let Ok(Some(current_filter)) = &self.current_filter {
-            if let Some(filter_value) = self.filtered_rows.borrow_mut().get(current_filter)
-                && let Ok(filter_output) = &filter_value.filter_result
-                && let Some(&filtered_row_nr) =
-                    filter_output.filtered_rows.get(filtered_row_nr as usize)
-            {
-                return filtered_row_nr.into();
-            }
-            if let Some(last_filter) = &self.last_filter
-                && let Some(filter_value) = self.filtered_rows.borrow_mut().get(last_filter)
-                && let Ok(filter_output) = &filter_value.filter_result
-                && let Some(&filtered_row_nr) =
-                    filter_output.filtered_rows.get(filtered_row_nr as usize)
-            {
-                return filtered_row_nr.into();
-            }
-        }
-
-        filtered_row_nr
+        self.with_filter_output(|output| {
+            output.filtered_rows.get(filtered_row_nr as usize).copied()
+        })
+        .flatten()
+        .map_or(filtered_row_nr, u64::from)
     }
 
     fn get_row_offsets(&self) -> Rc<RefCell<Vec<f32>>> {
-        self.current_filter
-            .as_ref()
-            .unwrap_or(&None)
-            .as_ref()
-            .and_then(|f| {
-                let mut rows = self.filtered_rows.borrow_mut();
-                rows.get(f).map(|v| v.row_offsets.clone()).or_else(|| {
-                    self.last_filter
-                        .as_ref()
-                        .and_then(|f| rows.get(f).map(|v| v.row_offsets.clone()))
-                })
+        self.active_filter_key()
+            .and_then(|key| {
+                self.filtered_rows
+                    .borrow()
+                    .peek(key)
+                    .map(|value| value.row_offsets.clone())
             })
             .unwrap_or_else(|| self.unfiltered_row_offsets.clone())
     }
@@ -504,6 +534,31 @@ impl SheetTable {
                 },
             );
         }
+
+        if let Some(filter) = self.stale_filter() {
+            log::info!("Refiltering now that every referenced sheet is loaded");
+            self.filter_refreshed = true;
+            self.spawn_filter(filter);
+        }
+    }
+
+    /// The active filter, if it ran while a linked sheet was still loading: those rows were
+    /// matched against a placeholder value, so the pass has to be redone once the references
+    /// land. Only display fields read through a link, and only one redo per filter.
+    fn stale_filter(&self) -> Option<CompiledFilterInput> {
+        if self.filter_refreshed || self.current_filter_promise.is_some() {
+            return None;
+        }
+        let filter = self.current_filter.as_ref().ok()?.as_ref()?;
+        if !filter.options().use_display_field || self.context.has_pending_references() {
+            return None;
+        }
+        self.filtered_rows
+            .borrow()
+            .peek(filter)
+            .and_then(|value| value.filter_result.as_ref().ok())
+            .is_some_and(|output| output.is_in_progress)
+            .then(|| filter.clone())
     }
 
     fn size_all_rows(&mut self, ui: &mut egui::Ui) {

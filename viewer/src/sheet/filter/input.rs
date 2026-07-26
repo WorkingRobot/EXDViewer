@@ -62,23 +62,35 @@ impl FilterInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CompiledFilterInput(Option<CompiledComplexFilter>, MatchOptions);
+pub struct CompiledFilterInput {
+    filter: Option<CompiledComplexFilter>,
+    options: MatchOptions,
+    generation: u32,
+}
 
 impl CompiledFilterInput {
-    pub fn new(data: Option<CompiledComplexFilter>, options: MatchOptions) -> Self {
-        Self(data, options)
+    pub fn new(
+        filter: Option<CompiledComplexFilter>,
+        options: MatchOptions,
+        generation: u32,
+    ) -> Self {
+        Self {
+            filter,
+            options,
+            generation,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_none()
+        self.filter.is_none()
     }
 
     pub fn input(&self) -> Option<&CompiledComplexFilter> {
-        self.0.as_ref()
+        self.filter.as_ref()
     }
 
     pub fn options(&self) -> &MatchOptions {
-        &self.1
+        &self.options
     }
 
     pub fn matches<I: Iterator<Item = anyhow::Result<CellValue>>>(
@@ -87,17 +99,25 @@ impl CompiledFilterInput {
         is_in_progress: &mut bool,
         cache: &FilterCache,
     ) -> anyhow::Result<bool> {
-        let Some(filter) = &self.0 else {
+        let Some(filter) = &self.filter else {
             bail!("No filter to match against");
         };
 
         let cell_grabber = |key: u32| {
-            filter
-                .lookup
-                .get(key as usize)
-                .map(|key| (cell_grabber(key, self.1.use_display_field), key.is_strict()))
+            filter.lookup.get(key as usize).map(|key| {
+                (
+                    cell_grabber(key, self.options.use_display_field),
+                    key.is_strict(),
+                )
+            })
         };
-        Self::match_part(&filter.filter, &cell_grabber, self.1, is_in_progress, cache)
+        Self::match_part(
+            &filter.filter,
+            &cell_grabber,
+            self.options,
+            is_in_progress,
+            cache,
+        )
     }
 
     fn match_part<I: Iterator<Item = anyhow::Result<CellValue>>>(
@@ -156,17 +176,25 @@ impl CompiledFilterInput {
         is_in_progress: &mut bool,
         cache: &FilterCache,
     ) -> anyhow::Result<Option<NonZeroU32>> {
-        let Some(filter) = &self.0 else {
+        let Some(filter) = &self.filter else {
             bail!("No filter to match against");
         };
 
         let cell_grabber = |key: u32| {
-            filter
-                .lookup
-                .get(key as usize)
-                .map(|key| (cell_grabber(key, self.1.use_display_field), key.is_strict()))
+            filter.lookup.get(key as usize).map(|key| {
+                (
+                    cell_grabber(key, self.options.use_display_field),
+                    key.is_strict(),
+                )
+            })
         };
-        Self::score_part(&filter.filter, &cell_grabber, self.1, is_in_progress, cache)
+        Self::score_part(
+            &filter.filter,
+            &cell_grabber,
+            self.options,
+            is_in_progress,
+            cache,
+        )
     }
 
     fn score_part<I: Iterator<Item = anyhow::Result<CellValue>>>(

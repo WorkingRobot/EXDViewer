@@ -155,6 +155,7 @@ impl TableContext {
         })?;
         self.0.schema_columns.replace(columns);
         self.0.display_column_idx.replace(display_column_idx);
+        self.0.filter_cache.invalidate_cache(self)?;
         Ok(())
     }
 

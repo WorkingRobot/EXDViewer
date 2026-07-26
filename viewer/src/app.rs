@@ -31,16 +31,16 @@ use crate::{
     schema::{provider::SchemaProvider, web::WebProvider},
     settings::{
         ALWAYS_HIRES, BACKEND_CONFIG, BackendConfig, CODE_SYNTAX_THEME, COLOR_THEME,
-        CURRENT_SHEET_LANGUAGES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, GithubSchemaBranch,
-        LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, PR_CHANGED_ONLY, SCHEMA_EDITOR_VISIBLE,
-        SELECTED_SHEET, SHEET_FILTER_OPTIONS, SHEET_FILTERS, SHEETS_FILTER, SOLID_SCROLLBAR,
-        SORTED_BY_OFFSET, SchemaLocation, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO, TEXT_MAX_LINES,
-        TEXT_USE_SCROLL, TEXT_WRAP_WIDTH,
+        CURRENT_SHEET_LANGUAGES, DISPLAY_FIELD_SHOWN, EVALUATE_STRINGS, FILTER_GUIDE_VISIBLE,
+        GithubSchemaBranch, LANGUAGE, LOGGER_SHOWN, MISC_SHEETS_SHOWN, PR_CHANGED_ONLY,
+        SCHEMA_EDITOR_VISIBLE, SELECTED_SHEET, SHEET_FILTER_OPTIONS, SHEET_FILTERS, SHEETS_FILTER,
+        SOLID_SCROLLBAR, SORTED_BY_OFFSET, SchemaLocation, TEMP_HIGHLIGHTED_ROW, TEMP_SCROLL_TO,
+        TEXT_MAX_LINES, TEXT_USE_SCROLL, TEXT_WRAP_WIDTH,
     },
     setup::{self, SetupWindow},
     sheet::{
         CellResponse, FilterInputType, GlobalContext, MatchOptions, SheetTable, TableContext,
-        export_csv,
+        draw_filter_guide, export_csv,
     },
     shortcuts::{GOTO_ROW, GOTO_SHEET},
     utils::{
@@ -1011,7 +1011,20 @@ impl App {
                                         use_display_field,
                                     },
                                 );
+                                filter_dirty = true;
                             }
+                        }
+
+                        if filter_type == FilterInputType::Complex {
+                            let mut guide_visible = FILTER_GUIDE_VISIBLE.get(ctx);
+                            if ui
+                                .toggle_value(&mut guide_visible, "\u{ff1f}")
+                                .on_hover_text("Filter Guide")
+                                .changed()
+                            {
+                                FILTER_GUIDE_VISIBLE.set(ctx, guide_visible);
+                            }
+                            draw_filter_guide(ctx);
                         }
 
                         ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
@@ -1095,9 +1108,12 @@ impl App {
                 let resp = editor.draw(ui, backend.schema());
                 if resp.changed()
                     && let Some(schema) = editor.get_schema()
-                    && let Err(e) = table.context().set_schema(Some(schema))
                 {
-                    log::error!("Failed to set schema: {e:?}");
+                    match table.context().set_schema(Some(schema)) {
+                        // The filter is compiled against the columns, so it has to be redone
+                        Ok(()) => table.update_filter(ui.ctx()),
+                        Err(e) => log::error!("Failed to set schema: {e:?}"),
+                    }
                 }
 
                 let scroll_to = TEMP_SCROLL_TO.take(ctx);

@@ -239,6 +239,7 @@ pub const SHEET_FILTER_OPTIONS: DKey<MatchOptions> = DKey::new(
         use_display_field: true,
     },
 );
+pub const FILTER_GUIDE_VISIBLE: DKey<bool> = DKey::new("filter-guide-visible", false);
 pub const SELECTED_SHEET: DKey<Option<String>> = DKey::new("selected-sheet", None);
 pub const MISC_SHEETS_SHOWN: DKey<bool> = DKey::new("misc-sheets-shown", false);
 pub const PR_CHANGED_ONLY: DKey<bool> = DKey::new("pr-changed-only", true);
