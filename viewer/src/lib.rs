@@ -24,6 +24,7 @@
 mod about;
 mod app;
 pub mod audio;
+mod assets;
 mod backend;
 mod data;
 mod editable_schema;

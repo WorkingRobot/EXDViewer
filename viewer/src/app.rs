@@ -17,7 +17,7 @@ use matchit::Params;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::{
-    about,
+    about, assets,
     backend::Backend,
     editable_schema::EditableSchema,
     excel::{
@@ -143,6 +143,35 @@ impl CjkFont {
     }
 }
 
+/// Which top-level tab the current route belongs to. Drives the switcher and scopes the shortcuts
+/// and menus that only make sense over sheet data.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Sheets,
+    Assets,
+    Music,
+}
+
+impl Tab {
+    fn of(path: &str) -> Self {
+        if path.starts_with("/assets") {
+            Tab::Assets
+        } else if path.starts_with("/music") {
+            Tab::Music
+        } else {
+            Tab::Sheets
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Tab::Sheets => "Sheets",
+            Tab::Assets => "Assets",
+            Tab::Music => "Music",
+        }
+    }
+}
+
 pub struct App {
     router: Rc<OnceCell<Router<Self>>>,
     icon_manager: IconManager,
@@ -160,6 +189,7 @@ pub struct App {
     goto_window: Option<goto::GoToWindow>,
     about_open: bool,
     music: music::MusicPlayer,
+    assets: assets::AssetBrowser,
     last_system_theme: Option<egui::Theme>,
     /// `None` = Latin only
     loaded_cjk: Option<CjkFont>,
@@ -173,6 +203,8 @@ fn create_router(ctx: egui::Context) -> Result<Router<App>> {
     builder.add_route("/", App::on_setup, App::draw_setup)?;
     builder.add_route("/sheet", App::on_unnamed_sheet, App::draw_unnamed_sheet)?;
     builder.add_route("/sheet/{*name}", App::on_named_sheet, App::draw_named_sheet)?;
+    builder.add_route("/assets", App::on_assets, App::draw_assets)?;
+    builder.add_route("/assets/{*path}", App::on_asset_path, App::draw_assets)?;
     builder.add_route("/music", App::on_music, App::draw_music)?;
     builder.add_route("/music/{id}", App::on_music_track, App::draw_music)?;
     builder.add_route(
@@ -189,18 +221,12 @@ impl App {
         self.router
             .get_or_init(|| create_router(ctx.clone()).unwrap());
 
-        let on_music = self
-            .router
-            .get()
-            .unwrap()
-            .current_path()
-            .path()
-            .starts_with("/music");
+        let tab = Tab::of(self.router.get().unwrap().current_path().path());
 
-        if !on_music && shortcut::consume(&ctx, GOTO_ROW) {
+        if tab == Tab::Sheets && shortcut::consume(&ctx, GOTO_ROW) {
             self.goto_window = Some(goto::GoToWindow::to_row());
         }
-        if !on_music && shortcut::consume(&ctx, GOTO_SHEET) {
+        if tab == Tab::Sheets && shortcut::consume(&ctx, GOTO_SHEET) {
             self.goto_window = Some(goto::GoToWindow::to_sheet());
         }
 
@@ -208,7 +234,7 @@ impl App {
         self.update_sheet_languages(&ctx);
         self.pr_window.poll(&ctx);
         about::draw(&ctx, &mut self.about_open);
-        self.draw_menubar(ui, on_music);
+        self.draw_menubar(ui, tab);
         self.draw_logger(ui.ctx());
         self.draw_pr_window(ui.ctx());
 
@@ -303,7 +329,7 @@ impl App {
         }
     }
 
-    fn draw_menubar(&mut self, ui: &mut egui::Ui, on_music: bool) {
+    fn draw_menubar(&mut self, ui: &mut egui::Ui, tab: Tab) {
         let ctx = &ui.ctx().clone();
         Panel::top("top_panel")
             .frame(
@@ -326,7 +352,7 @@ impl App {
                         }
                     });
 
-                    if !on_music {
+                    if tab == Tab::Sheets {
                         ui.menu_button("Go", |ui| {
                             if shortcut::button(ui, "Go to Row…", GOTO_ROW).clicked() {
                                 self.goto_window = Some(goto::GoToWindow::to_row());
@@ -535,23 +561,23 @@ impl App {
                     });
 
                     let seg = egui::vec2(72.0, ui.spacing().interact_size.y);
-                    let switcher_w = 2.0 * seg.x + ui.spacing().item_spacing.x;
+                    let switcher_w = 3.0 * seg.x + 2.0 * ui.spacing().item_spacing.x;
                     let target_left = bar_left + bar_width / 2.0 - switcher_w / 2.0;
                     let space = target_left - ui.cursor().left();
                     if space > 0.0 {
                         ui.add_space(space);
                     }
-                    if ui
-                        .add_sized(seg, Button::selectable(!on_music, "Sheets"))
-                        .clicked()
-                    {
-                        self.navigate("/sheet");
-                    }
-                    if ui
-                        .add_sized(seg, Button::selectable(on_music, "Music"))
-                        .clicked()
-                    {
-                        self.navigate("/music");
+                    for (target, route) in [
+                        (Tab::Sheets, "/sheet"),
+                        (Tab::Assets, "/assets"),
+                        (Tab::Music, "/music"),
+                    ] {
+                        if ui
+                            .add_sized(seg, Button::selectable(tab == target, target.title()))
+                            .clicked()
+                        {
+                            self.navigate(route);
+                        }
                     }
 
                     add_links(ui, &mut self.about_open);
@@ -628,7 +654,7 @@ impl App {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.with_layout(Layout::right_to_left(egui::Align::Min), |ui| {
-                        CollapsibleSidePanel::draw_arrow(ui, "sheet_list");
+                        CollapsibleSidePanel::draw_arrow(ui, "sheet_list", Side::Left);
                         ui.vertical_centered_justified(|ui| ui.heading("Sheets"));
                     });
                 });
@@ -948,7 +974,7 @@ impl App {
                     ui.horizontal(|ui| {
                         if CollapsibleSidePanel::is_collapsed(ui.ctx(), "sheet_list") {
                             ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui| {
-                                CollapsibleSidePanel::draw_arrow(ui, "sheet_list");
+                                CollapsibleSidePanel::draw_arrow(ui, "sheet_list", Side::Left);
                             });
                         }
 
@@ -1281,6 +1307,51 @@ impl App {
         self.draw_sheet_data(ui);
     }
 
+    fn on_assets(
+        &mut self,
+        _ui: &mut egui::Ui,
+        path: &Path,
+        _params: &Params<'_, '_>,
+    ) -> RouteResponse {
+        if let Some(r) = self.ensure_backend(path) {
+            return r;
+        }
+        RouteResponse::Title("Assets".to_string())
+    }
+
+    fn on_asset_path(
+        &mut self,
+        _ui: &mut egui::Ui,
+        path: &Path,
+        params: &Params<'_, '_>,
+    ) -> RouteResponse {
+        if let Some(r) = self.ensure_backend(path) {
+            return r;
+        }
+        let Some(asset) = params.get("path") else {
+            return RouteResponse::Redirect("/assets".into());
+        };
+        self.assets.request(asset.to_string());
+        RouteResponse::Title(
+            asset
+                .rsplit('/')
+                .next()
+                .unwrap_or(asset)
+                .to_string(),
+        )
+    }
+
+    fn draw_assets(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
+        if let Some(backend) = self.backend.clone()
+            && let Some(action) = self.assets.ui(ui, &backend)
+        {
+            match action {
+                assets::Action::Select(asset) => self.navigate(format!("/assets/{asset}")),
+                assets::Action::Navigate(route) => self.navigate(route),
+            }
+        }
+    }
+
     fn on_music(
         &mut self,
         _ui: &mut egui::Ui,
@@ -1464,6 +1535,7 @@ impl App {
             goto_window: None,
             about_open: false,
             music: music::MusicPlayer::default(),
+            assets: assets::AssetBrowser::default(),
             last_system_theme: None,
             loaded_cjk: None,
             #[cfg(target_arch = "wasm32")]

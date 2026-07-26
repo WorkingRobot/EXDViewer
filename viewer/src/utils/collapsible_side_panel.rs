@@ -80,7 +80,9 @@ impl CollapsibleSidePanel {
         ctx.animate_bool_responsive(id.with("arrow_animation"), !Self::is_collapsed(ctx, id))
     }
 
-    pub fn draw_arrow(ui: &mut egui::Ui, panel_id: impl Into<egui::Id>) -> Response {
+    /// The arrow points the way clicking it will move the panel: outward to collapse, inward to
+    /// expand. Which way that is depends on the edge the panel is docked to.
+    pub fn draw_arrow(ui: &mut egui::Ui, panel_id: impl Into<egui::Id>, side: Side) -> Response {
         let panel_id = panel_id.into();
         let is_collapsed: bool = Self::is_collapsed(ui.ctx(), panel_id);
 
@@ -105,11 +107,13 @@ impl CollapsibleSidePanel {
         ));
         let openness = Self::openness(ui.ctx(), panel_id);
         let small_icon_response = response.clone().with_new_rect(icon_rect);
-        paint_default_icon(
-            ui,
-            remap(openness, 0.0..=1.0, 0.0..=2.0),
-            &small_icon_response,
-        );
+        // `paint_default_icon` reads 0 as pointing right, 1 down and 2 left, so the ends of this
+        // range are what swing the arrow between the two horizontal directions.
+        let range = match side {
+            Side::Left => 0.0..=2.0,
+            Side::Right => 2.0..=0.0,
+        };
+        paint_default_icon(ui, remap(openness, 0.0..=1.0, range), &small_icon_response);
 
         ui.spacing_mut().item_spacing = prev_item_spacing;
         response

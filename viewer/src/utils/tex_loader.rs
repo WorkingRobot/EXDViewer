@@ -13,7 +13,17 @@ pub fn read<R: Resource>(ironworks: &Ironworks<R>, path: &str) -> Result<Dynamic
         Err(ironworks::Error::NotFound(a)) => Err(Error::NotFound(a))?,
         other => other.context("read file")?,
     };
+    decode(texture, path)
+}
 
+/// Decode an already-read texture. The web backend hands out bytes rather than an
+/// [`Ironworks`], so it comes in this way instead.
+pub fn decode(texture: tex::Texture, path: &str) -> Result<DynamicImage> {
+    decode_mip(&texture, 0, path)
+}
+
+/// Decode one mipmap level. Level 0 is the full-size image.
+pub fn decode_mip(texture: &tex::Texture, level: u8, path: &str) -> Result<DynamicImage> {
     if !matches!(texture.kind(), tex::TextureKind::D2) {
         anyhow::bail!(
             "unsupported texture dimension {:?} for path {path}",
@@ -21,20 +31,30 @@ pub fn read<R: Resource>(ironworks: &Ironworks<R>, path: &str) -> Result<Dynamic
         );
     }
 
+    // Block-compressed formats keep their whole mip chain in one surface, so image_dds picks the
+    // level out itself. The uncompressed ones are decoded from that level's slice of the data.
+    let bc = |image_format| read_texture_bc(texture, level, image_format);
+    let (width, height) = texture.mip_size(level);
+    let plain = || {
+        texture
+            .mip_data(level)
+            .with_context(|| format!("texture {path} has no mipmap level {level}"))
+    };
+
     let buffer = match texture.format() {
-        tex::Format::A8Unorm => read_a8(texture)?,
+        tex::Format::A8Unorm => read_a8(width, height, plain()?)?,
 
-        tex::Format::Bgra4Unorm => read_bgra4(texture)?,
-        tex::Format::Bgr5a1Unorm => read_bgr5a1(texture)?,
-        tex::Format::Bgra8Unorm => read_bgra8(texture)?,
+        tex::Format::Bgra4Unorm => read_bgra4(width, height, plain()?)?,
+        tex::Format::Bgr5a1Unorm => read_bgr5a1(width, height, plain()?)?,
+        tex::Format::Bgra8Unorm => read_bgra8(width, height, plain()?)?,
 
-        tex::Format::Bc1Unorm => read_texture_bc(texture, image_dds::ImageFormat::BC1RgbaUnorm)?,
-        tex::Format::Bc2Unorm => read_texture_bc(texture, image_dds::ImageFormat::BC2RgbaUnorm)?,
-        tex::Format::Bc3Unorm => read_texture_bc(texture, image_dds::ImageFormat::BC3RgbaUnorm)?,
-        tex::Format::Bc4Unorm => read_texture_bc(texture, image_dds::ImageFormat::BC4RUnorm)?,
-        tex::Format::Bc5Unorm => read_texture_bc(texture, image_dds::ImageFormat::BC5RgUnorm)?,
-        tex::Format::Bc6hFloat => read_texture_bc(texture, image_dds::ImageFormat::BC6hRgbSfloat)?,
-        tex::Format::Bc7Unorm => read_texture_bc(texture, image_dds::ImageFormat::BC7RgbaUnorm)?,
+        tex::Format::Bc1Unorm => bc(image_dds::ImageFormat::BC1RgbaUnorm)?,
+        tex::Format::Bc2Unorm => bc(image_dds::ImageFormat::BC2RgbaUnorm)?,
+        tex::Format::Bc3Unorm => bc(image_dds::ImageFormat::BC3RgbaUnorm)?,
+        tex::Format::Bc4Unorm => bc(image_dds::ImageFormat::BC4RUnorm)?,
+        tex::Format::Bc5Unorm => bc(image_dds::ImageFormat::BC5RgUnorm)?,
+        tex::Format::Bc6hFloat => bc(image_dds::ImageFormat::BC6hRgbSfloat)?,
+        tex::Format::Bc7Unorm => bc(image_dds::ImageFormat::BC7RgbaUnorm)?,
 
         other => {
             anyhow::bail!("unsupported texture format {other:?} for path {path}");
@@ -44,19 +64,14 @@ pub fn read<R: Resource>(ironworks: &Ironworks<R>, path: &str) -> Result<Dynamic
     Ok(buffer)
 }
 
-fn read_a8(texture: tex::Texture) -> Result<DynamicImage> {
-    let buffer = ImageBuffer::from_raw(
-        texture.width().into(),
-        texture.height().into(),
-        texture.data().to_owned(),
-    )
-    .context("failed to build image buffer")?;
+fn read_a8(width: u16, height: u16, data: &[u8]) -> Result<DynamicImage> {
+    let buffer = ImageBuffer::from_raw(width.into(), height.into(), data.to_owned())
+        .context("failed to build image buffer")?;
     Ok(DynamicImage::ImageLuma8(buffer))
 }
 
-fn read_bgra4(texture: tex::Texture) -> Result<DynamicImage> {
-    let data = texture
-        .data()
+fn read_bgra4(width: u16, height: u16, data: &[u8]) -> Result<DynamicImage> {
+    let data = data
         .iter()
         .tuples()
         .flat_map(|(gb, ar)| {
@@ -68,14 +83,13 @@ fn read_bgra4(texture: tex::Texture) -> Result<DynamicImage> {
         })
         .collect::<Vec<_>>();
 
-    let buffer = ImageBuffer::from_raw(texture.width().into(), texture.height().into(), data)
+    let buffer = ImageBuffer::from_raw(width.into(), height.into(), data)
         .context("failed to build image buffer")?;
     Ok(DynamicImage::ImageRgba8(buffer))
 }
 
-fn read_bgr5a1(texture: tex::Texture) -> Result<DynamicImage> {
-    let data = texture
-        .data()
+fn read_bgr5a1(width: u16, height: u16, data: &[u8]) -> Result<DynamicImage> {
+    let data = data
         .iter()
         .tuples()
         .flat_map(|(b, a)| {
@@ -89,29 +103,29 @@ fn read_bgr5a1(texture: tex::Texture) -> Result<DynamicImage> {
         .map(|value| u8::try_from(value).unwrap())
         .collect::<Vec<_>>();
 
-    let buffer = ImageBuffer::from_raw(texture.width().into(), texture.height().into(), data)
+    let buffer = ImageBuffer::from_raw(width.into(), height.into(), data)
         .context("failed to build image buffer")?;
     Ok(DynamicImage::ImageRgba8(buffer))
 }
 
-fn read_bgra8(texture: tex::Texture) -> Result<DynamicImage> {
+fn read_bgra8(width: u16, height: u16, data: &[u8]) -> Result<DynamicImage> {
     // TODO: seems really wasteful to copy the entire image in memory just to reassign the channels. think of a better way to do this.
     // TODO: use array_chunks once it hits stable
-    let data = texture
-        .data()
+    let data = data
         .iter()
         .tuples()
         .flat_map(|(b, g, r, a)| [r, g, b, a])
         .copied()
         .collect::<Vec<_>>();
 
-    let buffer = ImageBuffer::from_raw(texture.width().into(), texture.height().into(), data)
+    let buffer = ImageBuffer::from_raw(width.into(), height.into(), data)
         .context("failed to build image buffer")?;
     Ok(DynamicImage::ImageRgba8(buffer))
 }
 
 fn read_texture_bc(
-    texture: tex::Texture,
+    texture: &tex::Texture,
+    level: u8,
     image_format: image_dds::ImageFormat,
 ) -> Result<DynamicImage> {
     let surface = Surface {
@@ -131,8 +145,8 @@ fn read_texture_bc(
     let image = surface
         .decode_rgba8()
         .with_context(|| format!("failed to decode {image_format:?}"))?
-        .to_image(0)
-        .context("failed to build image from buffer")?;
+        .to_image(level.into())
+        .with_context(|| format!("failed to build image from mipmap level {level}"))?;
 
     Ok(image.into())
 }
