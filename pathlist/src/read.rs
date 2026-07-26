@@ -51,12 +51,15 @@ impl PathList {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let mut name_offset = Vec::with_capacity(block_of_dir.len());
+        // One entry per directory plus a terminator, so a name count is a subtraction and this is
+        // the only walk over the blocks.
+        let mut name_offset = Vec::with_capacity(block_of_dir.len() + 1);
         let mut running = 0u32;
         for (start, end) in &block_of_dir {
             name_offset.push(running);
             running += count_names(&blocks[*start as usize..*end as usize])?;
         }
+        name_offset.push(running);
 
         Ok(Self {
             dirs,
@@ -70,32 +73,22 @@ impl PathList {
     /// How many names precede this directory in canonical order. Added to a name's position within
     /// the directory it gives the index a [`Presence`](crate::Presence) map is keyed by.
     pub fn name_offset(&self, dir: usize) -> Result<usize> {
-        self.name_offset
-            .get(dir)
-            .map(|offset| *offset as usize)
-            .context("directory index out of range")
+        if dir >= self.dirs.len() {
+            bail!("directory index out of range");
+        }
+        Ok(self.name_offset[dir] as usize)
     }
 
-    /// Names in one directory, read from the block headers without expanding anything.
+    /// Names in one directory. The offsets are cumulative and carry a terminating entry, so this is
+    /// the gap to the next directory rather than another walk over the block.
     pub fn name_count(&self, dir: usize) -> Result<usize> {
-        let (start, end) = *self
-            .block_of_dir
-            .get(dir)
-            .context("directory index out of range")?;
-        Ok(count_names(&self.blocks[start as usize..end as usize])? as usize)
+        let start = self.name_offset(dir)?;
+        Ok(self.name_offset[dir + 1] as usize - start)
     }
 
     /// Total names across every directory.
     pub fn len(&self) -> usize {
-        self.name_offset
-            .last()
-            .zip(self.block_of_dir.last())
-            .and_then(|(offset, (start, end))| {
-                count_names(&self.blocks[*start as usize..*end as usize])
-                    .ok()
-                    .map(|last| *offset as usize + last as usize)
-            })
-            .unwrap_or(0)
+        self.name_offset.last().copied().unwrap_or(0) as usize
     }
 
     pub fn is_empty(&self) -> bool {
