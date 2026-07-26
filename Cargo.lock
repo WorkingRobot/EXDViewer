@@ -3463,6 +3463,7 @@ name = "ironworks"
 version = "0.4.1"
 dependencies = [
  "binrw",
+ "crc32fast",
  "derivative",
  "either",
  "enum-as-inner",
