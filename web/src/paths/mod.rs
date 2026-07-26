@@ -14,9 +14,12 @@ use ironworks::sqpack::IndexHash;
 use mini_moka::sync::{Cache, CacheBuilder};
 use tokio::sync::{Mutex, RwLock};
 use twox_hash::XxHash64;
-use xiv_core::file::{slug::Slug, version::GameVersion};
+use xiv_core::file::version::GameVersion;
 
-use crate::{config::PathList as PathListConfig, data::GameData};
+use crate::{
+    config::PathList as PathListConfig,
+    data::{GameData, Target},
+};
 
 pub struct MasterList {
     dirs: Vec<Box<str>>,
@@ -109,7 +112,7 @@ pub struct PathIndex {
     list: RwLock<Option<Arc<MasterList>>>,
     freshness: Mutex<Option<Freshness>>,
     global: RwLock<Option<(Arc<MasterList>, Bytes)>>,
-    presence: Cache<(u64, Slug, GameVersion), Bytes>,
+    presence: Cache<(u64, Target, GameVersion), Bytes>,
 }
 
 impl std::fmt::Debug for PathIndex {
@@ -218,12 +221,12 @@ impl PathIndex {
     pub async fn presence(
         &self,
         data: &GameData,
-        slug: Slug,
+        target: Target,
         version: GameVersion,
     ) -> Result<Bytes> {
         let master = self.master().await?;
         let list_id = master.id();
-        let key = (list_id, slug, version.clone());
+        let key = (list_id, target, version.clone());
         if let Some(cached) = self.presence.get(&key) {
             return Ok(cached);
         }
@@ -232,8 +235,8 @@ impl PathIndex {
             return Ok(stored);
         }
 
-        data.warm_indexes(slug, version.clone()).await?;
-        let ironworks = data.get_version(slug, version.clone()).await?;
+        data.warm_indexes(target, version.clone()).await?;
+        let ironworks = data.get_version(target, version.clone()).await?;
 
         let map = tokio::task::block_in_place(|| {
             let mut installed: HashSet<(u8, u8, IndexHash)> = HashSet::new();
@@ -302,7 +305,7 @@ impl PathIndex {
             });
 
             log::info!(
-                "{slug}/{version}: {} of {} listed paths present, {} installed files unnamed",
+                "{target}/{version}: {} of {} listed paths present, {} installed files unnamed",
                 present.iter().filter(|p| **p).count(),
                 present.len(),
                 unnamed.len()
@@ -319,15 +322,15 @@ impl PathIndex {
         Ok(map)
     }
 
-    fn stored_path(&self, (list_id, slug, version): &(u64, Slug, GameVersion)) -> Option<PathBuf> {
+    fn stored_path(&self, (list_id, target, version): &(u64, Target, GameVersion)) -> Option<PathBuf> {
         let format = pathlist::PRESENCE_VERSION;
         self.config
             .cache_directory
             .as_ref()
-            .map(|dir| dir.join(format!("{list_id:016x}-{slug}-{version}.pdb{format}")))
+            .map(|dir| dir.join(format!("{list_id:016x}-{}-{version}.pdb{format}", target.file_key())))
     }
 
-    async fn read_stored(&self, key: &(u64, Slug, GameVersion)) -> Option<Bytes> {
+    async fn read_stored(&self, key: &(u64, Target, GameVersion)) -> Option<Bytes> {
         let path = self.stored_path(key)?;
         match tokio::fs::read(&path).await {
             Ok(bytes) => {
@@ -342,7 +345,7 @@ impl PathIndex {
         }
     }
 
-    async fn write_stored(&self, key: &(u64, Slug, GameVersion), map: &Bytes) {
+    async fn write_stored(&self, key: &(u64, Target, GameVersion), map: &Bytes) {
         let Some(path) = self.stored_path(key) else {
             return;
         };

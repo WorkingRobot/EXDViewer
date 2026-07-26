@@ -1,8 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt::Display,
     io::Write,
-    str::FromStr,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
@@ -12,7 +10,7 @@ use actix_web::{
     HttpRequest, HttpResponse, Result,
     body::{EitherBody, MessageBody},
     dev::{HttpServiceFactory, ServiceResponse},
-    error::{ErrorBadRequest, ErrorInternalServerError},
+    error::{ErrorBadRequest, ErrorInternalServerError, ErrorNotFound},
     get,
     http::header::{self, ContentDisposition},
     middleware::{ErrorHandlerResponse, ErrorHandlers},
@@ -24,19 +22,34 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use xiv_core::file::{slug::Slug, version::GameVersion};
 
-use crate::{config::Config, data::RepositoryInfo, queue::MessageQueue};
+use crate::{
+    config::Config,
+    data::{Region, RepositoryInfo, Target},
+    queue::MessageQueue,
+};
 
 pub fn service() -> impl HttpServiceFactory {
     web::scope("/api")
+        // Literal-prefixed routes first. They cannot collide with the region routes by segment
+        // count, but keeping the rule "literals before variables" makes that obvious.
         .service(get_github_oauth_config)
         .service(post_github_oauth_token)
         .service(get_repositories)
-        .service(get_versions_slug)
-        .service(get_exists_slug)
+        .service(get_regions)
         .service(get_global_paths)
-        .service(get_paths_slug)
-        .service(get_file_slug)
         .service(get_songs)
+        .service(get_versions_repo)
+        .service(get_latest_repo)
+        .service(get_file_repo)
+        .service(get_hash_repo)
+        .service(get_paths_repo)
+        .service(get_exists_repo)
+        .service(get_versions_region)
+        .service(get_latest_region)
+        .service(get_file_region)
+        .service(get_hash_region)
+        .service(get_paths_region)
+        .service(get_exists_region)
         .wrap(
             ErrorHandlers::new()
                 .default_handler_client(|r| log_error(true, r))
@@ -45,72 +58,90 @@ pub fn service() -> impl HttpServiceFactory {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct RegionsInfo {
+    regions: Vec<Region>,
+}
+
+#[derive(Debug, Serialize)]
 struct RepositoriesInfo {
     repositories: Vec<RepositoryInfo>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub enum QueryGameVersion {
-    #[default]
-    Latest,
-    Specific(GameVersion),
+/// Every content response is for a pinned version — `latest` is a redirect, never a resource — so
+/// there is one cache policy rather than a branch per handler.
+fn pinned() -> Vec<CacheDirective> {
+    vec![
+        CacheDirective::Public,
+        CacheDirective::Immutable,
+        CacheDirective::MaxAge(60 * 60 * 24 * 365),
+    ]
 }
 
-impl<'a> Deserialize<'a> for QueryGameVersion {
-    fn deserialize<D: serde::Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(|_| serde::de::Error::custom("invalid game version"))
+/// Reject a target that carries no sqpack data. Boot ships the launcher, so answering with an
+/// empty result would be a confident lie.
+async fn require_sqpack(data: &MessageQueue, target: Target) -> Result<()> {
+    if data.has_sqpack(target).await {
+        Ok(())
+    } else {
+        Err(ErrorNotFound(format!(
+            "{target} has no sqpack data; only /versions/ is available for it"
+        )))
     }
 }
 
-impl FromStr for QueryGameVersion {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s.eq_ignore_ascii_case("latest") {
-            Ok(Self::Latest)
-        } else {
-            Ok(Self::Specific(GameVersion::new(s)?))
-        }
+/// Reject a version no repository behind the target ever published, so a typo fails loudly rather
+/// than silently backfilling to something older.
+async fn check_version(data: &MessageQueue, target: Target, version: &GameVersion) -> Result<()> {
+    if data.version_valid(target, version).await {
+        Ok(())
+    } else {
+        Err(ErrorNotFound(format!("{target} has no version {version}")))
     }
 }
 
-impl Display for QueryGameVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            QueryGameVersion::Latest => write!(f, "latest"),
-            QueryGameVersion::Specific(version) => write!(f, "{version}"),
-        }
-    }
+/// 307 to the resolved version, so `latest` stays usable by hand without ever being a cacheable
+/// resource itself. Temporary, because the target legitimately moves.
+async fn redirect_latest(
+    data: &MessageQueue,
+    request: &HttpRequest,
+    target: Target,
+    prefix: &str,
+    rest: &str,
+) -> Result<HttpResponse> {
+    let latest = data
+        .versions_for(target)
+        .await
+        .ok_or_else(|| ErrorBadRequest("No version info available"))?
+        .latest;
+    // `rest` is captured without its trailing slash; every route it can land on has one.
+    let query = request.query_string();
+    let separator = if query.is_empty() { "" } else { "?" };
+    let location = format!("/api/{prefix}/{latest}/{rest}/{separator}{query}");
+    Ok(HttpResponse::TemporaryRedirect()
+        .insert_header((actix_web::http::header::LOCATION, location))
+        .insert_header(CacheControl(vec![
+            CacheDirective::Public,
+            CacheDirective::MaxAge(60),
+        ]))
+        .finish())
 }
 
 async fn serve_file(
     data: &MessageQueue,
-    slug: Slug,
-    version: QueryGameVersion,
+    target: Target,
+    version: GameVersion,
     path: String,
 ) -> Result<HttpResponse> {
-    // Handle empty path case
     if path.is_empty() {
         return Err(ErrorBadRequest("File path cannot be empty"));
     }
+    require_sqpack(data, target).await?;
+    check_version(data, target, &version).await?;
 
-    let resolved_ver = match &version {
-        QueryGameVersion::Latest => None,
-        QueryGameVersion::Specific(version) => Some(version.clone()),
-    };
     let file_name = path.split_at(path.rfind('/').unwrap_or(0) + 1).1;
+    let directives = pinned();
 
-    let mut directives = vec![CacheDirective::Public];
-    if version != QueryGameVersion::Latest {
-        directives.push(CacheDirective::Immutable);
-        directives.push(CacheDirective::MaxAge(60 * 60 * 24 * 365));
-    } else {
-        directives.push(CacheDirective::MaxAge(60 * 60 * 24));
-    }
-
-    let data = data.get_file(slug, resolved_ver, path.clone()).await;
+    let data = data.get_file(target, Some(version), path.clone()).await;
     match data {
         Ok(data) => Ok(HttpResponse::Ok()
             .insert_header(ContentDisposition::attachment(file_name))
@@ -133,27 +164,19 @@ async fn get_global_paths(
     serve_frame(&request, frame, 60 * 60)
 }
 
-#[get("/{slug}/{version}/paths/")]
-async fn get_paths_slug(
-    data: web::Data<MessageQueue>,
-    request: HttpRequest,
-    path_info: web::Path<(Slug, QueryGameVersion)>,
+async fn serve_presence(
+    data: &MessageQueue,
+    request: &HttpRequest,
+    target: Target,
+    version: GameVersion,
 ) -> Result<HttpResponse> {
-    let (slug, version) = path_info.into_inner();
-    let resolved_ver = match &version {
-        QueryGameVersion::Latest => None,
-        QueryGameVersion::Specific(version) => Some(version.clone()),
-    };
-    let max_age = if version == QueryGameVersion::Latest {
-        60 * 60
-    } else {
-        60 * 60 * 24 * 365
-    };
+    require_sqpack(data, target).await?;
+    check_version(data, target, &version).await?;
     let frame = data
-        .get_presence(slug, resolved_ver)
+        .get_presence(target, Some(version))
         .await
         .map_err(ErrorInternalServerError)?;
-    serve_frame(&request, frame, max_age)
+    serve_frame(request, frame, 60 * 60 * 24 * 365)
 }
 
 fn serve_frame(request: &HttpRequest, frame: Bytes, max_age: u32) -> Result<HttpResponse> {
@@ -199,13 +222,42 @@ fn accepts(request: &HttpRequest, encoding: &str) -> bool {
         })
 }
 
-#[get("/{slug}/{version}/{path:.*}/")]
-async fn get_file_slug(
-    data: web::Data<MessageQueue>,
-    path_info: web::Path<(Slug, QueryGameVersion, String)>,
+/// Unnamed files have no path, only the hash the index records them under.
+async fn serve_hash(
+    data: &MessageQueue,
+    target: Target,
+    version: GameVersion,
+    repository: u8,
+    category: u8,
+    hash: String,
 ) -> Result<HttpResponse> {
-    let (slug, version, path) = path_info.into_inner();
-    serve_file(&data, slug, version, path).await
+    require_sqpack(data, target).await?;
+    check_version(data, target, &version).await?;
+
+    // 16 hex digits is the `.index` form, split into directory and file halves; 8 is the
+    // `.index2` whole-path form.
+    let hash = match hash.len() {
+        16 => u64::from_str_radix(&hash, 16)
+            .map(ironworks::sqpack::IndexHash::Split)
+            .map_err(|_| ErrorBadRequest("Malformed index hash")),
+        8 => u32::from_str_radix(&hash, 16)
+            .map(ironworks::sqpack::IndexHash::Whole)
+            .map_err(|_| ErrorBadRequest("Malformed index2 hash")),
+        _ => Err(ErrorBadRequest(
+            "Hash must be 16 hex digits for .index or 8 for .index2",
+        )),
+    }?;
+
+    match data
+        .get_file_by_hash(target, Some(version), repository, category, hash)
+        .await
+    {
+        Ok(data) => Ok(HttpResponse::Ok()
+            .insert_header(CacheControl(pinned()))
+            .body(data.as_ref().clone())),
+        Err(err) if matches!(err, ironworks::Error::NotFound(_)) => Err(ErrorBadRequest(err)),
+        Err(err) => Err(ErrorInternalServerError(err)),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,8 +273,8 @@ struct ExistsResponse {
 
 async fn serve_exists(
     data: &MessageQueue,
-    slug: Slug,
-    version: QueryGameVersion,
+    target: Target,
+    version: GameVersion,
     files_param: &str,
 ) -> Result<HttpResponse> {
     let files: Vec<String> = files_param
@@ -234,20 +286,11 @@ async fn serve_exists(
         return Err(ErrorBadRequest("No files specified"));
     }
 
-    let resolved_ver = match &version {
-        QueryGameVersion::Latest => None,
-        QueryGameVersion::Specific(version) => Some(version.clone()),
-    };
+    require_sqpack(data, target).await?;
+    check_version(data, target, &version).await?;
+    let directives = pinned();
 
-    let mut directives = vec![CacheDirective::Public];
-    if version != QueryGameVersion::Latest {
-        directives.push(CacheDirective::Immutable);
-        directives.push(CacheDirective::MaxAge(60 * 60 * 24 * 365));
-    } else {
-        directives.push(CacheDirective::MaxAge(60 * 60 * 24));
-    }
-
-    match data.exists(slug, resolved_ver, files).await {
+    match data.exists(target, Some(version), files).await {
         Ok(exists) => Ok(HttpResponse::Ok()
             .insert_header(CacheControl(directives))
             .json(ExistsResponse { exists })),
@@ -256,30 +299,165 @@ async fn serve_exists(
     }
 }
 
-#[get("/{slug}/{version}/exists/")]
-async fn get_exists_slug(
+#[get("/regions/")]
+async fn get_regions(data: web::Data<MessageQueue>) -> Result<HttpResponse> {
+    let regions = data.regions().await.map_err(ErrorInternalServerError)?;
+    Ok(HttpResponse::Ok().json(RegionsInfo { regions }))
+}
+
+#[get("/{region}/versions/")]
+async fn get_versions_region(
     data: web::Data<MessageQueue>,
-    path_info: web::Path<(Slug, QueryGameVersion)>,
-    query: web::Query<ExistsQuery>,
+    path_info: web::Path<Region>,
 ) -> Result<HttpResponse> {
-    let (slug, version) = path_info.into_inner();
-    serve_exists(&data, slug, version, &query.files).await
+    serve_versions(&data, Target::Region(path_info.into_inner())).await
 }
 
-async fn serve_versions(data: &MessageQueue, slug: Slug) -> Result<HttpResponse> {
-    Ok(HttpResponse::Ok().json(
-        data.versions(slug)
-            .await
-            .ok_or(ErrorBadRequest("No version info available"))?,
-    ))
-}
-
-#[get("/{slug}/versions/")]
-async fn get_versions_slug(
+#[get("/repo/{slug}/versions/")]
+async fn get_versions_repo(
     data: web::Data<MessageQueue>,
     path_info: web::Path<Slug>,
 ) -> Result<HttpResponse> {
-    serve_versions(&data, path_info.into_inner()).await
+    serve_versions(&data, Target::Repo(path_info.into_inner())).await
+}
+
+async fn serve_versions(data: &MessageQueue, target: Target) -> Result<HttpResponse> {
+    match data.versions_for(target).await {
+        Some(info) => Ok(HttpResponse::Ok().json(info)),
+        None => Err(ErrorBadRequest("No version info available")),
+    }
+}
+
+// Region-keyed routes: the game as a whole. Every sibling under a version is a literal segment,
+// so no endpoint can be shadowed by a file path and registration order is not load-bearing.
+
+#[get("/{region}/latest/{rest:.*}/")]
+async fn get_latest_region(
+    data: web::Data<MessageQueue>,
+    request: HttpRequest,
+    path_info: web::Path<(Region, String)>,
+) -> Result<HttpResponse> {
+    let (region, rest) = path_info.into_inner();
+    redirect_latest(
+        &data,
+        &request,
+        Target::Region(region),
+        &region.to_string(),
+        &rest,
+    )
+    .await
+}
+
+#[get("/{region}/{version}/file/{path:.*}/")]
+async fn get_file_region(
+    data: web::Data<MessageQueue>,
+    path_info: web::Path<(Region, GameVersion, String)>,
+) -> Result<HttpResponse> {
+    let (region, version, path) = path_info.into_inner();
+    serve_file(&data, Target::Region(region), version, path).await
+}
+
+#[get("/{region}/{version}/hash/{repository}/{category}/{hash}/")]
+async fn get_hash_region(
+    data: web::Data<MessageQueue>,
+    path_info: web::Path<(Region, GameVersion, u8, u8, String)>,
+) -> Result<HttpResponse> {
+    let (region, version, repository, category, hash) = path_info.into_inner();
+    serve_hash(
+        &data,
+        Target::Region(region),
+        version,
+        repository,
+        category,
+        hash,
+    )
+    .await
+}
+
+#[get("/{region}/{version}/paths/")]
+async fn get_paths_region(
+    data: web::Data<MessageQueue>,
+    request: HttpRequest,
+    path_info: web::Path<(Region, GameVersion)>,
+) -> Result<HttpResponse> {
+    let (region, version) = path_info.into_inner();
+    serve_presence(&data, &request, Target::Region(region), version).await
+}
+
+#[get("/{region}/{version}/exists/")]
+async fn get_exists_region(
+    data: web::Data<MessageQueue>,
+    path_info: web::Path<(Region, GameVersion)>,
+    query: web::Query<ExistsQuery>,
+) -> Result<HttpResponse> {
+    let (region, version) = path_info.into_inner();
+    serve_exists(&data, Target::Region(region), version, &query.files).await
+}
+
+// Per-repository escape hatch. Structurally distinct from the region routes by segment count, so
+// the two can never collide.
+
+#[get("/repo/{slug}/latest/{rest:.*}/")]
+async fn get_latest_repo(
+    data: web::Data<MessageQueue>,
+    request: HttpRequest,
+    path_info: web::Path<(Slug, String)>,
+) -> Result<HttpResponse> {
+    let (slug, rest) = path_info.into_inner();
+    redirect_latest(
+        &data,
+        &request,
+        Target::Repo(slug),
+        &format!("repo/{slug}"),
+        &rest,
+    )
+    .await
+}
+
+#[get("/repo/{slug}/{version}/file/{path:.*}/")]
+async fn get_file_repo(
+    data: web::Data<MessageQueue>,
+    path_info: web::Path<(Slug, GameVersion, String)>,
+) -> Result<HttpResponse> {
+    let (slug, version, path) = path_info.into_inner();
+    serve_file(&data, Target::Repo(slug), version, path).await
+}
+
+#[get("/repo/{slug}/{version}/hash/{repository}/{category}/{hash}/")]
+async fn get_hash_repo(
+    data: web::Data<MessageQueue>,
+    path_info: web::Path<(Slug, GameVersion, u8, u8, String)>,
+) -> Result<HttpResponse> {
+    let (slug, version, repository, category, hash) = path_info.into_inner();
+    serve_hash(
+        &data,
+        Target::Repo(slug),
+        version,
+        repository,
+        category,
+        hash,
+    )
+    .await
+}
+
+#[get("/repo/{slug}/{version}/paths/")]
+async fn get_paths_repo(
+    data: web::Data<MessageQueue>,
+    request: HttpRequest,
+    path_info: web::Path<(Slug, GameVersion)>,
+) -> Result<HttpResponse> {
+    let (slug, version) = path_info.into_inner();
+    serve_presence(&data, &request, Target::Repo(slug), version).await
+}
+
+#[get("/repo/{slug}/{version}/exists/")]
+async fn get_exists_repo(
+    data: web::Data<MessageQueue>,
+    path_info: web::Path<(Slug, GameVersion)>,
+    query: web::Query<ExistsQuery>,
+) -> Result<HttpResponse> {
+    let (slug, version) = path_info.into_inner();
+    serve_exists(&data, Target::Repo(slug), version, &query.files).await
 }
 
 #[get("/repositories/")]

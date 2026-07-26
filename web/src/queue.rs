@@ -6,24 +6,24 @@ use tokio::{
     runtime::Handle, select, sync::oneshot, task::JoinHandle
 };
 use tokio_util::sync::CancellationToken;
-use xiv_core::file::{slug::Slug, version::GameVersion};
+use xiv_core::file::version::GameVersion;
 
-use crate::data::{GameData, RepositoryInfo, VersionInfo};
+use crate::data::{GameData, RepositoryInfo, Target, VersionInfo};
 use crate::paths::PathIndex;
 
 #[derive(Debug, Clone)]
 pub enum RequestData {
-    Versions(Slug),
-    GetFile(Slug, Option<GameVersion>, String),
-    Exists(Slug, Option<GameVersion>, Vec<String>),
+    GetFile(Target, Option<GameVersion>, String),
+    GetFileByHash(Target, Option<GameVersion>, u8, u8, ironworks::sqpack::IndexHash),
+    Exists(Target, Option<GameVersion>, Vec<String>),
     GlobalPaths,
-    Presence(Slug, Option<GameVersion>),
+    Presence(Target, Option<GameVersion>),
     Repositories,
 }
 
 pub enum Response {
-    Versions(Option<VersionInfo>),
     GetFile(Result<Arc<Vec<u8>>, ironworks::Error>),
+    GetFileByHash(Result<Arc<Vec<u8>>, ironworks::Error>),
     Exists(Result<Vec<bool>, ironworks::Error>),
     GlobalPaths(anyhow::Result<Bytes>),
     Presence(anyhow::Result<Bytes>),
@@ -85,38 +85,51 @@ impl MessageQueue {
 
                                 let response = async {
                                     match request.data.clone() {
-                                        RequestData::Versions(slug) => {
-                                            Response::Versions(this.data.versions(slug).await)
-                                        }
                                         RequestData::Repositories => {
                                             Response::Repositories(this.data.repositories().await)
                                         }
-                                        RequestData::GetFile(slug, version, path) => {
+                                        RequestData::GetFile(target, version, path) => {
                                             let version = match version {
                                                 Some(v) => Ok(v),
                                                 None => {
-                                                    this.data.versions(slug).await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
+                                                    this.data.versions_for(target).await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
                                                 }
                                             };
                                             let result = match version {
                                                 Ok(version) => {
-                                                    this.data.get(slug, version, path).await
+                                                    this.data.get(target, version, path).await
                                                 }
                                                 Err(e) => Err(e),
                                             };
 
                                             Response::GetFile(result)
                                         }
-                                        RequestData::Exists(slug, version, files) => {
+                                        RequestData::GetFileByHash(target, version, repository, category, hash) => {
                                             let version = match version {
                                                 Some(v) => Ok(v),
                                                 None => {
-                                                    this.data.versions(slug).await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
+                                                    this.data.versions_for(target).await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
                                                 }
                                             };
                                             let result = match version {
                                                 Ok(version) => {
-                                                    this.data.exists(slug, version, files).await
+                                                    this.data.get_by_hash(target, version, repository, category, hash).await
+                                                }
+                                                Err(e) => Err(e),
+                                            };
+
+                                            Response::GetFileByHash(result)
+                                        }
+                                        RequestData::Exists(target, version, files) => {
+                                            let version = match version {
+                                                Some(v) => Ok(v),
+                                                None => {
+                                                    this.data.versions_for(target).await.map(|v| v.latest).ok_or_else(|| ironworks::Error::NotFound(ironworks::ErrorValue::Other("No version info available".to_string())))
+                                                }
+                                            };
+                                            let result = match version {
+                                                Ok(version) => {
+                                                    this.data.exists(target, version, files).await
                                                 }
                                                 Err(e) => Err(e),
                                             };
@@ -126,13 +139,13 @@ impl MessageQueue {
                                         RequestData::GlobalPaths => {
                                             Response::GlobalPaths(this.paths.global().await)
                                         }
-                                        RequestData::Presence(slug, version) => {
+                                        RequestData::Presence(target, version) => {
                                             let version = match version {
                                                 Some(v) => Some(v),
-                                                None => this.data.versions(slug).await.map(|v| v.latest),
+                                                None => this.data.versions_for(target).await.map(|v| v.latest),
                                             };
                                             let result = match version {
-                                                Some(version) => this.paths.presence(&this.data, slug, version).await,
+                                                Some(version) => this.paths.presence(&this.data, target, version).await,
                                                 None => Err(anyhow::anyhow!("No version info available")),
                                             };
 
@@ -162,18 +175,23 @@ impl MessageQueue {
         Ok(this)
     }
 
-    pub async fn versions(&self, slug: Slug) -> Option<VersionInfo> {
-        let (tx, rx) = oneshot::channel();
-        self.0.tx.send(Request {
-            data: RequestData::Versions(slug),
-            tx,
-        }).await.expect("Failed to send request to message queue");
-
-        match rx.await {
-            Ok(Response::Versions(info)) => info,
-            _ => None,
-        }
+    /// Metadata lookups that only touch the slug registry, so they need no worker round-trip.
+    pub async fn versions_for(&self, target: Target) -> Option<VersionInfo> {
+        self.0.data.versions_for(target).await
     }
+
+    pub async fn regions(&self) -> anyhow::Result<Vec<crate::data::Region>> {
+        self.0.data.regions().await
+    }
+
+    pub async fn has_sqpack(&self, target: Target) -> bool {
+        self.0.data.has_sqpack(target).await
+    }
+
+    pub async fn version_valid(&self, target: Target, version: &GameVersion) -> bool {
+        self.0.data.version_valid(target, version).await
+    }
+
 
     pub async fn repositories(&self) -> anyhow::Result<Vec<RepositoryInfo>> {
         let (tx, rx) = oneshot::channel();
@@ -188,10 +206,10 @@ impl MessageQueue {
         }
     }
 
-    pub async fn exists(&self, slug: Slug, version: Option<GameVersion>, files: Vec<String>) -> Result<Vec<bool>, ironworks::Error> {
+    pub async fn exists(&self, target: Target, version: Option<GameVersion>, files: Vec<String>) -> Result<Vec<bool>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
-            data: RequestData::Exists(slug, version, files),
+            data: RequestData::Exists(target, version, files),
             tx,
         }).await.expect("Failed to send request to message queue");
 
@@ -216,10 +234,10 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_presence(&self, slug: Slug, version: Option<GameVersion>) -> anyhow::Result<Bytes> {
+    pub async fn get_presence(&self, target: Target, version: Option<GameVersion>) -> anyhow::Result<Bytes> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
-            data: RequestData::Presence(slug, version),
+            data: RequestData::Presence(target, version),
             tx,
         }).await.expect("Failed to send request to message queue");
 
@@ -229,10 +247,10 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_file(&self, slug: Slug, version: Option<GameVersion>, path: String) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+    pub async fn get_file(&self, target: Target, version: Option<GameVersion>, path: String) -> Result<Arc<Vec<u8>>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
-            data: RequestData::GetFile(slug, version, path),
+            data: RequestData::GetFile(target, version, path),
             tx,
         }).await.expect("Failed to send request to message queue");
 
@@ -240,6 +258,21 @@ impl MessageQueue {
             Ok(Response::GetFile(result)) => result,
             _ => Err(ironworks::Error::Resource(Box::new(std::io::Error::other(
                 "Failed to get file",
+            )))),
+        }
+    }
+
+    pub async fn get_file_by_hash(&self, target: Target, version: Option<GameVersion>, repository: u8, category: u8, hash: ironworks::sqpack::IndexHash) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+        let (tx, rx) = oneshot::channel();
+        self.0.tx.send(Request {
+            data: RequestData::GetFileByHash(target, version, repository, category, hash),
+            tx,
+        }).await.expect("Failed to send request to message queue");
+
+        match rx.await {
+            Ok(Response::GetFileByHash(result)) => result,
+            _ => Err(ironworks::Error::Resource(Box::new(std::io::Error::other(
+                "Failed to get file by hash",
             )))),
         }
     }
