@@ -28,17 +28,24 @@ struct RepositoriesResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct RegionsResponse {
+    regions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct ExistsResponse {
     exists: Vec<bool>,
 }
 
 impl WebFileProvider {
+    /// `region` is the API key; the version is resolved once here and pinned for the life of the
+    /// provider, so `latest` is never sent and every response is immutably cacheable.
     pub async fn new(
         base_url: &str,
-        slug: &str,
+        region: &str,
         version: Option<GameVersion>,
     ) -> anyhow::Result<Self> {
-        let version_info = Self::get_versions(base_url, slug).await?;
+        let version_info = Self::get_versions(base_url, region).await?;
 
         let version = if let Some(v) = version {
             if !version_info.versions.contains(&v) {
@@ -62,13 +69,28 @@ impl WebFileProvider {
                     "path parsing error".to_string(),
                 )
             })?
-            .push(slug)
+            .push(region)
             .push(&version.to_string());
 
         Ok(Self(base_url))
     }
 
-    pub async fn get_versions(base_url: &str, slug: &str) -> anyhow::Result<VersionInfo> {
+    /// Which regions the backend serves, so availability is not a table baked into this binary.
+    pub async fn get_regions(base_url: &str) -> anyhow::Result<Vec<String>> {
+        let mut url = Url::parse(base_url)?;
+        url.path_segments_mut()
+            .map_err(|()| {
+                ironworks::Error::Invalid(
+                    ironworks::ErrorValue::Other("URL".to_string()),
+                    "path parsing error".to_string(),
+                )
+            })?
+            .push("regions");
+        let response: RegionsResponse = serde_json::from_slice(&fetch_url(url).await?)?;
+        Ok(response.regions)
+    }
+
+    pub async fn get_versions(base_url: &str, region: &str) -> anyhow::Result<VersionInfo> {
         let mut url = Url::parse(base_url)?;
 
         url.path_segments_mut()
@@ -78,7 +100,7 @@ impl WebFileProvider {
                     "path parsing error".to_string(),
                 )
             })?
-            .push(slug)
+            .push(region)
             .push("versions");
 
         let resp = fetch_url(url).await?;
@@ -120,7 +142,37 @@ impl FileProvider for WebFileProvider {
                     "path parsing error".to_string(),
                 )
             })?
+            .push("file")
             .extend(path.split('/'));
+
+        Ok(fetch_url(url).await?)
+    }
+
+    async fn read_by_hash(
+        &self,
+        repository: u8,
+        category: u8,
+        hash: u64,
+        split: bool,
+    ) -> anyhow::Result<Vec<u8>> {
+        let mut url = self.0.clone();
+        let hash = if split {
+            format!("{hash:016X}")
+        } else {
+            format!("{:08X}", hash as u32)
+        };
+
+        url.path_segments_mut()
+            .map_err(|()| {
+                ironworks::Error::Invalid(
+                    ironworks::ErrorValue::Other("URL".to_string()),
+                    "path parsing error".to_string(),
+                )
+            })?
+            .push("hash")
+            .push(&repository.to_string())
+            .push(&category.to_string())
+            .push(&hash);
 
         Ok(fetch_url(url).await?)
     }

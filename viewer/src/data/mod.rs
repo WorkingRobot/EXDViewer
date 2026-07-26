@@ -21,6 +21,16 @@ pub trait FileProvider {
     /// Read a file's raw bytes by path.
     async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>>;
 
+    /// Read a file the game records only as a hash. Unnamed files have no path, so this is the
+    /// only way to reach them; it is a web-API concept and the local providers refuse it.
+    async fn read_by_hash(
+        &self,
+        repository: u8,
+        category: u8,
+        hash: u64,
+        split: bool,
+    ) -> anyhow::Result<Vec<u8>>;
+
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>>;
 
     async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>>;

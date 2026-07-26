@@ -3,7 +3,7 @@ use egui::{Frame, Layout, Modal, Sense, TextEdit, UiBuilder, Vec2, WidgetText};
 use crate::{
     DEFAULT_API_URL,
     backend::Backend,
-    data::web::{RepositoryInfo, VersionInfo, WebFileProvider},
+    data::web::{VersionInfo, WebFileProvider},
     schema::web::WebProvider,
     settings::{
         BACKEND_CONFIG, BackendConfig, GithubSchemaBranch, GithubSchemaLocation, InstallLocation,
@@ -30,7 +30,7 @@ pub struct SetupWindow {
     display_error: Option<anyhow::Error>,
 
     web_version_promise: VersionPromiseHolder<(String, Region), VersionInfo>,
-    web_repositories_promise: VersionPromiseHolder<String, Vec<RepositoryInfo>>,
+    web_regions_promise: VersionPromiseHolder<String, Vec<String>>,
     github_branch_promise: VersionPromiseHolder<(String, String), Vec<GithubSchemaBranch>>,
 }
 
@@ -64,7 +64,7 @@ impl SetupWindow {
             setup_promise: None,
             display_error: None,
             web_version_promise: None,
-            web_repositories_promise: None,
+            web_regions_promise: None,
             github_branch_promise: None,
         }
     }
@@ -82,7 +82,7 @@ impl SetupWindow {
                 setup_promise: None,
                 display_error: None,
                 web_version_promise: None,
-                web_repositories_promise: None,
+                web_regions_promise: None,
                 github_branch_promise: None,
             }
         } else {
@@ -270,54 +270,42 @@ impl SetupWindow {
                                 // drive which regions can be selected.
                                 if !url.is_empty()
                                     && self
-                                        .web_repositories_promise
+                                        .web_regions_promise
                                         .as_ref()
                                         .is_none_or(|v| v.0 != *url)
                                 {
                                     let repo_url = url.clone();
-                                    self.web_repositories_promise = Some((
+                                    self.web_regions_promise = Some((
                                         url.clone(),
                                         ConvertiblePromise::new_promise(
                                             TrackedPromise::spawn_local(async move {
-                                                WebFileProvider::get_repositories(&repo_url).await
+                                                WebFileProvider::get_regions(&repo_url).await
                                             }),
                                         ),
                                     ));
                                 }
 
-                                // Resolve the set of slugs the backend actually serves. If the
-                                // repositories endpoint isn't available (older backend), fall
-                                // back to enabling every region with a known slug.
-                                let available_slugs: Option<Vec<String>> = if let Some((
-                                    _,
-                                    promise,
-                                )) =
-                                    &mut self.web_repositories_promise
-                                {
-                                    promise
-                                        .get_mut(|r| match r {
-                                            Ok(repos) => Some(repos),
-                                            Err(e) => {
-                                                log::error!("Error fetching repositories: {e}");
-                                                None
-                                            }
-                                        })
-                                        .and_then(|repos| {
-                                            repos.as_ref().map(|repos| {
-                                                repos.iter().map(|r| r.slug.clone()).collect()
+                                // Which regions the backend serves. If the endpoint is missing,
+                                // `None` leaves every region enabled rather than hiding them all.
+                                let available_slugs: Option<Vec<String>> =
+                                    if let Some((_, promise)) = &mut self.web_regions_promise {
+                                        promise
+                                            .get_mut(|r| match r {
+                                                Ok(regions) => Some(regions),
+                                                Err(e) => {
+                                                    log::error!("Error fetching regions: {e}");
+                                                    None
+                                                }
                                             })
-                                        })
-                                } else {
-                                    None
-                                };
+                                            .and_then(|repos| {
+                                                repos.as_ref().map(|repos| repos.clone())
+                                            })
+                                    } else {
+                                        None
+                                    };
 
-                                let is_region_available = |r: Region| {
-                                    r.is_available()
-                                        && available_slugs.as_ref().is_none_or(|slugs| {
-                                            r.slug()
-                                                .is_some_and(|slug| slugs.iter().any(|s| s == slug))
-                                        })
-                                };
+                                let is_region_available =
+                                    |r: Region| r.is_available(available_slugs.as_deref());
 
                                 ui.horizontal(|ui| {
                                     ui.label("Region:");
@@ -355,7 +343,7 @@ impl SetupWindow {
                                     .as_ref()
                                     .is_some_and(|v| v.0 != version_key);
                                 if !url.is_empty()
-                                    && region.is_available()
+                                    && region.is_available(available_slugs.as_deref())
                                     && self
                                         .web_version_promise
                                         .as_ref()
@@ -365,12 +353,13 @@ impl SetupWindow {
                                         *version = None;
                                     }
                                     let ver_url = url.clone();
-                                    let slug = region.slug().unwrap_or_default().to_string();
+                                    let region_key = region.api_name().to_string();
                                     self.web_version_promise = Some((
                                         version_key,
                                         ConvertiblePromise::new_promise(
                                             TrackedPromise::spawn_local(async move {
-                                                WebFileProvider::get_versions(&ver_url, &slug).await
+                                                WebFileProvider::get_versions(&ver_url, &region_key)
+                                                    .await
                                             }),
                                         ),
                                     ));

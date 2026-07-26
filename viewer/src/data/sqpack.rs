@@ -28,6 +28,18 @@ impl FileProvider for SqpackFileProvider {
         Ok(self.0.file::<Vec<u8>>(path)?)
     }
 
+    async fn read_by_hash(
+        &self,
+        _repository: u8,
+        _category: u8,
+        _hash: u64,
+        _split: bool,
+    ) -> anyhow::Result<Vec<u8>> {
+        anyhow::bail!(
+            "reading by hash needs the web API; a local sqpack install cannot resolve one"
+        )
+    }
+
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
         let path = get_icon_path(icon_id, hires);
         let data = tex_loader::read(&self.0, &path)?;
