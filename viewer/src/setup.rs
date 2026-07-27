@@ -19,6 +19,7 @@ type VersionPromise<T> = ConvertiblePromise<TrackedPromise<anyhow::Result<T>>, O
 type VersionPromiseHolder<K, T> = Option<(K, VersionPromise<T>)>;
 
 pub struct SetupWindow {
+    api_url: String,
     location: InstallLocation,
     schema: SchemaLocation,
     is_startup: bool,
@@ -39,17 +40,13 @@ impl SetupWindow {
         #[cfg(not(target_arch = "wasm32"))]
         let location = ironworks::sqpack::Install::search()
             .and_then(|p| Some(InstallLocation::Sqpack(p.path().to_str()?.to_owned())))
-            .unwrap_or(InstallLocation::Web(
-                super::DEFAULT_API_URL.to_string(),
-                Region::Global,
-                None,
-            ));
+            .unwrap_or(InstallLocation::Web(Region::Global, None));
 
         #[cfg(target_arch = "wasm32")]
-        let location =
-            InstallLocation::Web(super::DEFAULT_API_URL.to_string(), Region::Global, None);
+        let location = InstallLocation::Web(Region::Global, None);
 
         Self {
+            api_url: DEFAULT_API_URL.to_string(),
             location,
             schema: SchemaLocation::Github(GithubSchemaLocation {
                 owner: super::DEFAULT_GITHUB_REPO.0.to_string(),
@@ -72,6 +69,7 @@ impl SetupWindow {
     pub fn from_config(ctx: &egui::Context, is_startup: bool) -> Self {
         if let Some(Some(config)) = BACKEND_CONFIG.try_get(ctx) {
             Self {
+                api_url: config.api_url,
                 location: config.location,
                 schema: config.schema,
                 is_startup,
@@ -136,6 +134,16 @@ impl SetupWindow {
 
             let is_go_clicked = ui
                 .add_enabled_ui(enabled, |ui| {
+                    // Outside the Location group: it feeds the path list and song metadata whatever
+                    // the file source is, so it is not a property of that choice.
+                    ui.horizontal(|ui| {
+                        ui.label("API:");
+                        ui.add(
+                            TextEdit::singleline(&mut self.api_url)
+                                .desired_width(ui.available_width()),
+                        );
+                    });
+
                     Frame::group(ui.style()).show(ui, |ui| {
                         ui.vertical_centered(|ui| {
                             ui.heading("Location");
@@ -167,18 +175,15 @@ impl SetupWindow {
                                 }
                                 if radio(
                                     col_1,
-                                    matches!(self.location, InstallLocation::Web(_, _, _)),
+                                    matches!(self.location, InstallLocation::Web(_, _)),
                                     "Web",
                                 ) {
-                                    self.location = InstallLocation::Web(
-                                        DEFAULT_API_URL.to_string(),
-                                        Region::Global,
-                                        None,
-                                    );
+                                    self.location = InstallLocation::Web(Region::Global, None);
                                 }
                             });
                         });
 
+                        let api_url = self.api_url.clone();
                         match &mut self.location {
                             #[cfg(not(target_arch = "wasm32"))]
                             InstallLocation::Sqpack(path) => {
@@ -257,15 +262,8 @@ impl SetupWindow {
                                 }
                             }
 
-                            InstallLocation::Web(url, region, version) => {
-                                ui.horizontal(|ui| {
-                                    ui.label("URL:");
-                                    ui.add(
-                                        TextEdit::singleline(url)
-                                            .desired_width(ui.available_width()),
-                                    );
-                                });
-
+                            InstallLocation::Web(region, version) => {
+                                let url = &api_url;
                                 // Fetch the list of available repositories (once per URL) to
                                 // drive which regions can be selected.
                                 if !url.is_empty()
@@ -722,10 +720,15 @@ impl SetupWindow {
             if is_go_clicked || self.is_startup {
                 self.is_startup = false;
                 if self.setup_promise.is_none() {
+                    let api_url = self.api_url.clone();
                     let location = self.location.clone();
                     let schema = self.schema.clone();
                     self.setup_promise = Some(UnsendPromise::new(async move {
-                        let config = BackendConfig { location, schema };
+                        let config = BackendConfig {
+                            api_url,
+                            location,
+                            schema,
+                        };
                         Backend::new(config.clone())
                             .await
                             .map(|backend| (backend, config))
@@ -757,7 +760,7 @@ impl SetupWindow {
             return false;
         }
 
-        if matches!(self.location, InstallLocation::Web(_, _, _))
+        if matches!(self.location, InstallLocation::Web(_, _))
             && self
                 .web_version_promise
                 .as_ref()

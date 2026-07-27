@@ -10,6 +10,7 @@
 //! ```
 
 use anyhow::Result;
+use ironworks::sqpack::IndexHash;
 
 use crate::consts::PRESENCE;
 use crate::utils::{Reader, Writer};
@@ -103,6 +104,71 @@ pub fn encode_presence(present: &[bool], unnamed: &[Unnamed], list_id: u64) -> V
         out.varint(file.hash);
     }
     out.finish()
+}
+
+/// Which listed paths a particular install actually ships, plus the files it has that the list does
+/// not name.
+///
+/// `walk` yields every `(directory, name)` in list order; the join, lowercasing and hashing happen
+/// here so that the server and the client cannot disagree about what "present" means. `locate`
+/// resolves a path to its `(repository, category)`, returning `None` for a path no package could
+/// hold. Returns the encoded map, uncompressed.
+pub fn build_presence(
+    path_count: usize,
+    installed: &std::collections::HashSet<(u8, u8, IndexHash)>,
+    locate: impl Fn(&str) -> Option<(u8, u8)>,
+    list_id: u64,
+    walk: impl FnOnce(&mut dyn FnMut(&str, &str)),
+) -> Vec<u8> {
+    let mut named = std::collections::HashSet::with_capacity(installed.len());
+    let mut present = Vec::with_capacity(path_count);
+    let mut full = String::new();
+
+    walk(&mut |dir, name| {
+        full.clear();
+        if !dir.is_empty() {
+            full.push_str(dir);
+            full.push('/');
+        }
+        full.push_str(name);
+        // Packages hash lowercased paths, and the list is not uniformly lowercase.
+        full.make_ascii_lowercase();
+
+        let Some((repository, category)) = locate(&full) else {
+            present.push(false);
+            return;
+        };
+        let (split, whole) = IndexHash::of(&full);
+        let mut found = false;
+        for key in split
+            .map(|hash| (repository, category, hash))
+            .into_iter()
+            .chain(std::iter::once((repository, category, whole)))
+        {
+            if installed.contains(&key) {
+                named.insert(key);
+                found = true;
+            }
+        }
+        present.push(found);
+    });
+
+    let mut unnamed: Vec<Unnamed> = installed
+        .iter()
+        .filter(|key| !named.contains(*key))
+        .map(|(repository, category, hash)| Unnamed {
+            repository: *repository,
+            category: *category,
+            hash: match hash {
+                IndexHash::Split(hash) => *hash,
+                IndexHash::Whole(hash) => u64::from(*hash),
+            },
+            split: matches!(hash, IndexHash::Split(_)),
+        })
+        .collect();
+    unnamed.sort_unstable_by_key(|file| (file.repository, file.category, file.split, file.hash));
+
+    encode_presence(&present, &unnamed, list_id)
 }
 
 #[cfg(test)]

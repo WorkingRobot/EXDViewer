@@ -313,13 +313,20 @@ impl Display for Region {
     }
 }
 
+pub fn api_base(ctx: &egui::Context) -> String {
+    BACKEND_CONFIG
+        .get(ctx)
+        .map(|config| config.api_url.trim_end_matches('/').to_string())
+        .unwrap_or_default()
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum InstallLocation {
     #[cfg(not(target_arch = "wasm32"))]
     Sqpack(String),
     #[cfg(target_arch = "wasm32")]
     Worker(String),
-    Web(String, Region, Option<GameVersion>),
+    Web(Region, Option<GameVersion>),
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -404,6 +411,7 @@ pub enum SchemaLocation {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BackendConfig {
+    pub api_url: String,
     pub location: InstallLocation,
     pub schema: SchemaLocation,
 }

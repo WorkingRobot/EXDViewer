@@ -41,9 +41,10 @@ impl Backend {
                     (files, 64)
                 }
 
-                InstallLocation::Web(base_url, region, version) => {
-                    let files: Rc<dyn FileProvider> =
-                        Rc::new(WebFileProvider::new(&base_url, region.api_name(), version).await?);
+                InstallLocation::Web(region, version) => {
+                    let files: Rc<dyn FileProvider> = Rc::new(
+                        WebFileProvider::new(&config.api_url, region.api_name(), version).await?,
+                    );
                     (files, 256)
                 }
             };
@@ -121,7 +122,9 @@ pub mod worker {
             assert!(!WORKER_FLAG.swap(true, Ordering::SeqCst), "Worker already initialized");
             SqpackWorker::spawner()
                 .encoding::<PreservingCodec>()
-                .spawn("./worker.js")
+                .with_loader(true)
+                .as_module(false)
+                .spawn("./worker_loader.js")
         });
     }
 

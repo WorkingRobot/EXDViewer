@@ -4777,6 +4777,7 @@ name = "pathlist"
 version = "1.7.0"
 dependencies = [
  "anyhow",
+ "ironworks",
  "zstd",
 ]
 

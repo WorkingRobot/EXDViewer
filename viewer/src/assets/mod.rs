@@ -18,8 +18,8 @@ use nucleo_matcher::pattern::Pattern;
 
 use crate::backend::Backend;
 use crate::excel::provider::ExcelProvider;
-use crate::settings::{BACKEND_CONFIG, InstallLocation};
-use crate::utils::{CollapsibleSidePanel, FuzzyMatcher, Side, TrackedPromise, fetch_url};
+use crate::settings::api_base;
+use crate::utils::{CollapsibleSidePanel, FuzzyMatcher, Side, TrackedPromise};
 
 use pathlist::{PathList, Presence};
 
@@ -949,7 +949,7 @@ impl AssetBrowser {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<Action> {
-        self.poll(ui.ctx());
+        self.poll(ui.ctx(), backend);
         self.apply_pending();
         let clicked = self.side_panel(ui);
         self.detail_panel(ui, backend);
@@ -959,28 +959,19 @@ impl AssetBrowser {
             .or_else(|| clicked.map(Action::Select))
     }
 
-    fn poll(&mut self, ctx: &egui::Context) {
+    fn poll(&mut self, ctx: &egui::Context, backend: &Backend) {
         if matches!(self.state, Load::Idle) {
-            let Some((base, region, version)) = api_target(ctx) else {
-                self.state = Load::Failed(
-                    "The asset browser needs the web API; a local install has no path list."
-                        .to_string(),
-                );
-                return;
-            };
+            let files = backend.files().clone();
+            let list_url = path_list_url(ctx);
             self.state = Load::Loading(TrackedPromise::spawn_local(async move {
                 // The list is version-independent and cached hard; the presence map is the only
                 // per-version part, and it is a bit per path.
                 let at = Instant::now();
-                let base = base.trim_end_matches('/').to_owned();
-                let paths = fetch_url(format!("{base}/paths/")).await?;
-                let paths_took = at.elapsed();
-                let at = Instant::now();
-                let presence = fetch_url(format!("{base}/{region}/{version}/paths/")).await?;
+                // Served prebuilt by the API; a local install builds its own from the same list.
+                let (paths, presence) = files.path_index(&list_url).await?;
                 log::info!(
-                    "assets/fetch: path list {} in {}, presence {} in {}",
+                    "assets/fetch: path list {}, presence {}, in {}",
                     Bytes(paths.len()),
-                    Millis(paths_took),
                     Bytes(presence.len()),
                     Millis(at.elapsed()),
                 );
@@ -1619,15 +1610,11 @@ fn sheet_name(entries: &HashMap<String, i32>, path: &str) -> Option<String> {
     }
 }
 
-fn api_target(ctx: &egui::Context) -> Option<(String, String, String)> {
-    match BACKEND_CONFIG.get(ctx)?.location {
-        InstallLocation::Web(url, region, version) => Some((
-            url,
-            region.api_name().to_string(),
-            version.map_or_else(|| "latest".to_string(), |v| v.to_string()),
-        )),
-        _ => None,
-    }
+/// Where to fetch the global path list. No install contains it -- it is what maps hashes back to
+/// names -- so a local backend borrows the public API for that one file and builds everything else
+/// itself.
+fn path_list_url(ctx: &egui::Context) -> String {
+    format!("{}/paths/", api_base(ctx))
 }
 
 #[cfg(test)]

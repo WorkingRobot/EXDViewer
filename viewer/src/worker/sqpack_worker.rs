@@ -6,14 +6,16 @@ use gloo_worker::{HandlerId, Worker, WorkerScope};
 use indexed_db::Database;
 use ironworks::{
     Ironworks,
+    file::File,
     sqpack::{SqPack, VInstall},
 };
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{FileSystemDirectoryHandle, js_sys::JsString};
 
 use crate::{
+    data::{build_local_presence, index_hash},
     stopwatch::Stopwatch,
-    utils::tex_loader,
+    utils::{fetch_url, tex_loader},
     worker::directory::{DynamicDirectory, get_file_str, set_file_str},
 };
 
@@ -153,14 +155,51 @@ impl Worker for SqpackWorker {
             WorkerRequest::DataRequestFile(path) => {
                 let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestFile({path:?})"));
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
-                    let file = inst.0.file::<Vec<u8>>(&path).map_err(|e| e.to_string());
+                    let file = inst
+                        .ironworks
+                        .file::<Vec<u8>>(&path)
+                        .map_err(|e| e.to_string());
                     scope.respond(id, WorkerResponse::DataRequestFile(file));
                 }
+            }
+            WorkerRequest::DataRequestFileByHash((repository, category, hash, split)) => {
+                let _stop = Stopwatch::new(format!(
+                    "SqpackWorker::DataRequestFileByHash({repository}/{category}/{hash:X})"
+                ));
+                if let Some(inst) = self.install_instance.borrow().as_ref() {
+                    let file = inst
+                        .sqpack
+                        .file_by_hash(repository, category, index_hash(hash, split))
+                        .and_then(Vec::<u8>::read)
+                        .map_err(|e| e.to_string());
+                    scope.respond(id, WorkerResponse::DataRequestFileByHash(file));
+                }
+            }
+            WorkerRequest::DataPresence(url) => {
+                let _stop = Stopwatch::new("SqpackWorker::DataPresence");
+                let install_instance = self.install_instance.clone();
+                let scope = scope.clone();
+                spawn_local(async move {
+                    let _stop = _stop;
+                    let paths = match fetch_url(&url).await {
+                        Ok(paths) => paths,
+                        Err(error) => {
+                            scope.respond(id, WorkerResponse::DataPresence(Err(error.to_string())));
+                            return;
+                        }
+                    };
+                    let map = match install_instance.borrow().as_ref() {
+                        Some(inst) => build_local_presence(&inst.sqpack, &paths)
+                            .map_err(|error| error.to_string()),
+                        None => Err("no install is set up".to_string()),
+                    };
+                    scope.respond(id, WorkerResponse::DataPresence(map));
+                });
             }
             WorkerRequest::DataRequestTexture(path) => {
                 let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestTexture({path:?})"));
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
-                    let data = tex_loader::read(&inst.0, &path)
+                    let data = tex_loader::read(&inst.ironworks, &path)
                         .map(|data| {
                             let data = data.to_rgba8();
                             (data.width(), data.height(), data.into_vec())
@@ -174,7 +213,7 @@ impl Worker for SqpackWorker {
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
                     let mut result = Vec::with_capacity(paths.len());
                     for path in paths {
-                        result.push(inst.0.exists(&path).map_err(|e| e.to_string()));
+                        result.push(inst.ironworks.exists(&path).map_err(|e| e.to_string()));
                     }
                     let result: Result<Vec<bool>, String> = result.into_iter().collect();
                     scope.respond(id, WorkerResponse::DataRequestExists(result));
@@ -277,7 +316,12 @@ impl Worker for SqpackWorker {
     }
 }
 
-struct InstallInstance(pub Ironworks<SqPack<VInstall<DirectoryVfs>>>);
+struct InstallInstance {
+    ironworks: Ironworks<Rc<SqPack<VInstall<DirectoryVfs>>>>,
+    /// The same resource the `Ironworks` holds. Hash lookups are a SqPack concept, so they need the
+    /// concrete type; sharing it keeps one index cache rather than two.
+    sqpack: Rc<SqPack<VInstall<DirectoryVfs>>>,
+}
 
 impl InstallInstance {
     async fn new(handle: FileSystemDirectoryHandle) -> std::io::Result<Self> {
@@ -286,7 +330,10 @@ impl InstallInstance {
                 .await
                 .map_err(std::io::Error::other)?,
         );
-        let resource = SqPack::new(resource);
-        Ok(Self(Ironworks::new().with_resource(resource)))
+        let sqpack = Rc::new(SqPack::new(resource));
+        Ok(Self {
+            ironworks: Ironworks::new().with_resource(sqpack.clone()),
+            sqpack,
+        })
     }
 }

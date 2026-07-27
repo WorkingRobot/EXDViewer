@@ -32,7 +32,7 @@ mod utils;
 #[cfg(feature = "encode")]
 mod write;
 
-pub use presence::{Presence, Unnamed, encode_presence};
+pub use presence::{Presence, Unnamed, build_presence, encode_presence};
 pub use read::PathList;
 #[cfg(feature = "encode")]
 pub use write::{compress, decompress, encode};

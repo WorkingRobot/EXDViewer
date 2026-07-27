@@ -70,14 +70,44 @@ impl FileProvider for WorkerFileProvider {
         }
     }
 
+    /// The worker fetches the list too rather than being handed it through the port; that second
+    /// request is served from the browser cache, so it costs a lookup rather than a download.
+    async fn path_index(&self, path_list_url: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+        log::info!("WorkerFileProvider: building presence map");
+        let paths = crate::utils::fetch_url(path_list_url).await?;
+        if let WorkerResponse::DataPresence(result) =
+            worker::transact(WorkerRequest::DataPresence(path_list_url.to_string())).await
+        {
+            let presence = result.map_err(|e| anyhow::anyhow!("WorkerFileProvider: {e}"))?;
+            Ok((paths, presence))
+        } else {
+            Err(anyhow::anyhow!(
+                "WorkerFileProvider: invalid response from worker"
+            ))
+        }
+    }
+
     async fn read_by_hash(
         &self,
-        _repository: u8,
-        _category: u8,
-        _hash: u64,
-        _split: bool,
+        repository: u8,
+        category: u8,
+        hash: u64,
+        split: bool,
     ) -> anyhow::Result<Vec<u8>> {
-        anyhow::bail!("reading by hash needs the web API; the in-browser worker cannot resolve one")
+        log::info!("WorkerFileProvider: requesting file {repository}/{category}/{hash:X}");
+        if let WorkerResponse::DataRequestFileByHash(result) = worker::transact(
+            WorkerRequest::DataRequestFileByHash((repository, category, hash, split)),
+        )
+        .await
+        {
+            let file =
+                result.map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))?;
+            Ok(file)
+        } else {
+            Err(anyhow::anyhow!(
+                "WorkerFileProvider: invalid response from worker"
+            ))
+        }
     }
 
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {

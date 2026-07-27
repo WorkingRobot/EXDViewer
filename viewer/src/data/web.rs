@@ -148,6 +148,20 @@ impl FileProvider for WebFileProvider {
         Ok(fetch_url(url).await?)
     }
 
+    async fn path_index(&self, path_list_url: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+        let paths = fetch_url(path_list_url).await?;
+        let mut url = self.0.clone();
+        url.path_segments_mut()
+            .map_err(|()| {
+                ironworks::Error::Invalid(
+                    ironworks::ErrorValue::Other("URL".to_string()),
+                    "path parsing error".to_string(),
+                )
+            })?
+            .push("paths");
+        Ok((paths, fetch_url(url).await?))
+    }
+
     async fn read_by_hash(
         &self,
         repository: u8,

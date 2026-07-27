@@ -15,4 +15,5 @@ encode = ["dep:zstd"]
 
 [dependencies]
 anyhow = "1"
+ironworks = { version = "0.4", default-features = false, features = ["sqpack"] }
 zstd = { version = "0.13", optional = true }

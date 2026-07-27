@@ -18,7 +18,7 @@ use crate::backend::Backend;
 use crate::data::{FileProvider, FileProviderExt};
 use crate::excel::base::CachedProvider;
 use crate::excel::provider::{ExcelHeader, ExcelProvider, ExcelSheet};
-use crate::settings::{BACKEND_CONFIG, InstallLocation, LANGUAGE};
+use crate::settings::{LANGUAGE, api_base};
 use crate::utils::{
     CollapsibleSidePanel, FuzzyMatcher, PromiseKind, Side, TrackedPromise, fetch_url_str,
 };
@@ -180,14 +180,7 @@ impl MusicPlayer {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<u32> {
-        let api_url = match BACKEND_CONFIG.get(ui.ctx()) {
-            Some(config) => match config.location {
-                InstallLocation::Web(url, ..) => Some(url),
-                _ => None,
-            },
-            None => None,
-        };
-        self.poll(backend, api_url, LANGUAGE.get(ui.ctx()));
+        self.poll(backend, &api_base(ui.ctx()), LANGUAGE.get(ui.ctx()));
         if let Some(player) = &mut self.player {
             player.take_media_action();
         }
@@ -204,7 +197,7 @@ impl MusicPlayer {
         clicked
     }
 
-    fn poll(&mut self, backend: &Backend, api_url: Option<String>, lang: Language) {
+    fn poll(&mut self, backend: &Backend, api_url: &str, lang: Language) {
         if matches!(self.index, Index::Idle) {
             let excel = backend.excel().clone();
             self.index = Index::Loading(TrackedPromise::spawn_local(async move {
@@ -222,12 +215,9 @@ impl MusicPlayer {
             self.rows_stale = true;
         }
 
-        if let Some(url) = &api_url
-            && self.songs_lang != Some(lang)
-            && !matches!(self.songs_load, Songs::Loading(_))
-        {
+        if self.songs_lang != Some(lang) && !matches!(self.songs_load, Songs::Loading(_)) {
             self.songs_lang = Some(lang);
-            let url = format!("{}/songs/{}/", url.trim_end_matches('/'), song_sheet(lang));
+            let url = format!("{api_url}/songs/{}/", song_sheet(lang));
             self.songs_load = Songs::Loading(TrackedPromise::spawn_local(async move {
                 Ok(serde_json::from_str(&fetch_url_str(url).await?)?)
             }));

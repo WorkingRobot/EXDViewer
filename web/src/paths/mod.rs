@@ -248,72 +248,31 @@ impl PathIndex {
                 }
             }
 
-            let mut named = HashSet::with_capacity(installed.len());
-            let mut present = Vec::with_capacity(master.path_count());
-            let mut full = String::new();
-            for (dir, names) in master.iter() {
-                for name in names {
-                    full.clear();
-                    if !dir.is_empty() {
-                        full.push_str(dir);
-                        full.push('/');
-                    }
-                    full.push_str(name);
-                    // Packages hash lowercased paths, and the list is not uniformly lowercase.
-                    full.make_ascii_lowercase();
-
-                    let Ok((repository, category)) = ironworks
-                        .resources()
-                        .first()
-                        .context("no sqpack resource")?
-                        .locate(&full)
-                    else {
-                        present.push(false);
-                        continue;
-                    };
-                    let (split, whole) = IndexHash::of(&full);
-                    let keys = split
-                        .map(|hash| (repository, category, hash))
-                        .into_iter()
-                        .chain(std::iter::once((repository, category, whole)));
-                    let mut found = false;
-                    for key in keys {
-                        if installed.contains(&key) {
-                            named.insert(key);
-                            found = true;
+            let resource = ironworks
+                .resources()
+                .first()
+                .context("no sqpack resource")?;
+            let map = pathlist::build_presence(
+                master.path_count(),
+                &installed,
+                |path| resource.locate(path).ok(),
+                list_id,
+                |visit| {
+                    for (dir, names) in master.iter() {
+                        for name in names {
+                            visit(dir, name);
                         }
                     }
-                    present.push(found);
-                }
-            }
-
-            let mut unnamed: Vec<pathlist::Unnamed> = installed
-                .iter()
-                .filter(|key| !named.contains(*key))
-                .map(|(repository, category, hash)| pathlist::Unnamed {
-                    repository: *repository,
-                    category: *category,
-                    hash: match hash {
-                        IndexHash::Split(hash) => *hash,
-                        IndexHash::Whole(hash) => u64::from(*hash),
-                    },
-                    split: matches!(hash, IndexHash::Split(_)),
-                })
-                .collect();
-            unnamed.sort_unstable_by_key(|file| {
-                (file.repository, file.category, file.split, file.hash)
-            });
-
-            log::info!(
-                "{target}/{version}: {} of {} listed paths present, {} installed files unnamed",
-                present.iter().filter(|p| **p).count(),
-                present.len(),
-                unnamed.len()
+                },
             );
 
-            anyhow::Ok(pathlist::compress(&pathlist::encode_presence(
-                &present, &unnamed, list_id,
-            ))?)
+            log::info!(
+                "{target}/{version}: {} listed paths, {} installed files",
+                master.path_count(),
+                installed.len()
+            );
+
+            anyhow::Ok(pathlist::compress(&map)?)
         })?;
 
         let map = Bytes::from(map);

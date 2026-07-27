@@ -13,6 +13,12 @@ pub enum WorkerRequest {
 
     DataSetup(WorkerDirectory),
     DataRequestFile(String),
+    /// `(repository, category, hash, split)`, for the files the index records without a path.
+    DataRequestFileByHash((u8, u8, u64, bool)),
+    /// URL of the global path list. The worker fetches it itself rather than being handed 20 MB
+    /// through the message port, and the browser cache makes that a second hit, not a second
+    /// download.
+    DataPresence(String),
     DataRequestTexture(String),
     DataRequestExists(Vec<String>),
 
@@ -33,6 +39,8 @@ pub enum WorkerResponse {
 
     DataSetup(Result<(), String>),
     DataRequestFile(Result<Vec<u8>, String>),
+    DataRequestFileByHash(Result<Vec<u8>, String>),
+    DataPresence(Result<Vec<u8>, String>),
     DataRequestTexture(Result<(u32, u32, Vec<u8>), String>),
     DataRequestExists(Result<Vec<bool>, String>),
 
