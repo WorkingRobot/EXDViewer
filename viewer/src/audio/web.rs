@@ -16,6 +16,8 @@ use super::Decoded;
 
 type SourceCell = Rc<RefCell<Option<AudioBufferSourceNode>>>;
 
+type Generation = Rc<std::cell::Cell<u64>>;
+
 #[derive(Clone, Copy)]
 enum SeekReq {
     To(f64),
@@ -34,8 +36,10 @@ pub struct Player {
     duration: f64,
     started_at: f64,
     seek_req: SeekCell,
+    generation: Generation,
     _handlers: Vec<Closure<dyn FnMut()>>,
     _seek_handlers: Vec<Closure<dyn FnMut(MediaSessionActionDetails)>>,
+    _ended_handler: Option<Closure<dyn FnMut()>>,
 }
 
 impl Player {
@@ -82,8 +86,10 @@ impl Player {
             duration: 0.0,
             started_at: 0.0,
             seek_req,
+            generation: Rc::new(std::cell::Cell::new(0)),
             _handlers: handlers,
             _seek_handlers: seek_handlers,
+            _ended_handler: None,
         })
     }
 
@@ -150,12 +156,20 @@ impl Player {
             return;
         }
         let seconds = seconds.clamp(0.0, self.duration);
-        if let Some(source) = self.source.borrow_mut().take() {
-            #[allow(deprecated)]
-            let _ = source.stop();
-        }
+        self.discard_source();
         let _ = self.start_source(seconds);
         self.publish_position();
+    }
+
+    fn discard_source(&mut self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+        if let Some(source) = self.source.borrow_mut().take() {
+            #[allow(deprecated)]
+            {
+                source.set_onended(None);
+                let _ = source.stop();
+            }
+        }
     }
 
     fn start_source(&mut self, offset: f64) -> Result<()> {
@@ -178,6 +192,27 @@ impl Player {
         source
             .start_with_when_and_grain_offset(0.0, offset)
             .map_err(js("start"))?;
+
+        if self.loop_region.is_none() {
+            let generation = self.generation.clone();
+            let attached_at = generation.get();
+            let cell = self.source.clone();
+            let anchor = self.anchor.clone();
+            let handler = Closure::<dyn FnMut()>::new(move || {
+                if generation.get() != attached_at {
+                    return;
+                }
+                cell.borrow_mut().take();
+                if let Some(anchor) = &anchor {
+                    let _ = anchor.pause();
+                }
+                set_playback_state(MediaSessionPlaybackState::None);
+            });
+            #[allow(deprecated)]
+            source.set_onended(Some(handler.as_ref().unchecked_ref()));
+            self._ended_handler = Some(handler);
+        }
+
         self.started_at = self.context.current_time() - offset;
         *self.source.borrow_mut() = Some(source);
         Ok(())
@@ -225,10 +260,7 @@ impl Player {
     }
 
     pub fn stop(&mut self) {
-        if let Some(source) = self.source.borrow_mut().take() {
-            #[allow(deprecated)]
-            let _ = source.stop();
-        }
+        self.discard_source();
         if let Some(anchor) = &self.anchor {
             let _ = anchor.pause();
         }
@@ -244,9 +276,6 @@ impl Player {
 
     pub fn unlock(&self) {
         let _ = self.context.resume();
-        if let Some(anchor) = &self.anchor {
-            let _ = anchor.play();
-        }
     }
 
     pub fn is_playing(&self) -> bool {
