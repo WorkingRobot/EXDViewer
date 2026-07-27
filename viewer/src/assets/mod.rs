@@ -39,8 +39,9 @@ enum Row {
         depth: usize,
         dir: usize,
         name: Rc<str>,
-        /// False for unnamed files, which show as their hash.
-        named: bool,
+        /// Set for files absent from the path list: their position in the directory's index
+        /// entries, which is where the real hash lives. `None` means the name came from the list.
+        unnamed: Option<usize>,
     },
 }
 
@@ -178,21 +179,34 @@ fn live_dirs(paths: &PathList, presence: &Presence) -> Vec<usize> {
 ///
 /// Only for paths that are really in the list. An unnamed file's path is synthesised around its
 /// hash, so hashing it back would produce a confident-looking wrong answer.
-fn path_context(response: &egui::Response, path: &str) {
+/// Hover and right-click for a file. For an unnamed one the path is synthesised, so hashing it
+/// would produce something the game never recorded; its actual index entry is used instead.
+fn path_context(response: &egui::Response, path: &str, unnamed: Option<pathlist::Unnamed>) {
     use ironworks::sqpack::IndexHash;
 
-    let (split, whole) = IndexHash::of(path);
-    let split = match split {
-        Some(IndexHash::Split(hash)) => Some(format!("{hash:016X}")),
-        _ => None,
+    let (split, whole) = match unnamed {
+        Some(file) if file.split => (Some(format!("{:016X}", file.hash)), None),
+        Some(file) => (None, Some(format!("{:08X}", file.hash as u32))),
+        None => {
+            let (split, whole) = IndexHash::of(path);
+            let IndexHash::Whole(whole) = whole else {
+                unreachable!("of() always returns a whole hash")
+            };
+            (
+                match split {
+                    Some(IndexHash::Split(hash)) => Some(format!("{hash:016X}")),
+                    _ => None,
+                },
+                Some(format!("{whole:08X}")),
+            )
+        }
     };
-    let IndexHash::Whole(whole) = whole else {
-        unreachable!("of() always returns a whole hash")
-    };
-    let whole = format!("{whole:08X}");
 
     response.clone().on_hover_ui(|ui| {
         ui.label(RichText::new(path).monospace());
+        if unnamed.is_some() {
+            ui.label(RichText::new("not in path list").weak());
+        }
         ui.add_space(2.0);
         egui::Grid::new("path_hashes")
             .num_columns(2)
@@ -202,9 +216,11 @@ fn path_context(response: &egui::Response, path: &str) {
                     ui.label(RichText::new(split).monospace());
                     ui.end_row();
                 }
-                ui.label(RichText::new("index2").weak());
-                ui.label(RichText::new(&whole).monospace());
-                ui.end_row();
+                if let Some(whole) = &whole {
+                    ui.label(RichText::new("index2").weak());
+                    ui.label(RichText::new(whole).monospace());
+                    ui.end_row();
+                }
             });
     });
 
@@ -219,11 +235,25 @@ fn path_context(response: &egui::Response, path: &str) {
             ui.ctx().copy_text(split.clone());
             ui.close();
         }
-        if ui.button("Copy (index2 hash)").clicked() {
+        if let Some(whole) = &whole
+            && ui.button("Copy (index2 hash)").clicked()
+        {
             ui.ctx().copy_text(whole.clone());
             ui.close();
         }
     });
+}
+
+fn texture_kind_name(kind: ironworks::file::tex::TextureKind) -> &'static str {
+    use ironworks::file::tex::TextureKind;
+    match kind {
+        TextureKind::D1 => "1D",
+        TextureKind::D2 => "2D",
+        TextureKind::D3 => "3D",
+        TextureKind::Cube => "Cube map",
+        TextureKind::D2Array => "2D array",
+        TextureKind::Unknown => "Unknown",
+    }
 }
 
 /// sqpack category ids, which are the first segment of every real path.
@@ -358,7 +388,7 @@ fn push_rows(
                 depth: depth + 1,
                 dir,
                 name: name.clone(),
-                named: i < names.named,
+                unnamed: i.checked_sub(names.named),
             });
         }
     }
@@ -406,6 +436,10 @@ impl Loaded {
     }
 
     /// Names for a directory the user opened, kept so redrawing does not re-decode.
+    fn unnamed_at(&self, dir: usize, index: usize) -> Option<pathlist::Unnamed> {
+        self.unnamed.get(&dir)?.get(index).copied()
+    }
+
     fn names(&mut self, dir: usize) -> Rc<Names> {
         if let Some(names) = self.names.get(&dir) {
             return names.clone();
@@ -627,7 +661,7 @@ impl Preview {
             ("Format kind", format!("{:?}", format.kind())),
             ("Components", format.components().to_string()),
             ("Bits per pixel", format.bits_per_pixel().to_string()),
-            ("Texture kind", format!("{:?}", texture.kind())),
+            ("Texture kind", texture_kind_name(texture.kind()).to_owned()),
             (
                 "Dimensions",
                 format!("{} x {}", texture.width(), texture.height()),
@@ -1156,19 +1190,19 @@ impl AssetBrowser {
                                 depth,
                                 dir,
                                 name,
-                                named,
+                                unnamed,
                             } => {
                                 let path = format!("{}/{}", loaded.dir_path(*dir), name);
                                 let text =
                                     RichText::new(format!("{}{}", "    ".repeat(*depth), name));
                                 let selected = self.selected.as_deref() == Some(path.as_str());
-                                let text = if *named { text } else { text.weak() };
+                                let text = if unnamed.is_some() { text.weak() } else { text };
                                 let response = Button::selectable(selected, text).ui(ui);
-                                if *named {
-                                    path_context(&response, &path);
-                                } else {
-                                    response.clone().on_hover_text(&path);
-                                }
+                                path_context(
+                                    &response,
+                                    &path,
+                                    unnamed.and_then(|index| loaded.unnamed_at(*dir, index)),
+                                );
                                 if response.clicked() {
                                     clicked = Some(path);
                                 }
@@ -1315,7 +1349,7 @@ impl AssetBrowser {
                         // A real dropdown, not a bare button: ComboBox draws the indicator and
                         // closes itself on click, which is why the arms below never call `close`.
                         egui::ComboBox::from_id_salt("asset_viewer")
-                            .selected_text(format!("👁 {}", chosen.label()))
+                            .selected_text(chosen.label())
                             .show_ui(ui, |ui| {
                                 let mut pick =
                                     |ui: &mut egui::Ui, viewer: Option<Viewer>, label: String| {
@@ -1365,9 +1399,7 @@ impl AssetBrowser {
                                     .truncate()
                                     .sense(egui::Sense::click()),
                             );
-                            if self.selected_unnamed.is_none() {
-                                path_context(&label, &path);
-                            }
+                            path_context(&label, &path, self.selected_unnamed);
                         });
                     });
                 });
