@@ -1654,7 +1654,10 @@ impl App {
             } else {
                 ScrollStyle::default()
             };
-            s.debug.warn_if_rect_changes_id = false;
+            #[cfg(debug_assertions)]
+            {
+                s.debug.warn_if_rect_changes_id = false;
+            }
         });
     }
 
