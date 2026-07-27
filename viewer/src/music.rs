@@ -164,6 +164,17 @@ enum Cmd {
 }
 
 impl MusicPlayer {
+    pub fn now_playing_row(&self) -> Option<u32> {
+        self.now_playing.as_ref().map(|track| track.row_id)
+    }
+
+    pub fn name_of(&self, row_id: u32) -> Option<&str> {
+        self.now_playing
+            .as_ref()
+            .filter(|track| track.row_id == row_id)
+            .map(|track| track.name.as_str())
+    }
+
     pub fn request(&mut self, row_id: u32) {
         self.pending = Some(row_id);
     }
@@ -567,7 +578,9 @@ impl MusicPlayer {
             if CollapsibleSidePanel::is_collapsed(ui.ctx(), "music_list") {
                 Panel::top("music_reexpand").show(ui, |ui| {
                     ui.add_space(4.0);
-                    ui.horizontal(|ui| CollapsibleSidePanel::draw_arrow(ui, "music_list", Side::Left));
+                    ui.horizontal(|ui| {
+                        CollapsibleSidePanel::draw_arrow(ui, "music_list", Side::Left)
+                    });
                     ui.add_space(4.0);
                 });
             }

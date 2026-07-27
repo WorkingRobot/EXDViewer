@@ -36,6 +36,15 @@ impl Path {
         path.parse().unwrap()
     }
 
+    /// The same location with a different path, keeping the query and fragment.
+    pub fn with_path(&self, path: &str) -> Self {
+        Self {
+            path: path.to_string(),
+            query: self.query.clone(),
+            fragment: self.fragment.clone(),
+        }
+    }
+
     pub fn path(&self) -> &str {
         &self.path
     }

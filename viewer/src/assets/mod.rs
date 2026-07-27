@@ -912,6 +912,10 @@ impl Default for AssetBrowser {
 }
 
 impl AssetBrowser {
+    pub fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
     /// Select the path from a deep link once the index is available.
     pub fn request(&mut self, path: String) {
         if self.selected.as_deref() != Some(path.as_str()) {

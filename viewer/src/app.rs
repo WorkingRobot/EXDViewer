@@ -27,7 +27,11 @@ use crate::{
     github::CALLBACK_PATH,
     goto, music,
     pr_window::{self, PrAction, PrWindow},
-    router::{Router, path::Path, route::RouteResponse},
+    router::{
+        Router,
+        path::Path,
+        route::{Redirect, static_title},
+    },
     schema::{provider::SchemaProvider, web::WebProvider},
     settings::{
         ALWAYS_HIRES, BACKEND_CONFIG, BackendConfig, CODE_SYNTAX_THEME, COLOR_THEME,
@@ -200,22 +204,64 @@ pub struct App {
 fn create_router(ctx: egui::Context) -> Result<Router<App>> {
     let mut builder = Router::<App>::new(ctx);
     builder.set_title_formatter(|title| format!("{title} - EXDViewer"));
-    builder.add_route("/", App::on_setup, App::draw_setup)?;
-    builder.add_route("/sheet", App::on_unnamed_sheet, App::draw_unnamed_sheet)?;
-    builder.add_route("/sheet/{*name}", App::on_named_sheet, App::draw_named_sheet)?;
-    builder.add_route("/assets", App::on_assets, App::draw_assets)?;
-    builder.add_route("/assets/{*path}", App::on_asset_path, App::draw_assets)?;
-    builder.add_route("/music", App::on_music, App::draw_music)?;
-    builder.add_route("/music/{id}", App::on_music_track, App::draw_music)?;
+    builder.add_route("/", App::on_setup, App::draw_setup, static_title("Setup"))?;
+    builder.add_route(
+        "/sheet",
+        App::on_unnamed_sheet,
+        App::draw_unnamed_sheet,
+        static_title("Sheet List"),
+    )?;
+    builder.add_route(
+        "/sheet/{*name}",
+        App::on_named_sheet,
+        App::draw_named_sheet,
+        App::title_named_sheet,
+    )?;
+    builder.add_route(
+        "/assets",
+        App::on_assets,
+        App::draw_assets,
+        App::title_assets,
+    )?;
+    builder.add_route(
+        "/assets/{*path}",
+        App::on_asset_path,
+        App::draw_assets,
+        App::title_assets,
+    )?;
+    builder.add_route("/music", App::on_music, App::draw_music, App::title_music)?;
+    builder.add_route(
+        "/music/{id}",
+        App::on_music_track,
+        App::draw_music,
+        App::title_music,
+    )?;
     builder.add_route(
         CALLBACK_PATH,
         App::on_auth_callback,
         App::draw_auth_callback,
+        static_title("Signing in…"),
     )?;
     Ok(builder)
 }
 
 impl App {
+    fn title_named_sheet(&self, _path: &Path, params: &Params<'_, '_>) -> Option<String> {
+        Some(params.get("name")?.to_string())
+    }
+
+    fn title_assets(&self, _path: &Path, params: &Params<'_, '_>) -> Option<String> {
+        let Some(asset) = params.get("path") else {
+            return Some("Assets".to_string());
+        };
+        Some(asset.rsplit('/').next().unwrap_or(asset).to_string())
+    }
+
+    fn title_music(&self, _path: &Path, params: &Params<'_, '_>) -> Option<String> {
+        let id = params.get("id")?.parse::<u32>().ok()?;
+        Some(self.music.name_of(id).unwrap_or("Music").to_string())
+    }
+
     fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.router
@@ -1180,17 +1226,12 @@ impl App {
         }
     }
 
-    fn on_setup(
-        &mut self,
-        ui: &mut egui::Ui,
-        path: &Path,
-        _params: &Params<'_, '_>,
-    ) -> RouteResponse {
+    fn on_setup(&mut self, ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) -> Redirect {
         self.setup_window = Some(SetupWindow::from_config(
             ui.ctx(),
             path.query_pairs().contains_key("redirect"),
         ));
-        RouteResponse::Title("Setup".to_string())
+        None
     }
 
     fn draw_setup(&mut self, ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) {
@@ -1215,20 +1256,17 @@ impl App {
         _ui: &mut egui::Ui,
         _path: &Path,
         _params: &Params<'_, '_>,
-    ) -> RouteResponse {
-        RouteResponse::Title("Signing in…".to_string())
+    ) -> Redirect {
+        None
     }
 
     fn draw_auth_callback(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
         pr_window::draw_auth_callback(ui);
     }
 
-    fn ensure_backend(&self, path: &Path) -> Option<RouteResponse> {
+    fn ensure_backend(&self, path: &Path) -> Redirect {
         if self.backend.is_none() {
-            return Some(RouteResponse::Redirect(Path::with_params(
-                "/",
-                &[("redirect", path.to_string())],
-            )));
+            return Some(Path::with_params("/", &[("redirect", path.to_string())]));
         }
         None
     }
@@ -1238,15 +1276,15 @@ impl App {
         ui: &mut egui::Ui,
         path: &Path,
         _params: &Params<'_, '_>,
-    ) -> RouteResponse {
-        if let Some(r) = self.ensure_backend(path) {
-            return r;
+    ) -> Redirect {
+        if let Some(redirect) = self.ensure_backend(path) {
+            return Some(redirect);
         }
 
         if let Some(sheet) = &SELECTED_SHEET.get(ui.ctx()) {
-            return RouteResponse::Redirect(format!("/sheet/{sheet}").into());
+            return Some(format!("/sheet/{sheet}").into());
         }
-        RouteResponse::Title("Sheet List".to_string())
+        None
     }
 
     fn on_named_sheet(
@@ -1254,9 +1292,9 @@ impl App {
         ui: &mut egui::Ui,
         path: &Path,
         params: &Params<'_, '_>,
-    ) -> RouteResponse {
-        if let Some(r) = self.ensure_backend(path) {
-            return r;
+    ) -> Redirect {
+        if let Some(redirect) = self.ensure_backend(path) {
+            return Some(redirect);
         }
         TEMP_HIGHLIGHTED_ROW.take(ui.ctx());
 
@@ -1264,7 +1302,7 @@ impl App {
             SELECTED_SHEET.set(ui.ctx(), Some(sheet.to_string()));
         } else {
             SELECTED_SHEET.set(ui.ctx(), None);
-            return RouteResponse::Redirect("/sheet".into());
+            return Some("/sheet".into());
         }
 
         if let Some(mut fragment) = path.fragment() {
@@ -1291,7 +1329,7 @@ impl App {
                 TEMP_SCROLL_TO.set(ui.ctx(), ((row, subrow), col_nr.unwrap_or_default()));
             }
         }
-        RouteResponse::Title(params.get("name").unwrap().to_string())
+        None
     }
 
     fn draw_unnamed_sheet(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
@@ -1307,16 +1345,13 @@ impl App {
         self.draw_sheet_data(ui);
     }
 
-    fn on_assets(
-        &mut self,
-        _ui: &mut egui::Ui,
-        path: &Path,
-        _params: &Params<'_, '_>,
-    ) -> RouteResponse {
-        if let Some(r) = self.ensure_backend(path) {
-            return r;
+    fn on_assets(&mut self, _ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) -> Redirect {
+        if let Some(redirect) = self.ensure_backend(path) {
+            return Some(redirect);
         }
-        RouteResponse::Title("Assets".to_string())
+        self.assets
+            .selected()
+            .map(|asset| format!("/assets/{asset}").into())
     }
 
     fn on_asset_path(
@@ -1324,21 +1359,15 @@ impl App {
         _ui: &mut egui::Ui,
         path: &Path,
         params: &Params<'_, '_>,
-    ) -> RouteResponse {
-        if let Some(r) = self.ensure_backend(path) {
-            return r;
+    ) -> Redirect {
+        if let Some(redirect) = self.ensure_backend(path) {
+            return Some(redirect);
         }
         let Some(asset) = params.get("path") else {
-            return RouteResponse::Redirect("/assets".into());
+            return Some("/assets".into());
         };
         self.assets.request(asset.to_string());
-        RouteResponse::Title(
-            asset
-                .rsplit('/')
-                .next()
-                .unwrap_or(asset)
-                .to_string(),
-        )
+        None
     }
 
     fn draw_assets(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
@@ -1352,16 +1381,13 @@ impl App {
         }
     }
 
-    fn on_music(
-        &mut self,
-        _ui: &mut egui::Ui,
-        path: &Path,
-        _params: &Params<'_, '_>,
-    ) -> RouteResponse {
-        if let Some(r) = self.ensure_backend(path) {
-            return r;
+    fn on_music(&mut self, _ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) -> Redirect {
+        if let Some(redirect) = self.ensure_backend(path) {
+            return Some(redirect);
         }
-        RouteResponse::Title("Music".to_string())
+        self.music
+            .now_playing_row()
+            .map(|id| format!("/music/{id}").into())
     }
 
     fn on_music_track(
@@ -1369,14 +1395,14 @@ impl App {
         _ui: &mut egui::Ui,
         path: &Path,
         params: &Params<'_, '_>,
-    ) -> RouteResponse {
-        if let Some(r) = self.ensure_backend(path) {
-            return r;
+    ) -> Redirect {
+        if let Some(redirect) = self.ensure_backend(path) {
+            return Some(redirect);
         }
         if let Some(id) = params.get("id").and_then(|id| id.parse::<u32>().ok()) {
             self.music.request(id);
         }
-        RouteResponse::Title("Music".to_string())
+        None
     }
 
     fn draw_music(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
