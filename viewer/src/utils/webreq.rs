@@ -4,11 +4,23 @@ pub struct HttpResponse {
     pub status: u16,
     pub ok: bool,
     pub bytes: Vec<u8>,
+    pub headers: ehttp::Headers,
 }
 
 impl HttpResponse {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
+    }
+}
+
+impl From<ehttp::Response> for HttpResponse {
+    fn from(response: ehttp::Response) -> Self {
+        Self {
+            status: response.status,
+            ok: response.ok,
+            bytes: response.bytes,
+            headers: response.headers,
+        }
     }
 }
 
@@ -31,14 +43,10 @@ pub async fn request(
         .await
         .map_err(|msg| anyhow::anyhow!(msg))?;
 
-    Ok(HttpResponse {
-        status: resp.status,
-        ok: resp.ok,
-        bytes: resp.bytes,
-    })
+    Ok(resp.into())
 }
 
-pub async fn fetch_url(url: impl ToString) -> anyhow::Result<Vec<u8>> {
+pub async fn fetch(url: impl ToString) -> anyhow::Result<HttpResponse> {
     let resp = ehttp::fetch_async(Request::get(url))
         .await
         .map_err(|msg| anyhow::anyhow!(msg))?;
@@ -53,7 +61,11 @@ pub async fn fetch_url(url: impl ToString) -> anyhow::Result<Vec<u8>> {
         );
     }
 
-    Ok(resp.bytes)
+    Ok(resp.into())
+}
+
+pub async fn fetch_url(url: impl ToString) -> anyhow::Result<Vec<u8>> {
+    Ok(fetch(url).await?.bytes)
 }
 
 pub async fn fetch_url_str(url: impl ToString) -> anyhow::Result<String> {

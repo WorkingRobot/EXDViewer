@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek};
 use std::sync::LazyLock;
 
 use async_trait::async_trait;
@@ -18,8 +18,25 @@ pub mod worker;
 /// are layered on top of this.
 #[async_trait(?Send)]
 pub trait FileProvider {
+    /// Read a file's raw bytes by path, alongside the name of the sqpack stream they were stored
+    /// as. The kind is `None` where the store cannot report one, which is any API server older than
+    /// the header it travels in.
+    async fn read_stream(&self, path: &str) -> anyhow::Result<(Option<String>, Vec<u8>)>;
+
+    /// Read a file the game records only as a hash. Unnamed files have no path, so this is the only
+    /// way to reach them.
+    async fn read_stream_by_hash(
+        &self,
+        repository: u8,
+        category: u8,
+        hash: u64,
+        split: bool,
+    ) -> anyhow::Result<(Option<String>, Vec<u8>)>;
+
     /// Read a file's raw bytes by path.
-    async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>>;
+    async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>> {
+        Ok(self.read_stream(path).await?.1)
+    }
 
     /// The global path list and, alongside it, which of its entries this install actually ships as
     /// an encoded [`pathlist::Presence`].
@@ -29,15 +46,18 @@ pub trait FileProvider {
     /// version instead, so for it the two are separate requests.
     async fn path_index(&self, path_list_url: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)>;
 
-    /// Read a file the game records only as a hash. Unnamed files have no path, so this is the only
-    /// way to reach them.
     async fn read_by_hash(
         &self,
         repository: u8,
         category: u8,
         hash: u64,
         split: bool,
-    ) -> anyhow::Result<Vec<u8>>;
+    ) -> anyhow::Result<Vec<u8>> {
+        Ok(self
+            .read_stream_by_hash(repository, category, hash, split)
+            .await?
+            .1)
+    }
 
     /// Read and decode a texture to RGBA, no larger than `max_dim` on its longest edge; `None`
     /// decodes at full size.
@@ -165,6 +185,16 @@ pub fn build_local_presence<R: ironworks::sqpack::Resource>(
         Some(error) => Err(error),
         None => Ok(map),
     }
+}
+
+/// A sqpack file read to the end, labelled with the kind of stream it was stored as.
+pub fn stream<R: Read + Seek>(
+    mut file: ironworks::sqpack::File<R>,
+) -> Result<(String, Vec<u8>), ironworks::Error> {
+    let kind = file.kind().name().to_owned();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok((kind, bytes))
 }
 
 /// The `(hash, split)` pair [`FileProvider::read_by_hash`] carries, as ironworks models it. A split

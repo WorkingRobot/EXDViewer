@@ -55,14 +55,14 @@ impl WorkerFileProvider {
 
 #[async_trait(?Send)]
 impl FileProvider for WorkerFileProvider {
-    async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>> {
+    async fn read_stream(&self, path: &str) -> anyhow::Result<(Option<String>, Vec<u8>)> {
         log::info!("WorkerFileProvider: requesting file {path:?}");
         if let WorkerResponse::DataRequestFile(result) =
             worker::transact(WorkerRequest::DataRequestFile(path.to_string())).await
         {
-            let file =
+            let (kind, bytes) =
                 result.map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))?;
-            Ok(file)
+            Ok((Some(kind), bytes))
         } else {
             Err(anyhow::anyhow!(
                 "WorkerFileProvider: invalid response from worker"
@@ -87,22 +87,22 @@ impl FileProvider for WorkerFileProvider {
         }
     }
 
-    async fn read_by_hash(
+    async fn read_stream_by_hash(
         &self,
         repository: u8,
         category: u8,
         hash: u64,
         split: bool,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> anyhow::Result<(Option<String>, Vec<u8>)> {
         log::info!("WorkerFileProvider: requesting file {repository}/{category}/{hash:X}");
         if let WorkerResponse::DataRequestFileByHash(result) = worker::transact(
             WorkerRequest::DataRequestFileByHash((repository, category, hash, split)),
         )
         .await
         {
-            let file =
+            let (kind, bytes) =
                 result.map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))?;
-            Ok(file)
+            Ok((Some(kind), bytes))
         } else {
             Err(anyhow::anyhow!(
                 "WorkerFileProvider: invalid response from worker"

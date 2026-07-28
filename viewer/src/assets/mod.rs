@@ -10,7 +10,8 @@ use web_time::{Duration, Instant};
 use anyhow::Result;
 use egui::{
     Align, Button, CentralPanel, Color32, Label, Layout, Rect, RichText, ScrollArea, TextEdit,
-    TextStyle, Vec2, Widget, collapsing_header::paint_default_icon, containers::panel::Panel, pos2,
+    TextStyle, UiBuilder, Vec2, Widget, collapsing_header::paint_default_icon,
+    containers::panel::Panel, pos2, vec2,
 };
 use nucleo_matcher::pattern::Pattern;
 
@@ -528,8 +529,9 @@ pub enum Action {
 
 pub struct AssetBrowser {
     state: Load<(Vec<u8>, Vec<u8>), Box<Loaded>>,
-    /// Raw bytes of the selected file, and which path they belong to.
-    bytes: Load<Vec<u8>>,
+    /// The selected file as it was read: the kind of sqpack stream it was stored as, where the
+    /// store reports one, and its raw bytes.
+    bytes: Load<(Option<String>, Vec<u8>)>,
     bytes_of: Option<String>,
     /// Rendered view of `bytes`, decoded once per selection.
     preview: Option<Preview>,
@@ -960,6 +962,18 @@ impl AssetBrowser {
 
             self.ensure_bytes(ui, backend, &path);
 
+            let (stream, empty) = match &self.bytes {
+                Load::Ready((kind, bytes)) => {
+                    let size = Bytes(bytes.len());
+                    let label = match kind {
+                        Some(kind) => format!("{kind} ({size})"),
+                        None => size.to_string(),
+                    };
+                    (Some(label), bytes.is_empty())
+                }
+                _ => (None, false),
+            };
+
             Panel::top("asset_header").show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -975,66 +989,72 @@ impl AssetBrowser {
                 // would take the panel's remaining height, which the panel derives from its content:
                 // the row would then grow by a few pixels on every repaint.
                 ui.horizontal(|ui| {
-                    // Actions are placed from the right; whatever is left over goes to the path.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let recommended = Viewer::recommended(&path);
-                        let chosen = self.viewer.unwrap_or(recommended);
-                        // A real dropdown, not a bare button: ComboBox draws the indicator and
-                        // closes itself on click, which is why the arms below never call `close`.
-                        egui::ComboBox::from_id_salt("asset_viewer")
-                            .selected_text(chosen.label())
-                            .show_ui(ui, |ui| {
-                                let mut pick =
-                                    |ui: &mut egui::Ui, viewer: Option<Viewer>, label: String| {
-                                        if ui
-                                            .selectable_label(self.viewer == viewer, label)
-                                            .clicked()
-                                        {
-                                            self.viewer = viewer;
-                                            self.preview = None;
-                                        }
-                                    };
-                                pick(ui, None, format!("Recommended ({})", recommended.label()));
-                                pick(ui, Some(Viewer::Raw), Viewer::Raw.label().to_owned());
-                                ui.separator();
-                                for viewer in Viewer::RENDERED {
-                                    // The recommended one is already the entry at the top. It stays
-                                    // in the list, disabled, so every viewer keeps the same place.
-                                    if viewer == recommended {
-                                        ui.add_enabled(
-                                            false,
-                                            Button::selectable(false, viewer.label()),
-                                        );
-                                    } else {
-                                        pick(ui, Some(viewer), viewer.label().to_owned());
+                    let row = ui.max_rect();
+                    let left = ui
+                        .scope(|ui| {
+                            if let Some(stream) = &stream {
+                                ui.label(RichText::new(stream).weak());
+                            }
+                        })
+                        .response
+                        .rect;
+
+                    let right = ui
+                        .with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            // A file with no data has nothing for any viewer to show, so there is
+                            // nothing to choose between.
+                            if !empty {
+                                self.viewer_picker(ui, &path);
+                            }
+                            match Kind::of(&path) {
+                                Kind::Sheet => {
+                                    if let Some(sheet) =
+                                        sheet_name(backend.excel().get_entries(), &path)
+                                        && ui.button(format!("Open “{sheet}” in Sheets")).clicked()
+                                    {
+                                        self.goto = Some(format!("/sheet/{sheet}"));
                                     }
                                 }
-                            });
-                        match Kind::of(&path) {
-                            Kind::Sheet => {
-                                if let Some(sheet) =
-                                    sheet_name(backend.excel().get_entries(), &path)
-                                    && ui.button(format!("Open “{sheet}” in Sheets")).clicked()
-                                {
-                                    self.goto = Some(format!("/sheet/{sheet}"));
+                                Kind::SheetList => {
+                                    if ui.button("Open the Sheets tab").clicked() {
+                                        self.goto = Some("/sheet".to_string());
+                                    }
                                 }
+                                Kind::Other(_) => {}
                             }
-                            Kind::SheetList => {
-                                if ui.button("Open the Sheets tab").clicked() {
-                                    self.goto = Some("/sheet".to_string());
-                                }
-                            }
-                            Kind::Other(_) => {}
-                        }
-                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        })
+                        .response
+                        .rect;
+
+                    // Centred on the row rather than on the gap the two sides leave, which is off
+                    // centre whenever they differ in width. Never wide enough to reach either of
+                    // them, so a long path truncates rather than running underneath one.
+                    let font = TextStyle::Body.resolve(ui.style());
+                    let width = ui
+                        .painter()
+                        .layout_no_wrap(path.clone(), font, Color32::PLACEHOLDER)
+                        .size()
+                        .x;
+                    let room = (row.center().x - left.right()).min(right.left() - row.center().x)
+                        - ui.spacing().item_spacing.x;
+                    let flanks = left.union(right);
+                    let band = Rect::from_center_size(
+                        pos2(row.center().x, flanks.center().y),
+                        vec2(width.min(room * 2.0).max(0.0), flanks.height()),
+                    );
+                    ui.scope_builder(
+                        UiBuilder::new()
+                            .max_rect(band)
+                            .layout(Layout::left_to_right(Align::Center)),
+                        |ui| {
                             let label = ui.add(
                                 Label::new(RichText::new(&path).weak())
                                     .truncate()
                                     .sense(egui::Sense::click()),
                             );
                             path_context(&label, &path, self.selected_unnamed);
-                        });
-                    });
+                        },
+                    );
                 });
                 ui.add_space(4.0);
             });
@@ -1102,7 +1122,12 @@ impl AssetBrowser {
                     Load::Failed(e) => {
                         ui.colored_label(Color32::RED, e.clone());
                     }
-                    Load::Ready(bytes) if showing == Viewer::Raw => {
+                    Load::Ready((_, bytes)) if bytes.is_empty() => {
+                        ui.centered_and_justified(|ui| {
+                            ui.label(RichText::new("This file is empty").weak());
+                        });
+                    }
+                    Load::Ready((_, bytes)) if showing == Viewer::Raw => {
                         let mut page = self.hex_page;
                         hex_dump(ui, bytes, &mut page);
                         self.hex_page = page;
@@ -1122,6 +1147,37 @@ impl AssetBrowser {
     }
 
     /// Fetch the selected file if it is not already in hand, and decode a view of it.
+    /// The viewer dropdown, which reads its recommendation from the path and throws the decoded
+    /// preview away whenever the choice changes.
+    fn viewer_picker(&mut self, ui: &mut egui::Ui, path: &str) {
+        let recommended = Viewer::recommended(path);
+        let chosen = self.viewer.unwrap_or(recommended);
+        // A real dropdown, not a bare button: ComboBox draws the indicator and closes itself on
+        // click, which is why the arms below never call `close`.
+        egui::ComboBox::from_id_salt("asset_viewer")
+            .selected_text(chosen.label())
+            .show_ui(ui, |ui| {
+                let mut pick = |ui: &mut egui::Ui, viewer: Option<Viewer>, label: String| {
+                    if ui.selectable_label(self.viewer == viewer, label).clicked() {
+                        self.viewer = viewer;
+                        self.preview = None;
+                    }
+                };
+                pick(ui, None, format!("Recommended ({})", recommended.label()));
+                pick(ui, Some(Viewer::Raw), Viewer::Raw.label().to_owned());
+                ui.separator();
+                for viewer in Viewer::RENDERED {
+                    // The recommended one is already the entry at the top. It stays in the list,
+                    // disabled, so every viewer keeps the same place.
+                    if viewer == recommended {
+                        ui.add_enabled(false, Button::selectable(false, viewer.label()));
+                    } else {
+                        pick(ui, Some(viewer), viewer.label().to_owned());
+                    }
+                }
+            });
+    }
+
     fn ensure_bytes(&mut self, ui: &mut egui::Ui, backend: &Backend, path: &str) {
         if self.bytes_of.as_deref() != Some(path) {
             self.bytes_of = Some(path.to_string());
@@ -1137,20 +1193,25 @@ impl AssetBrowser {
             let wanted = path.to_string();
             self.bytes = Load::Loading(TrackedPromise::spawn_local(async move {
                 let at = Instant::now();
-                let bytes = match unnamed {
+                let (kind, bytes) = match unnamed {
                     Some(file) => {
                         files
-                            .read_by_hash(file.repository, file.category, file.hash, file.split)
+                            .read_stream_by_hash(
+                                file.repository,
+                                file.category,
+                                file.hash,
+                                file.split,
+                            )
                             .await?
                     }
-                    None => files.read(&wanted).await?,
+                    None => files.read_stream(&wanted).await?,
                 };
                 log::info!(
                     "assets/read: {wanted} {} in {}",
                     Bytes(bytes.len()),
                     Millis(at.elapsed())
                 );
-                Ok(bytes)
+                Ok((kind, bytes))
             }));
         }
         if let Load::Loading(promise) = &self.bytes
@@ -1165,7 +1226,8 @@ impl AssetBrowser {
         // Decoding uploads a texture, so it needs the context and happens here rather than in the
         // fetch. Once per file, or again when a different mipmap is picked.
         let viewer = self.viewer.unwrap_or_else(|| Viewer::recommended(path));
-        if let Load::Ready(bytes) = &self.bytes
+        if let Load::Ready((_, bytes)) = &self.bytes
+            && !bytes.is_empty()
             && self.preview.is_none()
             && viewer != Viewer::Raw
         {

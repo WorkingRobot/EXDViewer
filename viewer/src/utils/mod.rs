@@ -33,7 +33,7 @@ pub use syntax_highlighting::{CodeTheme, highlight};
 pub use tracked_promise::{TrackedPromise, tick_promises};
 pub use unsend_promise::UnsendPromise;
 pub use version::GameVersion;
-pub use webreq::{HttpResponse, fetch_url, fetch_url_str, request};
+pub use webreq::{HttpResponse, fetch, fetch_url, fetch_url_str, request};
 pub use yield_now::yield_to_ui;
 
 /// The last segment of a game path. Paths are always slash-separated, so this is the file name.

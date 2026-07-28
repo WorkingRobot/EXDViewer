@@ -1,13 +1,12 @@
 use crate::utils::tex_loader;
 
-use super::{FileProvider, build_local_presence, get_icon_path, index_hash};
+use super::{FileProvider, build_local_presence, get_icon_path, index_hash, stream};
 use crate::utils::fetch_url;
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
 use ironworks::{
     Ironworks,
-    file::File,
     sqpack::{Install, SqPack},
 };
 use std::{path::PathBuf, rc::Rc, str::FromStr};
@@ -33,28 +32,30 @@ impl SqpackFileProvider {
 
 #[async_trait(?Send)]
 impl FileProvider for SqpackFileProvider {
-    async fn read(&self, path: &str) -> anyhow::Result<Vec<u8>> {
-        Ok(self.ironworks.file::<Vec<u8>>(path)?)
+    async fn read_stream(&self, path: &str) -> anyhow::Result<(Option<String>, Vec<u8>)> {
+        let (kind, bytes) = stream(self.sqpack.file(path)?)?;
+        Ok((Some(kind), bytes))
+    }
+
+    async fn read_stream_by_hash(
+        &self,
+        repository: u8,
+        category: u8,
+        hash: u64,
+        split: bool,
+    ) -> anyhow::Result<(Option<String>, Vec<u8>)> {
+        let (kind, bytes) = stream(self.sqpack.file_by_hash(
+            repository,
+            category,
+            index_hash(hash, split),
+        )?)?;
+        Ok((Some(kind), bytes))
     }
 
     async fn path_index(&self, path_list_url: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
         let paths = fetch_url(path_list_url).await?;
         let presence = build_local_presence(&self.sqpack, &paths)?;
         Ok((paths, presence))
-    }
-
-    async fn read_by_hash(
-        &self,
-        repository: u8,
-        category: u8,
-        hash: u64,
-        split: bool,
-    ) -> anyhow::Result<Vec<u8>> {
-        Ok(Vec::<u8>::read(self.sqpack.file_by_hash(
-            repository,
-            category,
-            index_hash(hash, split),
-        )?)?)
     }
 
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {

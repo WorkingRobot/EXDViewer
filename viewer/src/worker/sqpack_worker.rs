@@ -6,14 +6,13 @@ use gloo_worker::{HandlerId, Worker, WorkerScope};
 use indexed_db::Database;
 use ironworks::{
     Ironworks,
-    file::File,
     sqpack::{SqPack, VInstall},
 };
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{FileSystemDirectoryHandle, js_sys::JsString};
 
 use crate::{
-    data::{build_local_presence, index_hash},
+    data::{build_local_presence, index_hash, stream},
     stopwatch::Stopwatch,
     utils::{fetch_url, tex_loader},
     worker::directory::{DynamicDirectory, get_file_str, set_file_str},
@@ -171,8 +170,9 @@ impl Worker for SqpackWorker {
                 let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestFile({path:?})"));
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
                     let file = inst
-                        .ironworks
-                        .file::<Vec<u8>>(&path)
+                        .sqpack
+                        .file(&path)
+                        .and_then(stream)
                         .map_err(|e| e.to_string());
                     scope.respond(id, WorkerResponse::DataRequestFile(file));
                 }
@@ -185,7 +185,7 @@ impl Worker for SqpackWorker {
                     let file = inst
                         .sqpack
                         .file_by_hash(repository, category, index_hash(hash, split))
-                        .and_then(Vec::<u8>::read)
+                        .and_then(stream)
                         .map_err(|e| e.to_string());
                     scope.respond(id, WorkerResponse::DataRequestFileByHash(file));
                 }

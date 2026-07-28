@@ -58,8 +58,9 @@ pub enum WorkerResponse {
     DataStore(Result<(), String>),
 
     DataSetup(Result<(), String>),
-    DataRequestFile(Result<Vec<u8>, String>),
-    DataRequestFileByHash(Result<Vec<u8>, String>),
+    /// `(stream kind, bytes)`
+    DataRequestFile(Result<(String, Vec<u8>), String>),
+    DataRequestFileByHash(Result<(String, Vec<u8>), String>),
     DataPresence(Result<Vec<u8>, String>),
     DataRequestTexture(Result<WorkerTexture, String>),
     DecodeTexture(Result<WorkerTexture, String>),
