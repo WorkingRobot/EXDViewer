@@ -3,7 +3,7 @@ use crate::{
     worker::{WorkerDirectory, WorkerRequest, WorkerResponse},
 };
 
-use super::{FileProvider, get_icon_path};
+use super::{DecodedTexture, FileProvider, get_icon_path};
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
@@ -110,25 +110,35 @@ impl FileProvider for WorkerFileProvider {
         }
     }
 
-    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
-        log::info!("WorkerFileProvider: requesting icon {icon_id}, {hires}");
-        let path = get_icon_path(icon_id, hires);
-        if let WorkerResponse::DataRequestTexture(result) =
-            worker::transact(WorkerRequest::DataRequestTexture(path.to_string())).await
+    /// Read and decode in the one round trip, rather than fetching the bytes here only to send them
+    /// straight back for decoding.
+    async fn read_texture(
+        &self,
+        path: &str,
+        max_dim: Option<u16>,
+    ) -> anyhow::Result<DecodedTexture> {
+        log::info!("WorkerFileProvider: requesting texture {path:?}");
+        if let WorkerResponse::DataRequestTexture(result) = worker::transact(
+            WorkerRequest::DataRequestTexture((path.to_owned(), max_dim)),
+        )
+        .await
         {
-            let file = result
-                .map_err(|e| anyhow::anyhow!("WorkerFileProvider: failed to get texture: {e}"))
-                .and_then(|(width, height, data)| {
-                    RgbaImage::from_vec(width, height, data).ok_or_else(|| {
-                        anyhow::anyhow!("WorkerFileProvider: failed to create image from data")
-                    })
-                })?;
-            Ok(Either::Right(file))
+            DecodedTexture::from_worker(
+                result.map_err(|e| {
+                    anyhow::anyhow!("WorkerFileProvider: failed to get texture: {e}")
+                })?,
+            )
         } else {
             Err(anyhow::anyhow!(
                 "WorkerFileProvider: invalid response from worker"
             ))
         }
+    }
+
+    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
+        log::info!("WorkerFileProvider: requesting icon {icon_id}, {hires}");
+        let path = get_icon_path(icon_id, hires);
+        Ok(Either::Right(self.read_texture(&path, None).await?.image))
     }
 
     async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>> {

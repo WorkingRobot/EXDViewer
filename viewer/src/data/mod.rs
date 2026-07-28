@@ -39,9 +39,72 @@ pub trait FileProvider {
         split: bool,
     ) -> anyhow::Result<Vec<u8>>;
 
+    /// Read and decode a texture to RGBA, no larger than `max_dim` on its longest edge; `None`
+    /// decodes at full size.
+    async fn read_texture(
+        &self,
+        path: &str,
+        max_dim: Option<u16>,
+    ) -> anyhow::Result<DecodedTexture> {
+        decode_texture(path, self.read(path).await?, max_dim).await
+    }
+
     async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>>;
 
     async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>>;
+}
+
+/// A texture decoded for display.
+pub struct DecodedTexture {
+    pub image: RgbaImage,
+    /// The size of the texture the pixels were decoded from.
+    pub source: [u16; 2],
+}
+
+#[cfg(target_arch = "wasm32")]
+impl DecodedTexture {
+    fn from_worker(texture: crate::worker::WorkerTexture) -> anyhow::Result<Self> {
+        let image = RgbaImage::from_vec(texture.width, texture.height, texture.data)
+            .ok_or_else(|| anyhow::anyhow!("decoded texture does not fill its own dimensions"))?;
+        Ok(Self {
+            image,
+            source: texture.source,
+        })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn decode_texture(
+    path: &str,
+    bytes: Vec<u8>,
+    max_dim: Option<u16>,
+) -> anyhow::Result<DecodedTexture> {
+    use crate::worker::{WorkerRequest, WorkerResponse};
+
+    let request = WorkerRequest::DecodeTexture {
+        path: path.to_owned(),
+        bytes,
+        max_dim,
+    };
+    match crate::backend::worker::transact(request).await {
+        WorkerResponse::DecodeTexture(result) => DecodedTexture::from_worker(
+            result.map_err(|error| anyhow::anyhow!("failed to decode texture: {error}"))?,
+        ),
+        _ => Err(anyhow::anyhow!("invalid response from worker")),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn decode_texture(
+    path: &str,
+    bytes: Vec<u8>,
+    max_dim: Option<u16>,
+) -> anyhow::Result<DecodedTexture> {
+    let (image, source) = crate::utils::tex_loader::decode_preview_sized(&bytes, path, max_dim)?;
+    Ok(DecodedTexture {
+        image: image.to_rgba8(),
+        source,
+    })
 }
 
 /// Typed reads layered on [`FileProvider`]. Blanket-implemented for every

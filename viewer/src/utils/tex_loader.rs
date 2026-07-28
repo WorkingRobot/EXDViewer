@@ -23,18 +23,31 @@ pub fn decode_bytes(bytes: &[u8], path: &str) -> Result<DynamicImage> {
     decode(texture, path)
 }
 
-/// Decode the smallest mipmap that still covers `max_dim`, for previews that will be drawn far
-/// below full size. Uploading mip 0 for a thumbnail costs megabytes of texture memory per file.
-pub fn decode_preview(bytes: &[u8], path: &str, max_dim: u16) -> Result<DynamicImage> {
+/// Decode the smallest mipmap that still covers `max_dim`, for previews that will be drawn far below
+/// full size; `None` decodes at full size. Uploading mip 0 for a thumbnail costs megabytes of
+/// texture memory per file.
+///
+/// The texture's full-resolution size comes back alongside the image. Anything indexing into a
+/// texture -- a `.uld` part rectangle, say -- is expressed in that space rather than the decoded
+/// mipmap's, so a caller cropping the result needs both.
+pub fn decode_preview_sized(
+    bytes: &[u8],
+    path: &str,
+    max_dim: Option<u16>,
+) -> Result<(DynamicImage, [u16; 2])> {
     let texture = <tex::Texture as ironworks::file::File>::read(Cursor::new(bytes.to_vec()))?;
-    let level = (0..texture.mip_levels())
-        .take_while(|level| {
-            let (width, height) = texture.mip_size(*level);
-            width.max(height) >= max_dim
+    let level = max_dim
+        .and_then(|max_dim| {
+            (0..texture.mip_levels())
+                .take_while(|level| {
+                    let (width, height) = texture.mip_size(*level);
+                    width.max(height) >= max_dim
+                })
+                .last()
         })
-        .last()
         .unwrap_or(0);
-    decode_mip(&texture, level, path)
+    let size = [texture.width(), texture.height()];
+    Ok((decode_mip(&texture, level, path)?, size))
 }
 
 /// Decode an already-read texture. The web backend hands out bytes rather than an

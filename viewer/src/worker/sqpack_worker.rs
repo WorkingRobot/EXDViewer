@@ -20,7 +20,8 @@ use crate::{
 };
 
 use super::{
-    WorkerDirectory, WorkerRequest, WorkerResponse, directory::verify_permission, vfs::DirectoryVfs,
+    WorkerDirectory, WorkerRequest, WorkerResponse, WorkerTexture, directory::verify_permission,
+    vfs::DirectoryVfs,
 };
 
 pub struct SqpackWorker {
@@ -91,6 +92,20 @@ impl SqpackWorker {
             .await
             .map_err(|e| format!("Failed to add folder: {e}"))
     }
+}
+
+fn decode_texture(bytes: &[u8], path: &str, max_dim: Option<u16>) -> Result<WorkerTexture, String> {
+    tex_loader::decode_preview_sized(bytes, path, max_dim)
+        .map(|(image, source)| {
+            let image = image.to_rgba8();
+            WorkerTexture {
+                width: image.width(),
+                height: image.height(),
+                source,
+                data: image.into_vec(),
+            }
+        })
+        .map_err(|error| error.to_string())
 }
 
 impl Worker for SqpackWorker {
@@ -196,17 +211,25 @@ impl Worker for SqpackWorker {
                     scope.respond(id, WorkerResponse::DataPresence(map));
                 });
             }
-            WorkerRequest::DataRequestTexture(path) => {
+            WorkerRequest::DataRequestTexture((path, max_dim)) => {
                 let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestTexture({path:?})"));
                 if let Some(inst) = self.install_instance.borrow().as_ref() {
-                    let data = tex_loader::read(&inst.ironworks, &path)
-                        .map(|data| {
-                            let data = data.to_rgba8();
-                            (data.width(), data.height(), data.into_vec())
-                        })
-                        .map_err(|e| e.to_string());
+                    let data = inst
+                        .ironworks
+                        .file::<Vec<u8>>(&path)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| decode_texture(&bytes, &path, max_dim));
                     scope.respond(id, WorkerResponse::DataRequestTexture(data));
                 }
+            }
+            WorkerRequest::DecodeTexture {
+                path,
+                bytes,
+                max_dim,
+            } => {
+                let _stop = Stopwatch::new(format!("SqpackWorker::DecodeTexture({path:?})"));
+                let data = decode_texture(&bytes, &path, max_dim);
+                scope.respond(id, WorkerResponse::DecodeTexture(data));
             }
             WorkerRequest::DataRequestExists(paths) => {
                 let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestExists({paths:?})"));

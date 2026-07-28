@@ -6,5 +6,5 @@ mod sqpack_worker;
 mod vfs;
 
 pub use codec::PreservingCodec;
-pub use protocol::{WorkerDirectory, WorkerRequest, WorkerResponse};
+pub use protocol::{WorkerDirectory, WorkerRequest, WorkerResponse, WorkerTexture};
 pub use sqpack_worker::SqpackWorker;
