@@ -1,0 +1,16 @@
+[package]
+name = "glyphnames"
+description = "Unicode names for the codepoints a game font can hold"
+authors.workspace = true
+repository.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "glyphnames"
+
+[build-dependencies]
+unicode_names2 = "3"
+
+[dev-dependencies]
+unicode_names2 = "3"
