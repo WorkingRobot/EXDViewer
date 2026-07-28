@@ -30,12 +30,12 @@ pub enum Dep<'a> {
     /// Still being fetched or decoded; the viewer should leave room for it.
     Pending,
     Ready(&'a TextureHandle),
-    /// Fetched but unusable, with the reason.
-    Failed(&'a str),
+    /// Fetched but unusable.
+    Failed,
 }
 
 pub struct Deps {
-    textures: LruCache<String, Load<Vec<u8>, Result<TextureHandle, String>>>,
+    textures: LruCache<String, Load<Vec<u8>, Option<TextureHandle>>>,
 }
 
 impl Default for Deps {
@@ -57,9 +57,9 @@ impl Deps {
             let wanted = path.to_string();
             self.textures.put(
                 path.to_string(),
-                Load::Loading(TrackedPromise::spawn_local(
-                    async move { files.read(&wanted).await },
-                )),
+                Load::Loading(TrackedPromise::spawn_local(async move {
+                    files.read(&wanted).await
+                })),
             );
         }
 
@@ -68,17 +68,21 @@ impl Deps {
         if let Load::Loading(promise) = entry
             && let Some(result) = promise.try_get()
         {
-            *entry = match result {
-                Ok(bytes) => Load::Ready(decode(ctx, path, bytes)),
-                Err(error) => Load::Ready(Err(error.to_string())),
+            let decoded = match result {
+                Ok(bytes) => decode(ctx, path, bytes),
+                Err(error) => Err(error.to_string()),
             };
+            *entry = Load::Ready(
+                decoded
+                    .inspect_err(|error| log::error!("assets/deps: {path}: {error}"))
+                    .ok(),
+            );
         }
 
         match entry {
             Load::Idle | Load::Loading(_) => Dep::Pending,
-            Load::Ready(Ok(texture)) => Dep::Ready(texture),
-            Load::Ready(Err(error)) => Dep::Failed(error),
-            Load::Failed(error) => Dep::Failed(error),
+            Load::Ready(Some(texture)) => Dep::Ready(texture),
+            Load::Ready(None) | Load::Failed(_) => Dep::Failed,
         }
     }
 }

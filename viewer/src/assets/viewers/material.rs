@@ -271,12 +271,12 @@ pub fn ui(
                                     egui::Spinner::new().size(THUMBNAIL / 2.0),
                                 );
                             }
-                            Dep::Failed(error) => {
+                            Dep::Failed => {
                                 ui.add_sized(
                                     Vec2::splat(THUMBNAIL),
-                                    egui::Label::new(RichText::new("!").weak()),
+                                    egui::Label::new(RichText::new("⚠").color(Color32::LIGHT_RED)),
                                 )
-                                .on_hover_text(error);
+                                .on_hover_text("Failed to load");
                             }
                         }
                         ui.vertical(|ui| {
