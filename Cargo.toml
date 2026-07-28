@@ -18,6 +18,13 @@ catppuccin-egui = { git = "https://github.com/WorkingRobot/egui.git", branch = "
 inherits = "release"
 debug = true
 
+# A debug build of epaint acquires its context lock with a timeout, and parking_lot measures that
+# timeout with `std::time::Instant`, which wasm32-unknown-unknown does not implement. Any lock that
+# misses the uncontended fast path then panics, killing whatever task it was on. Release builds take
+# the untimed path, which is why only dev builds see it.
+[profile.dev.package.epaint]
+debug-assertions = false
+
 # Optimize the audio decoders in dev builds; unoptimized vorbis/HCA decode is ~30x slower.
 [profile.dev.package.symphonia]
 opt-level = 3
