@@ -13,7 +13,7 @@ use ironworks::file::{
 };
 use std::io::Cursor;
 
-use super::{Preview, shader_names};
+use super::{Preview, link, section, shader_names};
 use crate::assets::deps::{Dep, Deps};
 use crate::backend::Backend;
 use crate::sheet::draw_color;
@@ -202,29 +202,6 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
 fn swatch(color: [f32; 3]) -> Color32 {
     let map = |v: f32| ((v / (1.0 + v)).clamp(0.0, 1.0) * 255.0) as u8;
     Color32::from_rgb(map(color[0]), map(color[1]), map(color[2]))
-}
-
-/// A section title in the main area: the details panel's weak styling at heading size.
-fn section(ui: &mut egui::Ui, title: &str) {
-    ui.label(RichText::new(title).text_style(egui::TextStyle::Heading));
-    ui.add_space(4.0);
-}
-
-/// A path rendered as a link: hyperlink colour, pointer cursor, and the same hover and right-click
-/// menu every other path in the browser gets. Returns whether it was followed.
-fn link(ui: &mut egui::Ui, text: &str, path: &str) -> bool {
-    let response = ui
-        .add(
-            egui::Label::new(
-                RichText::new(text)
-                    .monospace()
-                    .color(ui.visuals().hyperlink_color),
-            )
-            .sense(Sense::click()),
-        )
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    crate::assets::path_context(&response, path, None);
-    response.clicked()
 }
 
 pub fn ui(

@@ -3,16 +3,38 @@
 //! Each viewer lives in its own module and is reached only through [`Viewer`], so adding a type is a
 //! new file plus an arm here rather than edits threaded through the browser.
 
-use egui::{
-    Color32, Label, RichText, ScrollArea, TextureHandle, Vec2,
-};
+use egui::{Color32, Label, RichText, ScrollArea, Sense, TextureHandle, Vec2};
 
 use super::{Bytes, Channels, MAX_TEXT_PREVIEW};
 
-pub mod png;
 pub mod material;
+pub mod png;
 pub mod shader_names;
 pub mod texture;
+pub mod uld;
+
+/// A section title in the main area: the details panel's weak styling at heading size.
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.label(RichText::new(title).text_style(egui::TextStyle::Heading));
+    ui.add_space(4.0);
+}
+
+/// A path rendered as a link: hyperlink colour, pointer cursor, and the same hover and right-click
+/// menu every other path in the browser gets. Returns whether it was followed.
+fn link(ui: &mut egui::Ui, text: &str, path: &str) -> bool {
+    let response = ui
+        .add(
+            egui::Label::new(
+                RichText::new(text)
+                    .monospace()
+                    .color(ui.visuals().hyperlink_color),
+            )
+            .sense(Sense::click()),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    crate::assets::path_context(&response, path, None);
+    response.clicked()
+}
 
 pub enum Preview {
     Text(String),
@@ -29,10 +51,11 @@ pub enum Preview {
     },
     /// A parsed material, rendered as its own layout rather than a flat table.
     Material(Box<material::Rendered>),
+    /// A parsed UI layout.
+    Uld(Box<uld::Rendered>),
     /// Nothing to render; an empty message means the type simply has no viewer.
     Failed(String),
 }
-
 
 impl Preview {
     pub fn decode(
@@ -50,6 +73,7 @@ impl Preview {
             Viewer::Image => png::decode(ctx, path, bytes, channels),
             Viewer::Texture => texture::decode(ctx, path, bytes, mip, channels),
             Viewer::Material => material::decode(path, bytes),
+            Viewer::Uld => uld::decode(path, bytes),
             Viewer::Raw => return Self::Failed(String::new()),
         };
         result.unwrap_or_else(|e| Self::Failed(e.to_string()))
@@ -68,6 +92,9 @@ impl Preview {
         match self {
             Self::Material(material) => {
                 follow = material::ui(ui, material, deps, backend);
+            }
+            Self::Uld(layout) => {
+                follow = uld::ui(ui, layout, deps, backend);
             }
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
@@ -101,16 +128,18 @@ impl Preview {
                 );
                 // `uv` only changes what is sampled; the widget still sizes itself from the whole
                 // texture unless the source size is stated as one slice.
-                let slice_size =
-                    egui::vec2(size[0] as f32, (size[1] as f32 / depth).max(1.0));
+                let slice_size = egui::vec2(size[0] as f32, (size[1] as f32 / depth).max(1.0));
                 ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.add(
-                            egui::Image::new(egui::load::SizedTexture::new(texture.id(), slice_size))
-                                .uv(uv)
-                                .maintain_aspect_ratio(true)
-                                .fit_to_original_size(1.0)
-                                .max_width(ui.available_width().max(slice_size.x)),
+                            egui::Image::new(egui::load::SizedTexture::new(
+                                texture.id(),
+                                slice_size,
+                            ))
+                            .uv(uv)
+                            .maintain_aspect_ratio(true)
+                            .fit_to_original_size(1.0)
+                            .max_width(ui.available_width().max(slice_size.x)),
                         );
                     });
                 });
@@ -126,20 +155,27 @@ impl Preview {
         match self {
             Self::Image { .. } => true,
             Self::Material(material) => material.has_params(),
+            Self::Uld(layout) => layout.has_details(),
             _ => false,
         }
     }
 
+    /// `view` is what the picker below the table is currently set to, and what it returns is the
+    /// same triple once the user has moved it.
     pub fn info_ui(
         &self,
         ui: &mut egui::Ui,
-        mip: u8,
-        slice: u16,
-        channels: Channels,
+        view: (u8, u16, Channels),
         follow: &mut Option<String>,
+        deps: &mut crate::assets::deps::Deps,
+        backend: &crate::backend::Backend,
     ) -> Option<(u8, u16, Channels)> {
         if let Self::Material(material) = self {
             material::details_ui(ui, material, follow);
+            return None;
+        }
+        if let Self::Uld(layout) = self {
+            uld::details_ui(ui, layout, deps, backend);
             return None;
         }
         let Self::Image {
@@ -152,8 +188,8 @@ impl Preview {
         else {
             return None;
         };
-        let (mut level, mut slice, mut channels) = (mip, slice, channels);
-        let was = (mip, slice, channels);
+        let (mip, mut slice, mut channels) = view;
+        let mut level = mip;
         ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             egui::Grid::new("asset_facts")
                 .num_columns(2)
@@ -223,7 +259,7 @@ impl Preview {
                 }
             }
         });
-        ((level, slice, channels) != was).then_some((level, slice, channels))
+        ((level, slice, channels) != view).then_some((level, slice, channels))
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -231,6 +267,7 @@ pub enum Viewer {
     Texture,
     Image,
     Material,
+    Uld,
     Text,
     Raw,
 }
@@ -238,13 +275,20 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 4] = [Self::Texture, Self::Image, Self::Material, Self::Text];
+    pub const RENDERED: [Self; 5] = [
+        Self::Texture,
+        Self::Image,
+        Self::Material,
+        Self::Uld,
+        Self::Text,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Texture => "Texture",
             Self::Image => "Image",
             Self::Material => "Material",
+            Self::Uld => "Layout",
             Self::Text => "Text",
             Self::Raw => "Raw bytes",
         }
@@ -256,6 +300,7 @@ impl Viewer {
             "tex" | "atex" => Self::Texture,
             "png" => Self::Image,
             "mtrl" => Self::Material,
+            "uld" => Self::Uld,
             "txt" | "csv" => Self::Text,
             _ => Self::Raw,
         }

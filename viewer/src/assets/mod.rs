@@ -10,8 +10,7 @@ use web_time::{Duration, Instant};
 use anyhow::Result;
 use egui::{
     Align, Button, CentralPanel, Color32, Label, Layout, Rect, RichText, ScrollArea, TextEdit,
-    TextStyle, Vec2, Widget, collapsing_header::paint_default_icon,
-    containers::panel::Panel, pos2,
+    TextStyle, Vec2, Widget, collapsing_header::paint_default_icon, containers::panel::Panel, pos2,
 };
 use nucleo_matcher::pattern::Pattern;
 
@@ -25,7 +24,6 @@ use pathlist::{PathList, Presence};
 pub mod deps;
 mod viewers;
 use viewers::{Preview, Viewer};
-
 
 /// Directories examined per frame while a search runs. Keeps the scan off the critical path without
 /// making a full sweep of the corpus feel stalled.
@@ -185,7 +183,11 @@ fn live_dirs(paths: &PathList, presence: &Presence) -> Vec<usize> {
 /// hash, so hashing it back would produce a confident-looking wrong answer.
 /// Hover and right-click for a file. For an unnamed one the path is synthesised, so hashing it
 /// would produce something the game never recorded; its actual index entry is used instead.
-pub(crate) fn path_context(response: &egui::Response, path: &str, unnamed: Option<pathlist::Unnamed>) {
+pub(crate) fn path_context(
+    response: &egui::Response,
+    path: &str,
+    unnamed: Option<pathlist::Unnamed>,
+) {
     use ironworks::sqpack::IndexHash;
 
     let (split, whole) = match unnamed {
@@ -256,13 +258,11 @@ pub(crate) fn crc_context(response: &egui::Response, kind: &str, name: &str, id:
         ui.label(RichText::new(name).monospace());
         ui.label(RichText::new(kind).weak());
         ui.add_space(2.0);
-        egui::Grid::new("crc_hash")
-            .num_columns(2)
-            .show(ui, |ui| {
-                ui.label(RichText::new("crc32").weak());
-                ui.label(RichText::new(&hash).monospace());
-                ui.end_row();
-            });
+        egui::Grid::new("crc_hash").num_columns(2).show(ui, |ui| {
+            ui.label(RichText::new("crc32").weak());
+            ui.label(RichText::new(&hash).monospace());
+            ui.end_row();
+        });
     });
 
     response.context_menu(|ui| {
@@ -968,9 +968,7 @@ impl AssetBrowser {
                             CollapsibleSidePanel::draw_arrow(ui, "asset_tree", Side::Left);
                         });
                     }
-                    ui.vertical_centered_justified(|ui| {
-                        ui.heading(crate::utils::file_name(&path))
-                    });
+                    ui.vertical_centered_justified(|ui| ui.heading(crate::utils::file_name(&path)));
                 });
                 ui.add_space(4.0);
                 // Wrapped in a `horizontal` so the row is sized by its content. A bare `with_layout`
@@ -1062,7 +1060,13 @@ impl AssetBrowser {
                     });
                     CentralPanel::default().show(ui, |ui| {
                         if let Some(preview) = &self.preview {
-                            change = preview.info_ui(ui, self.mip, self.slice, self.channels, &mut follow);
+                            change = preview.info_ui(
+                                ui,
+                                (self.mip, self.slice, self.channels),
+                                &mut follow,
+                                &mut self.deps,
+                                backend,
+                            );
                         }
                     });
                 });
@@ -1105,7 +1109,8 @@ impl AssetBrowser {
                     }
                     Load::Ready(_) => {
                         if let Some(preview) = &self.preview
-                            && let Some(target) = preview.ui(ui, self.slice, &mut self.deps, backend)
+                            && let Some(target) =
+                                preview.ui(ui, self.slice, &mut self.deps, backend)
                         {
                             follow = Some(target);
                         }
