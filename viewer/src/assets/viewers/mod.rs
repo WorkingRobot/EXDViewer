@@ -67,21 +67,49 @@ fn missing(ui: &egui::Ui, rect: Rect) {
     );
 }
 
-/// A details panel that is nothing but a table of label and value.
+/// A table of label and value, which is most of what a details panel is.
 fn facts(ui: &mut egui::Ui, id: &str, rows: &[(&'static str, String)]) {
-    ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-        egui::Grid::new(id)
-            .num_columns(2)
-            .striped(true)
-            .show(ui, |ui| {
-                for (label, value) in rows {
-                    ui.label(RichText::new(*label).weak());
-                    ui.label(RichText::new(value).monospace());
-                    ui.allocate_space(vec2(ui.available_width(), 0.0));
-                    ui.end_row();
+    egui::Grid::new(id)
+        .num_columns(2)
+        .striped(true)
+        .show(ui, |ui| {
+            for (label, value) in rows {
+                ui.label(RichText::new(*label).weak());
+                ui.label(RichText::new(value).monospace());
+                ui.allocate_space(vec2(ui.available_width(), 0.0));
+                ui.end_row();
+            }
+        });
+}
+
+/// The textures a viewer draws from, where the file itself never names them. Returns one if it was
+/// followed.
+fn textures<'a>(
+    ui: &mut egui::Ui,
+    paths: impl IntoIterator<Item = (Option<&'a str>, &'a str)>,
+) -> Option<String> {
+    ui.add_space(8.0);
+    ui.separator();
+    ui.label(RichText::new("Textures").weak());
+    ui.add_space(4.0);
+
+    let mut follow = None;
+    egui::Grid::new("textures")
+        .num_columns(2)
+        .striped(true)
+        .show(ui, |ui| {
+            for (label, path) in paths {
+                if let Some(label) = label {
+                    ui.label(RichText::new(label).weak());
                 }
-            });
-    });
+                if link(ui, crate::utils::file_name(path), path) {
+                    follow = Some(path.to_owned());
+                }
+                ui.allocate_space(vec2(ui.available_width(), 0.0));
+                ui.end_row();
+            }
+        });
+    follow
 }
 
 /// A section title in the main area: the details panel's weak styling at heading size.
@@ -262,11 +290,11 @@ impl Preview {
             return None;
         }
         if let Self::Font(font) = self {
-            font.details_ui(ui);
+            font.details_ui(ui, follow);
             return None;
         }
         if let Self::Icons(icons) = self {
-            icons.details_ui(ui);
+            icons.details_ui(ui, follow);
             return None;
         }
         let Self::Image {

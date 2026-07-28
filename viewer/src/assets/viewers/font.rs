@@ -1,9 +1,9 @@
 use anyhow::Result;
-use egui::{Rect, RichText, Sense, Vec2, load::SizedTexture, pos2, vec2};
+use egui::{Rect, RichText, ScrollArea, Sense, Vec2, load::SizedTexture, pos2, vec2};
 use ironworks::file::{File, fdt};
 use std::io::Cursor;
 
-use super::{PADDING, Preview, facts, grid, missing, section};
+use super::{PADDING, Preview, facts, grid, missing, section, textures};
 use crate::assets::deps::{Dep, Deps};
 use crate::backend::Backend;
 use crate::utils::file_name;
@@ -50,6 +50,8 @@ struct GlyphCell {
 pub struct Rendered {
     /// Where the glyph sheets live, by the index a glyph names.
     sheets: Vec<String>,
+    /// Which of them the glyphs actually cut from, since a font can skip one.
+    used: Vec<u16>,
     glyphs: Vec<GlyphCell>,
     /// The sample line, as indices into `glyphs`.
     sample: Vec<usize>,
@@ -127,15 +129,14 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
         }
     }
 
-    let mut sheets = font
+    let mut used = font
         .glyphs()
         .iter()
         .map(|glyph| glyph.texture_file())
         .collect::<Vec<_>>();
-    sheets.sort_unstable();
-    sheets.dedup();
-    let used = sheets.len();
-    let sheets = (0..=sheets.last().copied().unwrap_or(0))
+    used.sort_unstable();
+    used.dedup();
+    let sheets = (0..=used.last().copied().unwrap_or(0))
         .map(|file| sheet_path(path, file))
         .collect();
 
@@ -150,11 +151,11 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
             "Sheet",
             format!("{} x {}", font.texture_width(), font.texture_height()),
         ),
-        ("Sheets used", used.to_string()),
     ];
 
     Ok(Preview::Font(Box::new(Rendered {
         sheets,
+        used,
         glyphs,
         sample,
         blocks,
@@ -327,7 +328,18 @@ pub fn ui(ui: &mut egui::Ui, font: &Rendered, deps: &mut Deps, backend: &Backend
 }
 
 impl Rendered {
-    pub fn details_ui(&self, ui: &mut egui::Ui) {
-        facts(ui, "font_identity", &self.identity);
+    pub fn details_ui(&self, ui: &mut egui::Ui, follow: &mut Option<String>) {
+        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            facts(ui, "font_identity", &self.identity);
+            // A glyph names an index into a family the file name implies, so these are worked out
+            // rather than read, and nothing else in the viewer says which they are.
+            let sheets = self.used.iter().map(|file| {
+                let path = self.sheets[usize::from(*file)].as_str();
+                (None, path)
+            });
+            if let Some(path) = textures(ui, sheets) {
+                *follow = Some(path);
+            }
+        });
     }
 }

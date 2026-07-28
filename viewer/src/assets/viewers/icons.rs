@@ -1,9 +1,9 @@
 use anyhow::Result;
-use egui::{Rect, RichText, Sense, Vec2, load::SizedTexture, pos2, vec2};
+use egui::{Rect, RichText, ScrollArea, Sense, Vec2, load::SizedTexture, pos2, vec2};
 use ironworks::file::{File, gfd};
 use std::io::Cursor;
 
-use super::{PADDING, Preview, facts, grid, missing};
+use super::{PADDING, Preview, facts, grid, missing, textures};
 use crate::assets::deps::{Dep, Deps};
 use crate::backend::Backend;
 
@@ -24,6 +24,8 @@ const CONTROLLERS: [(&str, &str); 6] = [
 /// The icon sheet, decoded and ready to draw.
 pub struct Rendered {
     icons: Vec<Icon>,
+    /// Every controller's sheet, by the name the picker shows.
+    sheets: Vec<(&'static str, String)>,
     /// The largest icon, which every cell of the grid is sized to.
     largest: Vec2,
     identity: Vec<(&'static str, String)>,
@@ -86,8 +88,14 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
         ("Sheet", "512 x 1024".to_owned()),
     ];
 
+    let sheets = CONTROLLERS
+        .iter()
+        .map(|(name, sheet)| (*name, format!("common/font/{sheet}.tex")))
+        .collect();
+
     Ok(Preview::Icons(Box::new(Rendered {
         icons,
+        sheets,
         largest,
         identity,
         choice: egui::Id::new(("gfd controller", path)),
@@ -135,7 +143,17 @@ pub fn ui(ui: &mut egui::Ui, icons: &Rendered, deps: &mut Deps, backend: &Backen
 }
 
 impl Rendered {
-    pub fn details_ui(&self, ui: &mut egui::Ui) {
-        facts(ui, "icons_identity", &self.identity);
+    pub fn details_ui(&self, ui: &mut egui::Ui, follow: &mut Option<String>) {
+        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            facts(ui, "icons_identity", &self.identity);
+            // The file names no sheet at all: every controller's holds the same rectangles.
+            let sheets = self
+                .sheets
+                .iter()
+                .map(|(name, path)| (Some(*name), path.as_str()));
+            if let Some(path) = textures(ui, sheets) {
+                *follow = Some(path);
+            }
+        });
     }
 }
