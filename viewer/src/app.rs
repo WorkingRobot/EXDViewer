@@ -254,7 +254,7 @@ impl App {
         let Some(asset) = params.get("path") else {
             return Some("Assets".to_string());
         };
-        Some(asset.rsplit('/').next().unwrap_or(asset).to_string())
+        Some(crate::utils::file_name(asset).to_string())
     }
 
     fn title_music(&self, _path: &Path, params: &Params<'_, '_>) -> Option<String> {

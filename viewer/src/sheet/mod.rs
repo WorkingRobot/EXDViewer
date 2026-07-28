@@ -13,6 +13,7 @@ use std::{cell::RefCell, fmt::Write, sync::Arc};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 pub use cell::{CellResponse, MatchOptions};
+pub(crate) use cell::draw_color;
 use compact_str::ToCompactString;
 pub use csv::export_csv;
 use egui::{

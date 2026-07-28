@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::io::Cursor;
 use std::rc::Rc;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,7 +10,7 @@ use web_time::{Duration, Instant};
 use anyhow::Result;
 use egui::{
     Align, Button, CentralPanel, Color32, Label, Layout, Rect, RichText, ScrollArea, TextEdit,
-    TextStyle, TextureHandle, Vec2, Widget, collapsing_header::paint_default_icon,
+    TextStyle, Vec2, Widget, collapsing_header::paint_default_icon,
     containers::panel::Panel, pos2,
 };
 use nucleo_matcher::pattern::Pattern;
@@ -22,6 +21,11 @@ use crate::settings::api_base;
 use crate::utils::{CollapsibleSidePanel, FuzzyMatcher, Side, TrackedPromise};
 
 use pathlist::{PathList, Presence};
+
+pub mod deps;
+mod viewers;
+use viewers::{Preview, Viewer};
+
 
 /// Directories examined per frame while a search runs. Keeps the scan off the critical path without
 /// making a full sweep of the corpus feel stalled.
@@ -53,7 +57,7 @@ struct Node {
 }
 
 /// Sizes and durations in the log, so the console block stays readable at a glance.
-struct Bytes(usize);
+pub struct Bytes(pub usize);
 struct Millis(Duration);
 
 impl fmt::Display for Bytes {
@@ -181,7 +185,7 @@ fn live_dirs(paths: &PathList, presence: &Presence) -> Vec<usize> {
 /// hash, so hashing it back would produce a confident-looking wrong answer.
 /// Hover and right-click for a file. For an unnamed one the path is synthesised, so hashing it
 /// would produce something the game never recorded; its actual index entry is used instead.
-fn path_context(response: &egui::Response, path: &str, unnamed: Option<pathlist::Unnamed>) {
+pub(crate) fn path_context(response: &egui::Response, path: &str, unnamed: Option<pathlist::Unnamed>) {
     use ironworks::sqpack::IndexHash;
 
     let (split, whole) = match unnamed {
@@ -243,17 +247,34 @@ fn path_context(response: &egui::Response, path: &str, unnamed: Option<pathlist:
         }
     });
 }
+/// The same hover and right-click a path gets, for a value the game identifies by a crc32: the name
+/// on top, the hash in a labelled grid below it, and a copy of each.
+pub(crate) fn crc_context(response: &egui::Response, kind: &str, name: &str, id: u32) {
+    let hash = format!("{id:#010X}");
 
-fn texture_kind_name(kind: ironworks::file::tex::TextureKind) -> &'static str {
-    use ironworks::file::tex::TextureKind;
-    match kind {
-        TextureKind::D1 => "1D",
-        TextureKind::D2 => "2D",
-        TextureKind::D3 => "3D",
-        TextureKind::Cube => "Cube map",
-        TextureKind::D2Array => "2D array",
-        TextureKind::Unknown => "Unknown",
-    }
+    response.clone().on_hover_ui(|ui| {
+        ui.label(RichText::new(name).monospace());
+        ui.label(RichText::new(kind).weak());
+        ui.add_space(2.0);
+        egui::Grid::new("crc_hash")
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.label(RichText::new("crc32").weak());
+                ui.label(RichText::new(&hash).monospace());
+                ui.end_row();
+            });
+    });
+
+    response.context_menu(|ui| {
+        if ui.button("Copy").clicked() {
+            ui.ctx().copy_text(name.to_owned());
+            ui.close();
+        }
+        if ui.button("Copy (crc32)").clicked() {
+            ui.ctx().copy_text(hash.clone());
+            ui.close();
+        }
+    });
 }
 
 /// sqpack category ids, which are the first segment of every real path.
@@ -491,400 +512,6 @@ enum Load<T: Send + 'static, R = T> {
     Failed(String),
 }
 
-/// Text is capped because the hex dump below it already covers the whole file, and a multi-megabyte
-/// label is not something egui should be asked to lay out.
-const MAX_TEXT_PREVIEW: usize = 256 * 1024;
-
-/// Which colour channels of an image to show. Masking them off is how a packed texture (normal
-/// maps, masks, occlusion) is read: the interesting data is rarely the RGB composite.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Channels {
-    r: bool,
-    g: bool,
-    b: bool,
-    a: bool,
-}
-
-impl Default for Channels {
-    fn default() -> Self {
-        Self {
-            r: true,
-            g: true,
-            b: true,
-            a: true,
-        }
-    }
-}
-
-impl Channels {
-    fn all(self) -> bool {
-        self.r && self.g && self.b && self.a
-    }
-
-    /// Zero the unselected channels, or, when exactly one is picked, show it as greyscale so a
-    /// single packed channel is actually readable.
-    fn apply(self, image: &mut image::RgbaImage) {
-        if self.all() {
-            return;
-        }
-        let only = match (self.r, self.g, self.b, self.a) {
-            (true, false, false, false) => Some(0),
-            (false, true, false, false) => Some(1),
-            (false, false, true, false) => Some(2),
-            (false, false, false, true) => Some(3),
-            _ => None,
-        };
-        for pixel in image.pixels_mut() {
-            let [r, g, b, a] = pixel.0;
-            pixel.0 = match only {
-                Some(channel) => {
-                    let value = pixel.0[channel];
-                    [value, value, value, u8::MAX]
-                }
-                // Alpha is forced opaque when deselected, so the colour channels stay visible.
-                None => [
-                    if self.r { r } else { 0 },
-                    if self.g { g } else { 0 },
-                    if self.b { b } else { 0 },
-                    if self.a { a } else { u8::MAX },
-                ],
-            };
-        }
-    }
-}
-
-/// Which renderer to show a file with. `Raw` is always available; the rest only make sense for the
-/// formats they understand, but any of them can be forced from the dropdown.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Viewer {
-    Texture,
-    Image,
-    Text,
-    Raw,
-}
-
-impl Viewer {
-    /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
-    /// viewer sits in the same place whatever file is selected.
-    const RENDERED: [Self; 3] = [Self::Texture, Self::Image, Self::Text];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Texture => "Texture",
-            Self::Image => "Image",
-            Self::Text => "Text",
-            Self::Raw => "Raw bytes",
-        }
-    }
-
-    /// What a path is shown with unless the dropdown says otherwise.
-    fn recommended(path: &str) -> Self {
-        match path.rsplit('.').next().unwrap_or_default() {
-            "tex" | "atex" => Self::Texture,
-            "png" => Self::Image,
-            "txt" | "csv" => Self::Text,
-            _ => Self::Raw,
-        }
-    }
-}
-
-/// One mipmap level, for the picker under the info table.
-struct Mip {
-    level: u8,
-    width: u16,
-    height: u16,
-    bytes: usize,
-}
-
-/// A rendered view of the selected file.
-enum Preview {
-    Text(String),
-    Image {
-        texture: TextureHandle,
-        size: [usize; 2],
-        /// Label/value pairs describing the source file.
-        facts: Vec<(&'static str, String)>,
-        mips: Vec<Mip>,
-    },
-    /// Nothing to render; an empty message means the type simply has no viewer.
-    Failed(String),
-}
-
-impl Preview {
-    fn decode(
-        ctx: &egui::Context,
-        path: &str,
-        bytes: &[u8],
-        viewer: Viewer,
-        mip: u8,
-        channels: Channels,
-    ) -> Self {
-        let result = match viewer {
-            Viewer::Text => Ok(Self::Text(
-                String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_TEXT_PREVIEW)]).into_owned(),
-            )),
-            Viewer::Image => Self::image(ctx, path, bytes, channels),
-            Viewer::Texture => Self::texture(ctx, path, bytes, mip, channels),
-            Viewer::Raw => return Self::Failed(String::new()),
-        };
-        result.unwrap_or_else(|e| Self::Failed(e.to_string()))
-    }
-
-    fn image(ctx: &egui::Context, path: &str, bytes: &[u8], channels: Channels) -> Result<Self> {
-        let image = image::load_from_memory(bytes)?;
-        let facts = vec![
-            ("Format", "PNG".to_string()),
-            (
-                "Dimensions",
-                format!("{} x {}", image.width(), image.height()),
-            ),
-            ("Colour", format!("{:?}", image.color())),
-            ("File size", Bytes(bytes.len()).to_string()),
-        ];
-        Ok(Self::upload(ctx, path, image, facts, Vec::new(), channels))
-    }
-
-    fn texture(
-        ctx: &egui::Context,
-        path: &str,
-        bytes: &[u8],
-        mip: u8,
-        channels: Channels,
-    ) -> Result<Self> {
-        use ironworks::file::{File as _, tex};
-
-        let texture = tex::Texture::read(Cursor::new(bytes.to_vec()))?;
-        let format = texture.format();
-        let mip = mip.min(texture.mip_levels().saturating_sub(1));
-        let facts = vec![
-            ("Format", format!("{format:?}")),
-            ("Format kind", format!("{:?}", format.kind())),
-            ("Components", format.components().to_string()),
-            ("Bits per pixel", format.bits_per_pixel().to_string()),
-            ("Texture kind", texture_kind_name(texture.kind()).to_owned()),
-            (
-                "Dimensions",
-                format!("{} x {}", texture.width(), texture.height()),
-            ),
-            ("Depth", texture.depth().to_string()),
-            ("Mipmap levels", texture.mip_levels().to_string()),
-            ("Array size", texture.array_size().to_string()),
-            (
-                "Pixel data",
-                format!(
-                    "{} ({} bytes)",
-                    Bytes(texture.data().len()),
-                    texture.data().len()
-                ),
-            ),
-            ("File size", Bytes(bytes.len()).to_string()),
-        ];
-        let mips = (0..texture.mip_levels())
-            .map(|level| {
-                let (width, height) = texture.mip_size(level);
-                Mip {
-                    level,
-                    width,
-                    height,
-                    bytes: texture.mip_data(level).map_or(0, <[u8]>::len),
-                }
-            })
-            .collect();
-        let image = crate::utils::tex_loader::decode_mip(&texture, mip, path)?;
-        Ok(Self::upload(ctx, path, image, facts, mips, channels))
-    }
-
-    fn upload(
-        ctx: &egui::Context,
-        path: &str,
-        image: image::DynamicImage,
-        facts: Vec<(&'static str, String)>,
-        mips: Vec<Mip>,
-        channels: Channels,
-    ) -> Self {
-        let mut rgba = image.to_rgba8();
-        channels.apply(&mut rgba);
-        let size = [rgba.width() as usize, rgba.height() as usize];
-        let texture = ctx.load_texture(
-            format!("asset:{path}"),
-            egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_flat_samples().as_slice()),
-            // Nearest keeps a zoomed-in mipmap readable as actual texels rather than a blur.
-            egui::TextureOptions::NEAREST,
-        );
-        Self::Image {
-            texture,
-            size,
-            facts,
-            mips,
-        }
-    }
-
-    /// The main body: the image or text itself.
-    fn ui(&self, ui: &mut egui::Ui) {
-        match self {
-            Self::Failed(e) if e.is_empty() => {
-                ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("No viewer for this file type. Use Raw bytes.").weak());
-                });
-            }
-            Self::Failed(e) => {
-                ui.centered_and_justified(|ui| {
-                    ui.colored_label(Color32::RED, format!("Could not render this file: {e}"));
-                });
-            }
-            Self::Text(text) => {
-                ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    ui.add(Label::new(RichText::new(text).monospace()).selectable(true));
-                });
-            }
-            Self::Image { texture, size, .. } => {
-                ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.add(
-                            egui::Image::new(texture)
-                                .maintain_aspect_ratio(true)
-                                .fit_to_original_size(1.0)
-                                .max_width(ui.available_width().max(size[0] as f32)),
-                        );
-                    });
-                });
-            }
-        }
-    }
-
-    /// The info sidebar: property table, channel toggles, then the mipmap picker. Returns the new
-    /// (level, channels) if either changed.
-    fn info_ui(&self, ui: &mut egui::Ui, mip: u8, channels: Channels) -> Option<(u8, Channels)> {
-        let Self::Image { facts, mips, .. } = self else {
-            return None;
-        };
-        let (mut level, mut channels, was) = (mip, channels, (mip, channels));
-        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            egui::Grid::new("asset_facts")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    for (label, value) in facts {
-                        ui.label(RichText::new(*label).weak());
-                        ui.label(value);
-                        // Stripes are drawn across the summed column widths, so the last column has
-                        // to take the slack or they stop short of the panel edge.
-                        ui.allocate_space(Vec2::new(ui.available_width(), 0.0));
-                        ui.end_row();
-                    }
-                });
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.label(RichText::new("Channels").weak());
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                for (name, flag) in [
-                    ("R", &mut channels.r),
-                    ("G", &mut channels.g),
-                    ("B", &mut channels.b),
-                    ("A", &mut channels.a),
-                ] {
-                    ui.toggle_value(flag, name);
-                }
-            });
-
-            if mips.len() > 1 {
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label(RichText::new("Mipmaps").weak());
-                ui.add_space(4.0);
-                for entry in mips {
-                    let label = format!(
-                        "{}: {} x {}  ({})",
-                        entry.level,
-                        entry.width,
-                        entry.height,
-                        Bytes(entry.bytes)
-                    );
-                    if ui.selectable_label(entry.level == mip, label).clicked() {
-                        level = entry.level;
-                    }
-                }
-            }
-        });
-        ((level, channels) != was).then_some((level, channels))
-    }
-}
-
-const HEX_COLS: usize = 16;
-/// Rows per page of the byte view. egui positions a virtualised list in `f32`, which stops being
-/// exact past ~16.7M pixels, so a big enough file would scroll unevenly or fail to reach its end.
-/// One page is 1 MiB, comfortably inside that, and files below it get no pagination at all.
-const HEX_PAGE_ROWS: usize = 64 * 1024;
-
-/// Offset, hex, ASCII. Rows are virtualised, so only what is on screen is ever formatted.
-fn hex_dump(ui: &mut egui::Ui, bytes: &[u8], page: &mut usize) {
-    use std::fmt::Write as _;
-
-    let rows = bytes.len().div_ceil(HEX_COLS);
-    let pages = rows.div_ceil(HEX_PAGE_ROWS).max(1);
-    *page = (*page).min(pages - 1);
-
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{} ({} bytes)", Bytes(bytes.len()), bytes.len())).weak());
-        if pages > 1 {
-            ui.separator();
-            if ui.add_enabled(*page > 0, Button::new("◀")).clicked() {
-                *page -= 1;
-            }
-            ui.label(format!("page {} / {pages}", *page + 1));
-            if ui
-                .add_enabled(*page + 1 < pages, Button::new("▶"))
-                .clicked()
-            {
-                *page += 1;
-            }
-            ui.label(
-                RichText::new(format!("from {:#010X}", *page * HEX_PAGE_ROWS * HEX_COLS)).weak(),
-            );
-        }
-    });
-    ui.add_space(4.0);
-
-    let first_row = *page * HEX_PAGE_ROWS;
-    let page_rows = (rows - first_row).min(HEX_PAGE_ROWS);
-    let row_height = ui.text_style_height(&TextStyle::Monospace);
-    ScrollArea::both()
-        .auto_shrink(false)
-        .id_salt(*page)
-        .show_rows(ui, row_height, page_rows, |ui, range| {
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-            let mut line = String::with_capacity(80);
-            for row in range {
-                let start = (first_row + row) * HEX_COLS;
-                let chunk = &bytes[start..(start + HEX_COLS).min(bytes.len())];
-                line.clear();
-                let _ = write!(line, "{start:08X}  ");
-                for i in 0..HEX_COLS {
-                    if i == HEX_COLS / 2 {
-                        line.push(' ');
-                    }
-                    match chunk.get(i) {
-                        Some(b) => {
-                            let _ = write!(line, "{b:02X} ");
-                        }
-                        None => line.push_str("   "),
-                    }
-                }
-                line.push(' ');
-                line.extend(chunk.iter().map(|b| match b {
-                    0x20..=0x7e => *b as char,
-                    _ => '.',
-                }));
-                ui.label(RichText::new(&line).monospace());
-            }
-        });
-}
-
-/// An in-progress fuzzy sweep. Search has to reach names inside directories whose own path does not
-/// match the query, so it walks every directory rather than filtering the tree.
 struct Scan {
     pattern: Pattern,
     cursor: usize,
@@ -906,10 +533,13 @@ pub struct AssetBrowser {
     bytes_of: Option<String>,
     /// Rendered view of `bytes`, decoded once per selection.
     preview: Option<Preview>,
+    /// Assets the current preview references, such as a material's textures.
+    deps: deps::Deps,
     /// Set when the selection is an unnamed file, which has to be read by hash rather than by path.
     selected_unnamed: Option<pathlist::Unnamed>,
     /// Mipmap level on show, and the viewer picked from the dropdown, if not the recommended one.
     mip: u8,
+    slice: u16,
     channels: Channels,
     viewer: Option<Viewer>,
     hex_page: usize,
@@ -928,9 +558,11 @@ impl Default for AssetBrowser {
             state: Load::Idle,
             bytes: Load::Idle,
             bytes_of: None,
+            deps: deps::Deps::default(),
             preview: None,
             selected_unnamed: None,
             mip: 0,
+            slice: 0,
             channels: Channels::default(),
             viewer: None,
             hex_page: 0,
@@ -986,11 +618,11 @@ impl AssetBrowser {
         self.poll(ui.ctx(), backend);
         self.apply_pending();
         let clicked = self.side_panel(ui);
-        self.detail_panel(ui, backend);
+        let followed = self.detail_panel(ui, backend);
         self.goto
             .take()
             .map(Action::Navigate)
-            .or_else(|| clicked.map(Action::Select))
+            .or_else(|| clicked.or(followed).map(Action::Select))
     }
 
     fn poll(&mut self, ctx: &egui::Context, backend: &Backend) {
@@ -1309,7 +941,10 @@ impl AssetBrowser {
         ctx.request_repaint();
     }
 
-    fn detail_panel(&mut self, ui: &mut egui::Ui, backend: &Backend) {
+    fn detail_panel(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<String> {
+        // A material links through to the textures it binds, so the panel can ask for a new
+        // selection the same way the tree does.
+        let mut follow = None;
         CentralPanel::default().show(ui, |ui| {
             let Some(path) = self.selected.clone() else {
                 if CollapsibleSidePanel::is_collapsed(ui.ctx(), "asset_tree") {
@@ -1334,7 +969,7 @@ impl AssetBrowser {
                         });
                     }
                     ui.vertical_centered_justified(|ui| {
-                        ui.heading(path.rsplit('/').next().unwrap_or(&path))
+                        ui.heading(crate::utils::file_name(&path))
                     });
                 });
                 ui.add_space(4.0);
@@ -1407,7 +1042,7 @@ impl AssetBrowser {
             });
 
             // Only textures and images have anything to put in the sidebar.
-            if matches!(&self.preview, Some(Preview::Image { .. })) {
+            if self.preview.as_ref().is_some_and(Preview::has_details) {
                 let mut change = None;
                 CollapsibleSidePanel::new("asset_info", Side::Right).show(ui, |ui, is_open| {
                     if !is_open {
@@ -1427,22 +1062,27 @@ impl AssetBrowser {
                     });
                     CentralPanel::default().show(ui, |ui| {
                         if let Some(preview) = &self.preview {
-                            change = preview.info_ui(ui, self.mip, self.channels);
+                            change = preview.info_ui(ui, self.mip, self.slice, self.channels, &mut follow);
                         }
                     });
                 });
-                if let Some((mip, channels)) = change {
+                if let Some((mip, slice, channels)) = change {
+                    // The slice is chosen at draw time, so only the settings that change the pixels
+                    // are worth throwing the decoded preview away for.
+                    let redecode = (mip, channels) != (self.mip, self.channels);
                     self.mip = mip;
+                    self.slice = slice;
                     self.channels = channels;
-                    // Force a re-decode with the new settings.
-                    self.preview = None;
+                    if redecode {
+                        self.preview = None;
+                    }
                 }
             }
 
             let showing = self.viewer.unwrap_or_else(|| Viewer::recommended(&path));
             CentralPanel::default().show(ui, |ui| {
                 if CollapsibleSidePanel::is_collapsed(ui.ctx(), "asset_info")
-                    && matches!(&self.preview, Some(Preview::Image { .. }))
+                    && self.preview.as_ref().is_some_and(Preview::has_details)
                 {
                     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                         CollapsibleSidePanel::draw_arrow(ui, "asset_info", Side::Right);
@@ -1464,13 +1104,16 @@ impl AssetBrowser {
                         self.hex_page = page;
                     }
                     Load::Ready(_) => {
-                        if let Some(preview) = &self.preview {
-                            preview.ui(ui);
+                        if let Some(preview) = &self.preview
+                            && let Some(target) = preview.ui(ui, self.slice, &mut self.deps, backend)
+                        {
+                            follow = Some(target);
                         }
                     }
                 }
             });
         });
+        follow
     }
 
     /// Fetch the selected file if it is not already in hand, and decode a view of it.
@@ -1479,6 +1122,7 @@ impl AssetBrowser {
             self.bytes_of = Some(path.to_string());
             self.preview = None;
             self.mip = 0;
+            self.slice = 0;
             self.channels = Channels::default();
             self.viewer = None;
             self.hex_page = 0;
@@ -1796,4 +1440,138 @@ mod tests {
         assert!(dirs_mapped.contains(&Some(0)) && dirs_mapped.contains(&Some(2)));
         assert!(!dirs_mapped.contains(&Some(1)));
     }
+}
+
+/// Text is capped because the hex dump below it already covers the whole file, and a multi-megabyte
+/// label is not something egui should be asked to lay out.
+pub const MAX_TEXT_PREVIEW: usize = 256 * 1024;
+
+/// Which colour channels of an image to show. Masking them off is how a packed texture (normal
+/// maps, masks, occlusion) is read: the interesting data is rarely the RGB composite.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Channels {
+    r: bool,
+    g: bool,
+    b: bool,
+    a: bool,
+}
+
+impl Default for Channels {
+    fn default() -> Self {
+        Self {
+            r: true,
+            g: true,
+            b: true,
+            a: true,
+        }
+    }
+}
+
+impl Channels {
+    fn all(self) -> bool {
+        self.r && self.g && self.b && self.a
+    }
+
+    /// Zero the unselected channels, or, when exactly one is picked, show it as greyscale so a
+    /// single packed channel is actually readable.
+    fn apply(self, image: &mut image::RgbaImage) {
+        if self.all() {
+            return;
+        }
+        let only = match (self.r, self.g, self.b, self.a) {
+            (true, false, false, false) => Some(0),
+            (false, true, false, false) => Some(1),
+            (false, false, true, false) => Some(2),
+            (false, false, false, true) => Some(3),
+            _ => None,
+        };
+        for pixel in image.pixels_mut() {
+            let [r, g, b, a] = pixel.0;
+            pixel.0 = match only {
+                Some(channel) => {
+                    let value = pixel.0[channel];
+                    [value, value, value, u8::MAX]
+                }
+                // Alpha is forced opaque when deselected, so the colour channels stay visible.
+                None => [
+                    if self.r { r } else { 0 },
+                    if self.g { g } else { 0 },
+                    if self.b { b } else { 0 },
+                    if self.a { a } else { u8::MAX },
+                ],
+            };
+        }
+    }
+}
+
+/// Which renderer to show a file with. `Raw` is always available; the rest only make sense for the
+/// formats they understand, but any of them can be forced from the dropdown.
+const HEX_COLS: usize = 16;
+/// Rows per page of the byte view. egui positions a virtualised list in `f32`, which stops being
+/// exact past ~16.7M pixels, so a big enough file would scroll unevenly or fail to reach its end.
+/// One page is 1 MiB, comfortably inside that, and files below it get no pagination at all.
+const HEX_PAGE_ROWS: usize = 64 * 1024;
+
+/// Offset, hex, ASCII. Rows are virtualised, so only what is on screen is ever formatted.
+fn hex_dump(ui: &mut egui::Ui, bytes: &[u8], page: &mut usize) {
+    use std::fmt::Write as _;
+
+    let rows = bytes.len().div_ceil(HEX_COLS);
+    let pages = rows.div_ceil(HEX_PAGE_ROWS).max(1);
+    *page = (*page).min(pages - 1);
+
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("{} ({} bytes)", Bytes(bytes.len()), bytes.len())).weak());
+        if pages > 1 {
+            ui.separator();
+            if ui.add_enabled(*page > 0, Button::new("◀")).clicked() {
+                *page -= 1;
+            }
+            ui.label(format!("page {} / {pages}", *page + 1));
+            if ui
+                .add_enabled(*page + 1 < pages, Button::new("▶"))
+                .clicked()
+            {
+                *page += 1;
+            }
+            ui.label(
+                RichText::new(format!("from {:#010X}", *page * HEX_PAGE_ROWS * HEX_COLS)).weak(),
+            );
+        }
+    });
+    ui.add_space(4.0);
+
+    let first_row = *page * HEX_PAGE_ROWS;
+    let page_rows = (rows - first_row).min(HEX_PAGE_ROWS);
+    let row_height = ui.text_style_height(&TextStyle::Monospace);
+    ScrollArea::both()
+        .auto_shrink(false)
+        .id_salt(*page)
+        .show_rows(ui, row_height, page_rows, |ui, range| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            let mut line = String::with_capacity(80);
+            for row in range {
+                let start = (first_row + row) * HEX_COLS;
+                let chunk = &bytes[start..(start + HEX_COLS).min(bytes.len())];
+                line.clear();
+                let _ = write!(line, "{start:08X}  ");
+                for i in 0..HEX_COLS {
+                    if i == HEX_COLS / 2 {
+                        line.push(' ');
+                    }
+                    match chunk.get(i) {
+                        Some(b) => {
+                            let _ = write!(line, "{b:02X} ");
+                        }
+                        None => line.push_str("   "),
+                    }
+                }
+                line.push(' ');
+                line.extend(chunk.iter().map(|b| match b {
+                    0x20..=0x7e => *b as char,
+                    _ => '.',
+                }));
+                ui.label(RichText::new(&line).monospace());
+            }
+        });
 }

@@ -1,0 +1,10 @@
+# Not the actual names (hashes don't match)
+198d11cd Default
+337c6bc4 Standard
+40d1481e CategoryFlowMapType
+71ada939 Flow
+a02f4828 Mask
+a7d2ff60 ValVertexColorEmissive
+c8bd1def CategorySpecularType
+dfe74bac ValVertexColorOff
+f52ccf05 CategoryVertexColorMode

@@ -35,3 +35,8 @@ pub use unsend_promise::UnsendPromise;
 pub use version::GameVersion;
 pub use webreq::{HttpResponse, fetch_url, fetch_url_str, request};
 pub use yield_now::yield_to_ui;
+
+/// The last segment of a game path. Paths are always slash-separated, so this is the file name.
+pub fn file_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}

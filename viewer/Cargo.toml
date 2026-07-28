@@ -11,6 +11,8 @@ name = "worker"
 path = "src/worker/runner.rs"
 
 [dependencies]
+half = "2"
+crc = "3"
 shadow-rs = { version = "2", default-features = false }
 egui = "0.35"
 eframe = { version = "0.35", default-features = false, features = [
@@ -25,7 +27,7 @@ catppuccin-egui = { version = "5", default-features = false, features = [
 ] }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
-ironworks = { version = "0.4.1", features = ["excel", "sqpack", "tex", "scd"] }
+ironworks = { version = "0.4.1", features = ["excel", "sqpack", "tex", "scd", "mtrl"] }
 pathlist = { path = "../pathlist", default-features = false }
 symphonia = { version = "0.6", default-features = false, features = [
     "ogg",
