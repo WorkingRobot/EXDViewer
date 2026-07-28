@@ -21,7 +21,7 @@ use shadow_rs::shadow;
 use std::{io, sync::Arc};
 use thiserror::Error;
 
-use crate::{paths::PathIndex, queue::MessageQueue};
+use crate::{paths::PathIndex, queue::MessageQueue, routes::api::STREAM_KIND};
 
 shadow!(build);
 
@@ -100,11 +100,10 @@ async fn main() -> Result<(), ServerError> {
             .wrap(
                 Cors::default()
                     // localhost + private/loopback LAN IPs (any port) so a LAN trunk serve reaches the API.
-                    .allowed_origin_fn(|origin, _req_head| {
-                        origin.to_str().is_ok_and(is_dev_origin)
-                    })
+                    .allowed_origin_fn(|origin, _req_head| origin.to_str().is_ok_and(is_dev_origin))
                     .allowed_methods(vec!["GET", "POST"])
-                    .allowed_headers(vec!["Content-Type"]),
+                    .allowed_headers(vec!["Content-Type"])
+                    .expose_headers(vec![STREAM_KIND]),
             )
             .wrap(NormalizePath::new(TrailingSlash::Always))
             .wrap(Condition::new(

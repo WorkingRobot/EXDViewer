@@ -8,7 +8,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use xiv_core::file::version::GameVersion;
 
-use crate::data::{GameData, RepositoryInfo, Target, VersionInfo};
+use crate::data::{GameData, RepositoryInfo, StoredFile, Target, VersionInfo};
 use crate::paths::PathIndex;
 
 #[derive(Debug, Clone)]
@@ -22,8 +22,8 @@ pub enum RequestData {
 }
 
 pub enum Response {
-    GetFile(Result<Arc<Vec<u8>>, ironworks::Error>),
-    GetFileByHash(Result<Arc<Vec<u8>>, ironworks::Error>),
+    GetFile(Result<Arc<StoredFile>, ironworks::Error>),
+    GetFileByHash(Result<Arc<StoredFile>, ironworks::Error>),
     Exists(Result<Vec<bool>, ironworks::Error>),
     GlobalPaths(anyhow::Result<Bytes>),
     Presence(anyhow::Result<Bytes>),
@@ -247,7 +247,7 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_file(&self, target: Target, version: Option<GameVersion>, path: String) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+    pub async fn get_file(&self, target: Target, version: Option<GameVersion>, path: String) -> Result<Arc<StoredFile>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
             data: RequestData::GetFile(target, version, path),
@@ -262,7 +262,7 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_file_by_hash(&self, target: Target, version: Option<GameVersion>, repository: u8, category: u8, hash: ironworks::sqpack::IndexHash) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+    pub async fn get_file_by_hash(&self, target: Target, version: Option<GameVersion>, repository: u8, category: u8, hash: ironworks::sqpack::IndexHash) -> Result<Arc<StoredFile>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
         self.0.tx.send(Request {
             data: RequestData::GetFileByHash(target, version, repository, category, hash),

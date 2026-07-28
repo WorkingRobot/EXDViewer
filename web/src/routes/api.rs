@@ -28,6 +28,9 @@ use crate::{
     queue::MessageQueue,
 };
 
+/// What format a file was stored as.
+pub const STREAM_KIND: header::HeaderName = header::HeaderName::from_static("x-stream-kind");
+
 pub fn service() -> impl HttpServiceFactory {
     web::scope("/api")
         // Literal-prefixed routes first. They cannot collide with the region routes by segment
@@ -138,7 +141,9 @@ async fn serve_file(
     require_sqpack(data, target).await?;
     check_version(data, target, &version).await?;
 
-    let file_name = path.split_at(path.rfind('/').unwrap_or(0) + 1).1;
+    let file_name = path
+        .rsplit_once('/')
+        .map_or(path.as_str(), |(_, name)| name);
     let directives = pinned();
 
     let data = data.get_file(target, Some(version), path.clone()).await;
@@ -146,7 +151,8 @@ async fn serve_file(
         Ok(data) => Ok(HttpResponse::Ok()
             .insert_header(ContentDisposition::attachment(file_name))
             .insert_header(CacheControl(directives))
-            .body(data.as_ref().clone())),
+            .insert_header((STREAM_KIND, data.kind.name()))
+            .body(data.bytes.clone())),
         Err(err) if matches!(err, ironworks::Error::NotFound(_)) => Err(ErrorBadRequest(err)),
         Err(err) => Err(ErrorInternalServerError(err)),
     }
@@ -254,7 +260,8 @@ async fn serve_hash(
     {
         Ok(data) => Ok(HttpResponse::Ok()
             .insert_header(CacheControl(pinned()))
-            .body(data.as_ref().clone())),
+            .insert_header((STREAM_KIND, data.kind.name()))
+            .body(data.bytes.clone())),
         Err(err) if matches!(err, ironworks::Error::NotFound(_)) => Err(ErrorBadRequest(err)),
         Err(err) => Err(ErrorInternalServerError(err)),
     }

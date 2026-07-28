@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    io::{Read, Seek},
     path::Path,
     str::FromStr,
     sync::Arc,
@@ -8,10 +9,11 @@ use std::{
 };
 
 use anyhow::bail;
+use bytes::Bytes;
 use futures_util::StreamExt;
 use ironworks::{
     Ironworks,
-    sqpack::{SqPack, VInstall, Vfs},
+    sqpack::{self, FileKind, SqPack, VInstall, Vfs},
 };
 use mini_moka::sync::{Cache, CacheBuilder};
 use serde::{Deserialize, Serialize};
@@ -68,11 +70,29 @@ impl RepositoryInfo {
 type CacheIronworks = Ironworks<SqPack<VInstall<CacheVfs>>>;
 
 #[derive(Debug)]
+pub struct StoredFile {
+    pub kind: FileKind,
+    pub bytes: Bytes,
+}
+
+impl StoredFile {
+    fn read<R: Read + Seek>(mut file: sqpack::File<R>) -> Result<Self, ironworks::Error> {
+        let kind = file.kind();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(Self {
+            kind,
+            bytes: bytes.into(),
+        })
+    }
+}
+
+#[derive(Debug)]
 pub struct GameData {
     cache: Server,
     readahead_size: usize,
     ironworks_cache: Cache<(Target, GameVersion), Arc<CacheIronworks>>,
-    file_cache: Cache<(Target, GameVersion, String), Arc<Vec<u8>>>,
+    file_cache: Cache<(Target, GameVersion, String), Arc<StoredFile>>,
 }
 
 impl GameData {
@@ -94,7 +114,6 @@ impl GameData {
                 .build(),
         })
     }
-
 
     /// The version chain a target offers, for resolving `latest`.
     pub async fn versions_for(&self, target: Target) -> Option<VersionInfo> {
@@ -169,7 +188,7 @@ impl GameData {
         target: Target,
         version: GameVersion,
         file: String,
-    ) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+    ) -> Result<Arc<StoredFile>, ironworks::Error> {
         let key = (target, version, file);
         if let Some(ret) = self.file_cache.get(&key) {
             return Ok(ret);
@@ -179,14 +198,16 @@ impl GameData {
         let ironworks = self.get_version(target, version.clone()).await?;
 
         log::info!("Fetching file: {file} for {target}, version: {version}");
-        let file_data = ironworks.file::<Vec<u8>>(&file)?;
+        let stream = ironworks.find_first(&file, |package| package.file(&file))?;
+        let file_data = StoredFile::read(stream)?;
         log::info!(
             "File fetched: {file} for {target}, version: {version}, size: {}",
-            file_data.len()
+            file_data.bytes.len()
         );
 
         let data = Arc::new(file_data);
-        self.file_cache.insert((target, version, file), data.clone());
+        self.file_cache
+            .insert((target, version, file), data.clone());
         Ok(data)
     }
 
@@ -199,24 +220,28 @@ impl GameData {
         repository: u8,
         category: u8,
         hash: ironworks::sqpack::IndexHash,
-    ) -> Result<Arc<Vec<u8>>, ironworks::Error> {
+    ) -> Result<Arc<StoredFile>, ironworks::Error> {
         let ironworks = self.get_version(target, version.clone()).await?;
 
-        log::info!("Fetching unnamed file: {hash:?} in {repository}/{category} for {target} {version}");
+        log::info!(
+            "Fetching unnamed file: {hash:?} in {repository}/{category} for {target} {version}"
+        );
         let mut last = None;
         for package in ironworks.resources() {
             match package.file_by_hash(repository, category, hash) {
                 Ok(file) => {
-                    let data = <Vec<u8> as ironworks::file::File>::read(file)?;
-                    log::info!("Unnamed file fetched: {hash:?}, size: {}", data.len());
+                    let data = StoredFile::read(file)?;
+                    log::info!("Unnamed file fetched: {hash:?}, size: {}", data.bytes.len());
                     return Ok(Arc::new(data));
                 }
                 Err(error) => last = Some(error),
             }
         }
-        Err(last.unwrap_or(ironworks::Error::NotFound(
-            ironworks::ErrorValue::Other(format!("{hash:?}")),
-        )))
+        Err(
+            last.unwrap_or(ironworks::Error::NotFound(ironworks::ErrorValue::Other(
+                format!("{hash:?}"),
+            ))),
+        )
     }
 
     pub async fn warm_indexes(&self, target: Target, version: GameVersion) -> anyhow::Result<()> {
@@ -724,7 +749,10 @@ mod tests {
             Repo::Game,
             (
                 Slug::from_str("4e9a232b").unwrap(),
-                vec![version("2026.05.01.0000.0000"), version("2026.06.18.0000.0000")],
+                vec![
+                    version("2026.05.01.0000.0000"),
+                    version("2026.06.18.0000.0000"),
+                ],
             ),
         );
         by_repo.insert(
@@ -762,7 +790,10 @@ mod tests {
             Repo::Game,
             (
                 Slug::from_str("4e9a232b").unwrap(),
-                vec![version("2026.05.01.0000.0000"), version("2026.06.18.0000.0000")],
+                vec![
+                    version("2026.05.01.0000.0000"),
+                    version("2026.06.18.0000.0000"),
+                ],
             ),
         );
         by_repo.insert(
