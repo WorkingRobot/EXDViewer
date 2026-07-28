@@ -3,15 +3,86 @@
 //! Each viewer lives in its own module and is reached only through [`Viewer`], so adding a type is a
 //! new file plus an arm here rather than edits threaded through the browser.
 
-use egui::{Color32, Label, RichText, ScrollArea, Sense, TextureHandle, Vec2};
+use egui::{
+    Align, Color32, Label, Layout, Rect, RichText, ScrollArea, Sense, TextureHandle, Vec2, vec2,
+};
 
 use super::{Bytes, Channels, MAX_TEXT_PREVIEW};
 
+pub mod font;
+pub mod icons;
 pub mod material;
 pub mod png;
 pub mod shader_names;
 pub mod texture;
 pub mod uld;
+
+/// Space kept around whatever a grid cell holds.
+const PADDING: f32 = 6.0;
+
+/// Uniform cells in as many columns as fit, virtualised by row: only the rows on screen are laid
+/// out, which is what keeps a font of twenty-eight thousand glyphs from asking for every sheet it
+/// names at once. Columns are counted from the width inside the scroll area, so the grid never
+/// overflows into space there is no bar to reach.
+fn grid(
+    ui: &mut egui::Ui,
+    cell: Vec2,
+    count: usize,
+    mut draw: impl FnMut(&mut egui::Ui, usize, Rect),
+) {
+    ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show_viewport(ui, |ui, viewport| {
+            let width = ui.available_width();
+            let columns = (width / cell.x).floor().max(1.0) as usize;
+            let rows = count.div_ceil(columns);
+            let origin =
+                ui.cursor().left_top() + vec2((width - columns as f32 * cell.x) / 2.0, 0.0);
+            ui.set_height(rows as f32 * cell.y);
+
+            let first = (viewport.min.y / cell.y).floor().max(0.0) as usize;
+            let last = ((viewport.max.y / cell.y).ceil() as usize).min(rows);
+            for index in (first * columns)..(last * columns).min(count) {
+                let at = Rect::from_min_size(
+                    origin
+                        + vec2(
+                            (index % columns) as f32 * cell.x,
+                            (index / columns) as f32 * cell.y,
+                        ),
+                    cell,
+                );
+                draw(ui, index, at);
+            }
+        });
+}
+
+/// Stand-in for a sheet that never arrived, in the space its art would have taken.
+fn missing(ui: &egui::Ui, rect: Rect) {
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "⚠",
+        egui::FontId::default(),
+        Color32::LIGHT_RED,
+    );
+}
+
+/// A details panel that is nothing but a table of label and value.
+fn facts(ui: &mut egui::Ui, id: &str, rows: &[(&'static str, String)]) {
+    ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        egui::Grid::new(id)
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                for (label, value) in rows {
+                    ui.label(RichText::new(*label).weak());
+                    ui.label(RichText::new(value).monospace());
+                    ui.allocate_space(vec2(ui.available_width(), 0.0));
+                    ui.end_row();
+                }
+            });
+    });
+}
 
 /// A section title in the main area: the details panel's weak styling at heading size.
 fn section(ui: &mut egui::Ui, title: &str) {
@@ -53,6 +124,10 @@ pub enum Preview {
     Material(Box<material::Rendered>),
     /// A parsed UI layout.
     Uld(Box<uld::Rendered>),
+    /// A parsed font.
+    Font(Box<font::Rendered>),
+    /// The parsed icon sheet.
+    Icons(Box<icons::Rendered>),
     /// Nothing to render; an empty message means the type simply has no viewer.
     Failed(String),
 }
@@ -74,6 +149,8 @@ impl Preview {
             Viewer::Texture => texture::decode(ctx, path, bytes, mip, channels),
             Viewer::Material => material::decode(path, bytes),
             Viewer::Uld => uld::decode(path, bytes),
+            Viewer::Font => font::decode(path, bytes),
+            Viewer::Icons => icons::decode(path, bytes),
             Viewer::Raw => return Self::Failed(String::new()),
         };
         result.unwrap_or_else(|e| Self::Failed(e.to_string()))
@@ -96,6 +173,8 @@ impl Preview {
             Self::Uld(layout) => {
                 follow = uld::ui(ui, layout, deps, backend);
             }
+            Self::Font(font) => font::ui(ui, font, deps, backend),
+            Self::Icons(icons) => icons::ui(ui, icons, deps, backend),
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new("No viewer for this file type. Use Raw bytes.").weak());
@@ -130,16 +209,19 @@ impl Preview {
                 // texture unless the source size is stated as one slice.
                 let slice_size = egui::vec2(size[0] as f32, (size[1] as f32 / depth).max(1.0));
                 ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
+                    let align = if slice_size.x < ui.available_width() {
+                        Align::Center
+                    } else {
+                        Align::Min
+                    };
+                    ui.with_layout(Layout::top_down(align), |ui| {
                         ui.add(
                             egui::Image::new(egui::load::SizedTexture::new(
                                 texture.id(),
                                 slice_size,
                             ))
                             .uv(uv)
-                            .maintain_aspect_ratio(true)
-                            .fit_to_original_size(1.0)
-                            .max_width(ui.available_width().max(slice_size.x)),
+                            .fit_to_original_size(1.0),
                         );
                     });
                 });
@@ -156,6 +238,7 @@ impl Preview {
             Self::Image { .. } => true,
             Self::Material(material) => material.has_params(),
             Self::Uld(layout) => layout.has_details(),
+            Self::Font(_) | Self::Icons(_) => true,
             _ => false,
         }
     }
@@ -176,6 +259,14 @@ impl Preview {
         }
         if let Self::Uld(layout) = self {
             uld::details_ui(ui, layout, deps, backend);
+            return None;
+        }
+        if let Self::Font(font) = self {
+            font.details_ui(ui);
+            return None;
+        }
+        if let Self::Icons(icons) = self {
+            icons.details_ui(ui);
             return None;
         }
         let Self::Image {
@@ -268,6 +359,8 @@ pub enum Viewer {
     Image,
     Material,
     Uld,
+    Font,
+    Icons,
     Text,
     Raw,
 }
@@ -275,11 +368,13 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 5] = [
+    pub const RENDERED: [Self; 7] = [
         Self::Texture,
         Self::Image,
         Self::Material,
         Self::Uld,
+        Self::Font,
+        Self::Icons,
         Self::Text,
     ];
 
@@ -289,8 +384,10 @@ impl Viewer {
             Self::Image => "Image",
             Self::Material => "Material",
             Self::Uld => "Layout",
+            Self::Font => "Font",
+            Self::Icons => "Icons",
             Self::Text => "Text",
-            Self::Raw => "Raw bytes",
+            Self::Raw => "Bytes",
         }
     }
 
@@ -301,6 +398,8 @@ impl Viewer {
             "png" => Self::Image,
             "mtrl" => Self::Material,
             "uld" => Self::Uld,
+            "fdt" => Self::Font,
+            "gfd" => Self::Icons,
             "txt" | "csv" => Self::Text,
             _ => Self::Raw,
         }

@@ -13,7 +13,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use egui::TextureHandle;
+use egui::{Color32, TextureHandle};
 use ironworks::excel::Language;
 use ironworks::file::exh::ColumnKind;
 use lru::LruCache;
@@ -37,6 +37,13 @@ pub const THUMBNAIL_SIZE: u16 = 128;
 /// Longest edge an atlas is decoded at. Part rectangles are fractions of the whole texture, so a
 /// reduced mipmap still crops to the right sprite, just a softer one.
 const ATLAS_SIZE: u16 = 512;
+
+/// Longest edge a font's glyph sheet is decoded at, which is the size they all ship at.
+const GLYPH_SHEET_SIZE: u16 = 1024;
+
+/// Glyph sheets held at once. Each is a whole font texture uploaded again with one channel pulled
+/// out of it, so this is sized for moving around within a font rather than for holding all of one.
+const SHEETS: usize = 8;
 
 /// What a viewer gets back when it asks for a dependency.
 pub enum Dep<T> {
@@ -80,6 +87,7 @@ type Strings = Arc<HashMap<u32, String>>;
 pub struct Deps {
     textures: LruCache<String, Load<DecodedTexture, Option<TextureHandle>>>,
     atlases: LruCache<String, Load<DecodedTexture, Option<Atlas>>>,
+    sheets: LruCache<String, Load<DecodedTexture, Option<TextureHandle>>>,
     strings: HashMap<(String, Language), Load<Strings>>,
 }
 
@@ -88,6 +96,7 @@ impl Default for Deps {
         Self {
             textures: LruCache::new(NonZeroUsize::new(CAPACITY).unwrap()),
             atlases: LruCache::new(NonZeroUsize::new(CAPACITY).unwrap()),
+            sheets: LruCache::new(NonZeroUsize::new(SHEETS).unwrap()),
             strings: HashMap::new(),
         }
     }
@@ -110,6 +119,7 @@ impl Deps {
             ctx,
             backend,
             path,
+            path,
             THUMBNAIL_SIZE,
             upload,
         )
@@ -122,11 +132,34 @@ impl Deps {
             ctx,
             backend,
             path,
+            path,
             ATLAS_SIZE,
             |ctx, path, decoded| Atlas {
                 texture: upload(ctx, path, decoded),
                 size: decoded.source,
             },
+        )
+    }
+
+    /// Ask for one colour channel of a font texture, as white ink to be tinted when it is drawn.
+    /// Four fonts share a texture, a channel each, so a glyph is only legible once its own channel
+    /// is pulled out of the others.
+    pub fn glyph_sheet(
+        &mut self,
+        ctx: &egui::Context,
+        backend: &Backend,
+        path: &str,
+        channel: u16,
+    ) -> Dep<&TextureHandle> {
+        let channel = usize::from(channel).min(3);
+        poll(
+            &mut self.sheets,
+            ctx,
+            backend,
+            &format!("{path}#{channel}"),
+            path,
+            GLYPH_SHEET_SIZE,
+            move |ctx, path, decoded| ink(ctx, path, decoded, channel),
         )
     }
 
@@ -140,19 +173,16 @@ impl Deps {
         row: u32,
     ) -> Option<&str> {
         let language = LANGUAGE.get(ctx);
-        let key = (sheet.to_owned(), language);
-        if !self.strings.contains_key(&key) {
-            let excel = backend.excel().clone();
-            let name = sheet.to_owned();
-            self.strings.insert(
-                key.clone(),
+        let entry = self
+            .strings
+            .entry((sheet.to_owned(), language))
+            .or_insert_with(|| {
+                let excel = backend.excel().clone();
+                let name = sheet.to_owned();
                 Load::Loading(TrackedPromise::spawn_local(async move {
                     read_strings(excel, name, language).await
-                })),
-            );
-        }
-
-        let entry = self.strings.get_mut(&key).expect("just inserted");
+                }))
+            });
         if let Load::Loading(promise) = entry
             && let Some(result) = promise.try_get()
         {
@@ -185,19 +215,14 @@ async fn read_strings(excel: CachedProvider, name: String, language: Language) -
         .min()
         .ok_or_else(|| anyhow!("sheet {name} holds no text"))?;
 
-    let mut strings = HashMap::new();
-    for row_id in sheet.get_row_ids() {
-        let Ok(row) = sheet.get_row(row_id) else {
-            continue;
-        };
-        let Ok(cell) = row.read_string(offset) else {
-            continue;
-        };
-        let text = cell.format().to_string();
-        if !text.is_empty() {
-            strings.insert(row_id, text);
-        }
-    }
+    let strings = sheet
+        .get_row_ids()
+        .filter_map(|row_id| {
+            let row = sheet.get_row(row_id).ok()?;
+            let text = row.read_string(offset).ok()?.format().to_string();
+            (!text.is_empty()).then_some((row_id, text))
+        })
+        .collect();
     Ok(Arc::new(strings))
 }
 
@@ -207,23 +232,19 @@ fn poll<'a, T>(
     cache: &'a mut LruCache<String, Load<DecodedTexture, Option<T>>>,
     ctx: &egui::Context,
     backend: &Backend,
+    key: &str,
     path: &str,
     max_dim: u16,
     build: impl FnOnce(&egui::Context, &str, &DecodedTexture) -> T,
 ) -> Dep<&'a T> {
-    if cache.peek(path).is_none() {
+    // Promote on use so the entries a viewer is actively drawing are the last to be evicted.
+    let entry = cache.get_or_insert_mut_ref(key, || {
         let files = backend.files().clone();
         let wanted = path.to_string();
-        cache.put(
-            path.to_string(),
-            Load::Loading(TrackedPromise::spawn_local(async move {
-                files.read_texture(&wanted, Some(max_dim)).await
-            })),
-        );
-    }
-
-    // Promote on use so the entries a viewer is actively drawing are the last to be evicted.
-    let entry = cache.get_mut(path).expect("just inserted");
+        Load::Loading(TrackedPromise::spawn_local(async move {
+            files.read_texture(&wanted, Some(max_dim)).await
+        }))
+    });
     if let Load::Loading(promise) = entry
         && let Some(result) = promise.try_get()
     {
@@ -241,6 +262,25 @@ fn poll<'a, T>(
         Load::Ready(Some(value)) => Dep::Ready(value),
         Load::Ready(None) | Load::Failed(_) => Dep::Failed,
     }
+}
+
+/// One channel of a decoded texture, as white pixels carrying it as their alpha. Drawn tinted, so
+/// glyphs read against either theme rather than being whatever colour the channel happened to be.
+fn ink(ctx: &egui::Context, path: &str, decoded: &DecodedTexture, channel: usize) -> TextureHandle {
+    let dimensions = [
+        decoded.image.width() as usize,
+        decoded.image.height() as usize,
+    ];
+    let pixels = decoded
+        .image
+        .pixels()
+        .map(|pixel| Color32::from_white_alpha(pixel.0[channel]))
+        .collect();
+    ctx.load_texture(
+        format!("ink:{path}#{channel}"),
+        egui::ColorImage::new(dimensions, pixels),
+        egui::TextureOptions::LINEAR,
+    )
 }
 
 /// Hand decoded pixels to the renderer. The debug label carries the decoded size as well as the
