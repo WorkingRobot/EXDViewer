@@ -43,8 +43,9 @@ pub trait FileProvider {
     ///
     /// Both come back together because a local provider has to read the list in order to build the
     /// map, and returning it saves fetching the same 20 MB twice. The API serves a map built per
-    /// version instead, so for it the two are separate requests.
-    async fn path_index(&self, path_list_url: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)>;
+    /// version instead, so for it the two are separate requests; the pair has to agree, so it is
+    /// the provider that decides how to fetch them, not the caller.
+    async fn path_index(&self, api_base: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)>;
 
     async fn read_by_hash(
         &self,
@@ -142,6 +143,32 @@ pub trait FileProviderExt: FileProvider {
 }
 
 impl<P: FileProvider + ?Sized> FileProviderExt for P {}
+
+#[derive(serde::Deserialize)]
+struct ListInfo {
+    list: String,
+}
+
+async fn list_id(api_base: &str) -> anyhow::Result<u64> {
+    let info: ListInfo =
+        serde_json::from_slice(&crate::utils::fetch_url(format!("{api_base}/paths/")).await?)?;
+    Ok(u64::from_str_radix(&info.list, 16)?)
+}
+
+pub fn list_url(api_base: &str, list_id: u64) -> String {
+    format!("{api_base}/paths/{list_id:016x}/")
+}
+
+pub async fn with_list_id<T, F>(api_base: &str, take: impl Fn(u64) -> F) -> anyhow::Result<T>
+where
+    F: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let id = list_id(api_base).await?;
+    match take(id).await {
+        Ok(taken) => Ok(taken),
+        Err(_) => take(list_id(api_base).await?).await,
+    }
+}
 
 /// Build a presence map for a local install by matching the global path list against what the
 /// packages actually index. The API does this server-side per version; with no API there is nobody

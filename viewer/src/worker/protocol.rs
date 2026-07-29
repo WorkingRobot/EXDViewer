@@ -27,10 +27,8 @@ pub enum WorkerRequest {
     DataRequestFile(String),
     /// `(repository, category, hash, split)`, for the files the index records without a path.
     DataRequestFileByHash((u8, u8, u64, bool)),
-    /// URL of the global path list. The worker fetches it itself rather than being handed 20 MB
-    /// through the message port, and the browser cache makes that a second hit, not a second
-    /// download.
-    DataPresence(String),
+    /// The global path list.
+    DataPresence(#[serde(with = "bytes")] Vec<u8>),
     /// `(path, longest edge to decode at)`. `None` decodes at full size.
     DataRequestTexture((String, Option<u16>)),
     /// A `.tex` a provider fetched itself, to decode without reading it again.

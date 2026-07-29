@@ -196,12 +196,17 @@ impl PathIndex {
         Ok(list)
     }
 
-    pub async fn global(&self) -> Result<Bytes> {
+    pub async fn list_id(&self) -> Result<u64> {
+        Ok(self.master().await?.id())
+    }
+
+    pub async fn global(&self) -> Result<(u64, Bytes)> {
         let master = self.master().await?;
+        let id = master.id();
         if let Some((cached_for, blob)) = &*self.global.read().await
             && Arc::ptr_eq(cached_for, &master)
         {
-            return Ok(blob.clone());
+            return Ok((id, blob.clone()));
         }
 
         let built = {
@@ -215,7 +220,7 @@ impl PathIndex {
         };
         let blob = Bytes::from(built);
         *self.global.write().await = Some((master, blob.clone()));
-        Ok(blob)
+        Ok((id, blob))
     }
 
     pub async fn presence(
@@ -223,16 +228,20 @@ impl PathIndex {
         data: &GameData,
         target: Target,
         version: GameVersion,
-    ) -> Result<Bytes> {
+        wanted: u64,
+    ) -> Result<Option<Bytes>> {
         let master = self.master().await?;
         let list_id = master.id();
+        if list_id != wanted {
+            return Ok(None);
+        }
         let key = (list_id, target, version.clone());
         if let Some(cached) = self.presence.get(&key) {
-            return Ok(cached);
+            return Ok(Some(cached));
         }
         if let Some(stored) = self.read_stored(&key).await {
             self.presence.insert(key, stored.clone());
-            return Ok(stored);
+            return Ok(Some(stored));
         }
 
         data.warm_indexes(target, version.clone()).await?;
@@ -278,15 +287,20 @@ impl PathIndex {
         let map = Bytes::from(map);
         self.write_stored(&key, &map).await;
         self.presence.insert(key, map.clone());
-        Ok(map)
+        Ok(Some(map))
     }
 
-    fn stored_path(&self, (list_id, target, version): &(u64, Target, GameVersion)) -> Option<PathBuf> {
+    fn stored_path(
+        &self,
+        (list_id, target, version): &(u64, Target, GameVersion),
+    ) -> Option<PathBuf> {
         let format = pathlist::PRESENCE_VERSION;
-        self.config
-            .cache_directory
-            .as_ref()
-            .map(|dir| dir.join(format!("{list_id:016x}-{}-{version}.pdb{format}", target.file_key())))
+        self.config.cache_directory.as_ref().map(|dir| {
+            dir.join(format!(
+                "{list_id:016x}-{}-{version}.pdb{format}",
+                target.file_key()
+            ))
+        })
     }
 
     async fn read_stored(&self, key: &(u64, Target, GameVersion)) -> Option<Bytes> {

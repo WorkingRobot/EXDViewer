@@ -14,7 +14,7 @@ use web_sys::{FileSystemDirectoryHandle, js_sys::JsString};
 use crate::{
     data::{build_local_presence, index_hash, stream},
     stopwatch::Stopwatch,
-    utils::{fetch_url, tex_loader},
+    utils::tex_loader,
     worker::directory::{DynamicDirectory, get_file_str, set_file_str},
 };
 
@@ -190,26 +190,14 @@ impl Worker for SqpackWorker {
                     scope.respond(id, WorkerResponse::DataRequestFileByHash(file));
                 }
             }
-            WorkerRequest::DataPresence(url) => {
+            WorkerRequest::DataPresence(paths) => {
                 let _stop = Stopwatch::new("SqpackWorker::DataPresence");
-                let install_instance = self.install_instance.clone();
-                let scope = scope.clone();
-                spawn_local(async move {
-                    let _stop = _stop;
-                    let paths = match fetch_url(&url).await {
-                        Ok(paths) => paths,
-                        Err(error) => {
-                            scope.respond(id, WorkerResponse::DataPresence(Err(error.to_string())));
-                            return;
-                        }
-                    };
-                    let map = match install_instance.borrow().as_ref() {
-                        Some(inst) => build_local_presence(&inst.sqpack, &paths)
-                            .map_err(|error| error.to_string()),
-                        None => Err("no install is set up".to_string()),
-                    };
-                    scope.respond(id, WorkerResponse::DataPresence(map));
-                });
+                let map = match self.install_instance.borrow().as_ref() {
+                    Some(inst) => build_local_presence(&inst.sqpack, &paths)
+                        .map_err(|error| error.to_string()),
+                    None => Err("no install is set up".to_string()),
+                };
+                scope.respond(id, WorkerResponse::DataPresence(map));
             }
             WorkerRequest::DataRequestTexture((path, max_dim)) => {
                 let _stop = Stopwatch::new(format!("SqpackWorker::DataRequestTexture({path:?})"));

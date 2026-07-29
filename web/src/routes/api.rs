@@ -12,7 +12,7 @@ use actix_web::{
     dev::{HttpServiceFactory, ServiceResponse},
     error::{ErrorBadRequest, ErrorInternalServerError, ErrorNotFound},
     get,
-    http::header::{self, ContentDisposition},
+    http::header::{self, ContentDisposition, ETag, EntityTag, Header, IfNoneMatch},
     middleware::{ErrorHandlerResponse, ErrorHandlers},
     web::{self, Bytes},
 };
@@ -39,6 +39,7 @@ pub fn service() -> impl HttpServiceFactory {
         .service(post_github_oauth_token)
         .service(get_repositories)
         .service(get_regions)
+        .service(get_list_id)
         .service(get_global_paths)
         .service(get_songs)
         .service(get_versions_repo)
@@ -68,6 +69,11 @@ struct RegionsInfo {
 #[derive(Debug, Serialize)]
 struct RepositoriesInfo {
     repositories: Vec<RepositoryInfo>,
+}
+
+#[derive(Debug, Serialize)]
+struct ListInfo {
+    list: String,
 }
 
 /// Every content response is for a pinned version — `latest` is a redirect, never a resource — so
@@ -159,15 +165,44 @@ async fn serve_file(
 }
 
 #[get("/paths/")]
+async fn get_list_id(data: web::Data<MessageQueue>, request: HttpRequest) -> Result<HttpResponse> {
+    let current = data.get_list_id().await.map_err(ErrorInternalServerError)?;
+    let tag = EntityTag::new_strong(format!("{current:016x}"));
+
+    let known = match IfNoneMatch::parse(&request) {
+        Ok(IfNoneMatch::Any) => true,
+        Ok(IfNoneMatch::Items(tags)) => tags.iter().any(|seen| seen.weak_eq(&tag)),
+        Err(_) => false,
+    };
+    let mut response = if known {
+        HttpResponse::NotModified()
+    } else {
+        HttpResponse::Ok()
+    };
+    response.insert_header(ETag(tag));
+    if known {
+        return Ok(response.finish());
+    }
+    Ok(response.json(ListInfo {
+        list: format!("{current:016x}"),
+    }))
+}
+
+#[get("/paths/{list_id}/")]
 async fn get_global_paths(
     data: web::Data<MessageQueue>,
     request: HttpRequest,
+    list_id: web::Path<String>,
 ) -> Result<HttpResponse> {
-    let frame = data
+    let wanted = parse_list_id(&list_id)?;
+    let (current, frame) = data
         .get_global_paths()
         .await
         .map_err(ErrorInternalServerError)?;
-    serve_frame(&request, frame, 60 * 60)
+    if wanted != current {
+        return Err(stale_list(wanted, current));
+    }
+    serve_frame(&request, frame, 60 * 60 * 24 * 365)
 }
 
 async fn serve_presence(
@@ -175,14 +210,33 @@ async fn serve_presence(
     request: &HttpRequest,
     target: Target,
     version: GameVersion,
+    list_id: &str,
 ) -> Result<HttpResponse> {
+    let wanted = parse_list_id(list_id)?;
     require_sqpack(data, target).await?;
     check_version(data, target, &version).await?;
     let frame = data
-        .get_presence(target, Some(version))
+        .get_presence(target, Some(version), wanted)
         .await
         .map_err(ErrorInternalServerError)?;
-    serve_frame(request, frame, 60 * 60 * 24 * 365)
+    match frame {
+        Some(frame) => serve_frame(request, frame, 60 * 60 * 24 * 365),
+        None => {
+            let current = data.get_list_id().await.map_err(ErrorInternalServerError)?;
+            Err(stale_list(wanted, current))
+        }
+    }
+}
+
+fn parse_list_id(list_id: &str) -> Result<u64> {
+    u64::from_str_radix(list_id, 16)
+        .map_err(|_| ErrorBadRequest("Path list id must be 16 hex digits"))
+}
+
+fn stale_list(wanted: u64, current: u64) -> actix_web::Error {
+    ErrorNotFound(format!(
+        "Path list {wanted:016x} is no longer served; the current one is {current:016x}"
+    ))
 }
 
 fn serve_frame(request: &HttpRequest, frame: Bytes, max_age: u32) -> Result<HttpResponse> {
@@ -381,14 +435,14 @@ async fn get_hash_region(
     .await
 }
 
-#[get("/{region}/{version}/paths/")]
+#[get("/{region}/{version}/paths/{list_id}/")]
 async fn get_paths_region(
     data: web::Data<MessageQueue>,
     request: HttpRequest,
-    path_info: web::Path<(Region, GameVersion)>,
+    path_info: web::Path<(Region, GameVersion, String)>,
 ) -> Result<HttpResponse> {
-    let (region, version) = path_info.into_inner();
-    serve_presence(&data, &request, Target::Region(region), version).await
+    let (region, version, list_id) = path_info.into_inner();
+    serve_presence(&data, &request, Target::Region(region), version, &list_id).await
 }
 
 #[get("/{region}/{version}/exists/")]
@@ -447,14 +501,14 @@ async fn get_hash_repo(
     .await
 }
 
-#[get("/repo/{slug}/{version}/paths/")]
+#[get("/repo/{slug}/{version}/paths/{list_id}/")]
 async fn get_paths_repo(
     data: web::Data<MessageQueue>,
     request: HttpRequest,
-    path_info: web::Path<(Slug, GameVersion)>,
+    path_info: web::Path<(Slug, GameVersion, String)>,
 ) -> Result<HttpResponse> {
-    let (slug, version) = path_info.into_inner();
-    serve_presence(&data, &request, Target::Repo(slug), version).await
+    let (slug, version, list_id) = path_info.into_inner();
+    serve_presence(&data, &request, Target::Repo(slug), version, &list_id).await
 }
 
 #[get("/repo/{slug}/{version}/exists/")]

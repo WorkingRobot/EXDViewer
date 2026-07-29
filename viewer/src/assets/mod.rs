@@ -91,11 +91,11 @@ fn build_index(paths: &[u8], presence: &[u8]) -> Result<Loaded, String> {
     // The map is indexed by position in the list, so a pair from different builds would hide and
     // reveal the wrong files rather than fail.
     if paths.list_id() != presence.list_id() {
-        return Err(
-            "The path list and this version's file map came from different builds; \
-                    reload to pick up a matching pair."
-                .to_string(),
-        );
+        return Err(format!(
+            "This version's file map was built against path list {:016x}, but the list is {:016x}.",
+            presence.list_id(),
+            paths.list_id(),
+        ));
     }
 
     let at = Instant::now();
@@ -635,13 +635,13 @@ impl AssetBrowser {
     fn poll(&mut self, ctx: &egui::Context, backend: &Backend) {
         if matches!(self.state, Load::Idle) {
             let files = backend.files().clone();
-            let list_url = path_list_url(ctx);
+            let api = api_base(ctx);
             self.state = Load::Loading(TrackedPromise::spawn_local(async move {
                 // The list is version-independent and cached hard; the presence map is the only
                 // per-version part, and it is a bit per path.
                 let at = Instant::now();
                 // Served prebuilt by the API; a local install builds its own from the same list.
-                let (paths, presence) = files.path_index(&list_url).await?;
+                let (paths, presence) = files.path_index(&api).await?;
                 log::info!(
                     "assets/fetch: path list {}, presence {}, in {}",
                     Bytes(paths.len()),
@@ -1386,13 +1386,6 @@ fn sheet_name(entries: &HashMap<String, i32>, path: &str) -> Option<String> {
             None => return None,
         }
     }
-}
-
-/// Where to fetch the global path list. No install contains it -- it is what maps hashes back to
-/// names -- so a local backend borrows the public API for that one file and builds everything else
-/// itself.
-fn path_list_url(ctx: &egui::Context) -> String {
-    format!("{}/paths/", api_base(ctx))
 }
 
 #[cfg(test)]

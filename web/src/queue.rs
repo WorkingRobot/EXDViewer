@@ -2,9 +2,7 @@ use std::sync::{Arc, OnceLock};
 
 use async_channel::Sender;
 use bytes::Bytes;
-use tokio::{
-    runtime::Handle, select, sync::oneshot, task::JoinHandle
-};
+use tokio::{runtime::Handle, select, sync::oneshot, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use xiv_core::file::version::GameVersion;
 
@@ -14,10 +12,17 @@ use crate::paths::PathIndex;
 #[derive(Debug, Clone)]
 pub enum RequestData {
     GetFile(Target, Option<GameVersion>, String),
-    GetFileByHash(Target, Option<GameVersion>, u8, u8, ironworks::sqpack::IndexHash),
+    GetFileByHash(
+        Target,
+        Option<GameVersion>,
+        u8,
+        u8,
+        ironworks::sqpack::IndexHash,
+    ),
     Exists(Target, Option<GameVersion>, Vec<String>),
+    ListId,
     GlobalPaths,
-    Presence(Target, Option<GameVersion>),
+    Presence(Target, Option<GameVersion>, u64),
     Repositories,
 }
 
@@ -25,8 +30,9 @@ pub enum Response {
     GetFile(Result<Arc<StoredFile>, ironworks::Error>),
     GetFileByHash(Result<Arc<StoredFile>, ironworks::Error>),
     Exists(Result<Vec<bool>, ironworks::Error>),
-    GlobalPaths(anyhow::Result<Bytes>),
-    Presence(anyhow::Result<Bytes>),
+    ListId(anyhow::Result<u64>),
+    GlobalPaths(anyhow::Result<(u64, Bytes)>),
+    Presence(anyhow::Result<Option<Bytes>>),
     Repositories(anyhow::Result<Vec<RepositoryInfo>>),
 }
 
@@ -136,16 +142,19 @@ impl MessageQueue {
 
                                             Response::Exists(result)
                                         }
+                                        RequestData::ListId => {
+                                            Response::ListId(this.paths.list_id().await)
+                                        }
                                         RequestData::GlobalPaths => {
                                             Response::GlobalPaths(this.paths.global().await)
                                         }
-                                        RequestData::Presence(target, version) => {
+                                        RequestData::Presence(target, version, list_id) => {
                                             let version = match version {
                                                 Some(v) => Some(v),
                                                 None => this.data.versions_for(target).await.map(|v| v.latest),
                                             };
                                             let result = match version {
-                                                Some(version) => this.paths.presence(&this.data, target, version).await,
+                                                Some(version) => this.paths.presence(&this.data, target, version, list_id).await,
                                                 None => Err(anyhow::anyhow!("No version info available")),
                                             };
 
@@ -166,10 +175,9 @@ impl MessageQueue {
             })
             .collect::<Vec<_>>();
 
-        this.0.threads
-            .set(
-                threads,
-            )
+        this.0
+            .threads
+            .set(threads)
             .map_err(|_| anyhow::anyhow!("Failed to initialize message queue threads"))?;
 
         Ok(this)
@@ -192,13 +200,16 @@ impl MessageQueue {
         self.0.data.version_valid(target, version).await
     }
 
-
     pub async fn repositories(&self) -> anyhow::Result<Vec<RepositoryInfo>> {
         let (tx, rx) = oneshot::channel();
-        self.0.tx.send(Request {
-            data: RequestData::Repositories,
-            tx,
-        }).await.expect("Failed to send request to message queue");
+        self.0
+            .tx
+            .send(Request {
+                data: RequestData::Repositories,
+                tx,
+            })
+            .await
+            .expect("Failed to send request to message queue");
 
         match rx.await {
             Ok(Response::Repositories(result)) => result,
@@ -206,12 +217,21 @@ impl MessageQueue {
         }
     }
 
-    pub async fn exists(&self, target: Target, version: Option<GameVersion>, files: Vec<String>) -> Result<Vec<bool>, ironworks::Error> {
+    pub async fn exists(
+        &self,
+        target: Target,
+        version: Option<GameVersion>,
+        files: Vec<String>,
+    ) -> Result<Vec<bool>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
-        self.0.tx.send(Request {
-            data: RequestData::Exists(target, version, files),
-            tx,
-        }).await.expect("Failed to send request to message queue");
+        self.0
+            .tx
+            .send(Request {
+                data: RequestData::Exists(target, version, files),
+                tx,
+            })
+            .await
+            .expect("Failed to send request to message queue");
 
         match rx.await {
             Ok(Response::Exists(result)) => result,
@@ -221,12 +241,33 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_global_paths(&self) -> anyhow::Result<Bytes> {
+    pub async fn get_list_id(&self) -> anyhow::Result<u64> {
         let (tx, rx) = oneshot::channel();
-        self.0.tx.send(Request {
-            data: RequestData::GlobalPaths,
-            tx,
-        }).await.expect("Failed to send request to message queue");
+        self.0
+            .tx
+            .send(Request {
+                data: RequestData::ListId,
+                tx,
+            })
+            .await
+            .expect("Failed to send request to message queue");
+
+        match rx.await {
+            Ok(Response::ListId(result)) => result,
+            _ => Err(anyhow::anyhow!("Failed to get the path list id")),
+        }
+    }
+
+    pub async fn get_global_paths(&self) -> anyhow::Result<(u64, Bytes)> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .tx
+            .send(Request {
+                data: RequestData::GlobalPaths,
+                tx,
+            })
+            .await
+            .expect("Failed to send request to message queue");
 
         match rx.await {
             Ok(Response::GlobalPaths(result)) => result,
@@ -234,12 +275,21 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_presence(&self, target: Target, version: Option<GameVersion>) -> anyhow::Result<Bytes> {
+    pub async fn get_presence(
+        &self,
+        target: Target,
+        version: Option<GameVersion>,
+        list_id: u64,
+    ) -> anyhow::Result<Option<Bytes>> {
         let (tx, rx) = oneshot::channel();
-        self.0.tx.send(Request {
-            data: RequestData::Presence(target, version),
-            tx,
-        }).await.expect("Failed to send request to message queue");
+        self.0
+            .tx
+            .send(Request {
+                data: RequestData::Presence(target, version, list_id),
+                tx,
+            })
+            .await
+            .expect("Failed to send request to message queue");
 
         match rx.await {
             Ok(Response::Presence(result)) => result,
@@ -247,12 +297,21 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_file(&self, target: Target, version: Option<GameVersion>, path: String) -> Result<Arc<StoredFile>, ironworks::Error> {
+    pub async fn get_file(
+        &self,
+        target: Target,
+        version: Option<GameVersion>,
+        path: String,
+    ) -> Result<Arc<StoredFile>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
-        self.0.tx.send(Request {
-            data: RequestData::GetFile(target, version, path),
-            tx,
-        }).await.expect("Failed to send request to message queue");
+        self.0
+            .tx
+            .send(Request {
+                data: RequestData::GetFile(target, version, path),
+                tx,
+            })
+            .await
+            .expect("Failed to send request to message queue");
 
         match rx.await {
             Ok(Response::GetFile(result)) => result,
@@ -262,12 +321,23 @@ impl MessageQueue {
         }
     }
 
-    pub async fn get_file_by_hash(&self, target: Target, version: Option<GameVersion>, repository: u8, category: u8, hash: ironworks::sqpack::IndexHash) -> Result<Arc<StoredFile>, ironworks::Error> {
+    pub async fn get_file_by_hash(
+        &self,
+        target: Target,
+        version: Option<GameVersion>,
+        repository: u8,
+        category: u8,
+        hash: ironworks::sqpack::IndexHash,
+    ) -> Result<Arc<StoredFile>, ironworks::Error> {
         let (tx, rx) = oneshot::channel();
-        self.0.tx.send(Request {
-            data: RequestData::GetFileByHash(target, version, repository, category, hash),
-            tx,
-        }).await.expect("Failed to send request to message queue");
+        self.0
+            .tx
+            .send(Request {
+                data: RequestData::GetFileByHash(target, version, repository, category, hash),
+                tx,
+            })
+            .await
+            .expect("Failed to send request to message queue");
 
         match rx.await {
             Ok(Response::GetFileByHash(result)) => result,

@@ -3,7 +3,7 @@ use crate::{
     worker::{WorkerDirectory, WorkerRequest, WorkerResponse},
 };
 
-use super::{DecodedTexture, FileProvider, get_icon_path};
+use super::{DecodedTexture, FileProvider, get_icon_path, list_url, with_list_id};
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
@@ -70,13 +70,15 @@ impl FileProvider for WorkerFileProvider {
         }
     }
 
-    /// The worker fetches the list too rather than being handed it through the port; that second
-    /// request is served from the browser cache, so it costs a lookup rather than a download.
-    async fn path_index(&self, path_list_url: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    /// The list goes to the worker through the port rather than being fetched there as well.
+    async fn path_index(&self, api_base: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
         log::info!("WorkerFileProvider: building presence map");
-        let paths = crate::utils::fetch_url(path_list_url).await?;
+        let paths = with_list_id(api_base, |id| {
+            crate::utils::fetch_url(list_url(api_base, id))
+        })
+        .await?;
         if let WorkerResponse::DataPresence(result) =
-            worker::transact(WorkerRequest::DataPresence(path_list_url.to_string())).await
+            worker::transact(WorkerRequest::DataPresence(paths.clone())).await
         {
             let presence = result.map_err(|e| anyhow::anyhow!("WorkerFileProvider: {e}"))?;
             Ok((paths, presence))

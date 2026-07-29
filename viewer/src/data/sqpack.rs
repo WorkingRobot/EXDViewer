@@ -1,6 +1,8 @@
 use crate::utils::tex_loader;
 
-use super::{FileProvider, build_local_presence, get_icon_path, index_hash, stream};
+use super::{
+    FileProvider, build_local_presence, get_icon_path, index_hash, list_url, stream, with_list_id,
+};
 use crate::utils::fetch_url;
 use async_trait::async_trait;
 use either::Either;
@@ -52,8 +54,8 @@ impl FileProvider for SqpackFileProvider {
         Ok((Some(kind), bytes))
     }
 
-    async fn path_index(&self, path_list_url: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-        let paths = fetch_url(path_list_url).await?;
+    async fn path_index(&self, api_base: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+        let paths = with_list_id(api_base, |id| fetch_url(list_url(api_base, id))).await?;
         let presence = build_local_presence(&self.sqpack, &paths)?;
         Ok((paths, presence))
     }

@@ -1,6 +1,6 @@
 use crate::utils::{GameVersion, HttpResponse, fetch, fetch_url};
 
-use super::{FileProvider, get_icon_path, get_xivapi_asset_url};
+use super::{FileProvider, get_icon_path, get_xivapi_asset_url, list_url, with_list_id};
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
@@ -132,6 +132,20 @@ impl WebFileProvider {
         let parsed: RepositoriesResponse = serde_json::from_slice(&resp)?;
         Ok(parsed.repositories)
     }
+
+    fn presence_url(&self, list_id: u64) -> anyhow::Result<Url> {
+        let mut url = self.0.clone();
+        url.path_segments_mut()
+            .map_err(|()| {
+                ironworks::Error::Invalid(
+                    ironworks::ErrorValue::Other("URL".to_string()),
+                    "path parsing error".to_string(),
+                )
+            })?
+            .push("paths")
+            .push(&format!("{list_id:016x}"));
+        Ok(url)
+    }
 }
 
 fn stream(response: HttpResponse) -> (Option<String>, Vec<u8>) {
@@ -157,18 +171,15 @@ impl FileProvider for WebFileProvider {
         Ok(stream(fetch(url).await?))
     }
 
-    async fn path_index(&self, path_list_url: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-        let paths = fetch_url(path_list_url).await?;
-        let mut url = self.0.clone();
-        url.path_segments_mut()
-            .map_err(|()| {
-                ironworks::Error::Invalid(
-                    ironworks::ErrorValue::Other("URL".to_string()),
-                    "path parsing error".to_string(),
-                )
-            })?
-            .push("paths");
-        Ok((paths, fetch_url(url).await?))
+    async fn path_index(&self, api_base: &str) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+        with_list_id(api_base, |id| async move {
+            let presence = self.presence_url(id)?;
+            Ok(futures_util::try_join!(
+                fetch_url(list_url(api_base, id)),
+                fetch_url(presence)
+            )?)
+        })
+        .await
     }
 
     async fn read_stream_by_hash(
