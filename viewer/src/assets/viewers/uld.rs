@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use egui::{
-    Align2, Color32, Rect, RichText, ScrollArea, Sense, Vec2,
+    Align2, Button, Color32, Rect, RichText, ScrollArea, Sense, Vec2,
     collapsing_header::paint_default_icon, load::SizedTexture, pos2, vec2,
 };
 use ironworks::file::{
@@ -32,6 +32,13 @@ const MAX_INDENT: usize = 8;
 
 /// Width reserved for a tree row's disclosure triangle.
 const TRIANGLE: f32 = 12.0;
+
+/// A tree row's visibility toggle.
+const EYE: &str = "👁";
+
+/// Width the toggle is given, ahead of the indent rather than after it so the column stays straight
+/// however deep the row sits.
+const GUTTER: f32 = 18.0;
 
 /// Height the node tree takes before it scrolls on its own, leaving the panel below it for the
 /// selected node's properties.
@@ -160,6 +167,14 @@ pub struct Rendered {
 /// nodes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Selected(usize, usize);
+
+/// What the tree remembers between frames, kept beside the selection and for the same reason: the
+/// rows collapsed away from their default, and the ones switched off. Keyed by widget and row.
+#[derive(Clone, Default)]
+struct Toggles {
+    open: HashSet<(usize, usize)>,
+    hidden: HashSet<(usize, usize)>,
+}
 
 /// What a click on the canvas landed on.
 enum Pick {
@@ -836,11 +851,23 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     })))
 }
 
+/// Which of a widget's rows the canvas leaves out: the ones the user hid, each spread over its
+/// subtree, since hiding a node hides what it holds. Rows are held parents-first, so one pass over
+/// them settles it.
+fn concealed(widget: &WidgetRow, index: usize, hidden: &HashSet<(usize, usize)>) -> Vec<bool> {
+    let mut out = vec![false; widget.nodes.len()];
+    for (row, node) in widget.nodes.iter().enumerate() {
+        out[row] = hidden.contains(&(index, row)) || node.parent.is_some_and(|parent| out[parent]);
+    }
+    out
+}
+
 /// The composed layout, drawn to scale. Returns the node picked out of it this frame, if the
 /// pointer was over one.
 fn canvas(
     ui: &mut egui::Ui,
     widget: &WidgetRow,
+    concealed: &[bool],
     pinned: Option<usize>,
     deps: &mut Deps,
     backend: &Backend,
@@ -862,6 +889,10 @@ fn canvas(
     };
 
     for item in &widget.items {
+        // Ahead of the pieces *and* the text below them, so a hidden node keeps neither.
+        if concealed[item.row] {
+            continue;
+        }
         for piece in &item.pieces {
             let Some(path) = &piece.sprite.texture else {
                 continue;
@@ -948,7 +979,7 @@ fn canvas(
             .items
             .iter()
             .enumerate()
-            .filter(|(_, item)| place(&item.bounds).contains(pointer))
+            .filter(|(_, item)| !concealed[item.row] && place(&item.bounds).contains(pointer))
             .max_by_key(|(index, item)| (widget.nodes[item.row].depth, *index))
             .map(|(_, item)| item.row)
     });
@@ -983,6 +1014,7 @@ fn canvas(
         (hovered, ui.visuals().widgets.hovered.fg_stroke),
     ] {
         let Some(bounds) = row
+            .filter(|row| !concealed[*row])
             .and_then(|row| widget.items.iter().find(|item| item.row == row))
             .map(|item| place(&item.bounds))
         else {
@@ -1072,6 +1104,7 @@ pub fn ui(
 ) -> Option<String> {
     let mut follow = None;
     let mut selected = layout.selected(ui);
+    let hidden = layout.toggles(ui).hidden;
 
     ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -1084,7 +1117,8 @@ pub fn ui(
                 ui.label(RichText::new(&widget.summary).weak());
                 ui.add_space(4.0);
                 let pinned = selected.filter(|s| s.0 == index).map(|s| s.1);
-                match canvas(ui, widget, pinned, deps, backend) {
+                let concealed = concealed(widget, index, &hidden);
+                match canvas(ui, widget, &concealed, pinned, deps, backend) {
                     Some(Pick::Node(row)) => selected = Some(Selected(index, row)),
                     Some(Pick::Nothing) => selected = None,
                     None => {}
@@ -1161,6 +1195,15 @@ impl Rendered {
         ui.data(|data| data.get_temp::<Selected>(self.selection))
     }
 
+    fn toggles_id(&self) -> egui::Id {
+        self.selection.with("toggles")
+    }
+
+    /// The tree sets these and the canvas reads them, and the two are drawn by different callers.
+    fn toggles(&self, ui: &egui::Ui) -> Toggles {
+        ui.data(|data| data.get_temp(self.toggles_id()).unwrap_or_default())
+    }
+
     fn store(&self, ui: &egui::Ui, selected: Option<Selected>) {
         ui.data_mut(|data| match selected {
             Some(selected) => {
@@ -1183,7 +1226,7 @@ fn snippet(text: &str) -> String {
 /// One widget's nodes, as an indented tree of the kind a browser's element panel draws.
 fn tree(
     ui: &mut egui::Ui,
-    open: &mut HashSet<(usize, usize)>,
+    toggles: &mut Toggles,
     index: usize,
     widget: &WidgetRow,
     selected: &mut Option<Selected>,
@@ -1203,6 +1246,8 @@ fn tree(
         }
     }
 
+    let concealed = concealed(widget, index, &toggles.hidden);
+
     // Rows are in depth-first order, so a collapsed node's subtree is every row after it that is
     // deeper than it.
     let mut collapsed_at = None;
@@ -1215,7 +1260,8 @@ fn tree(
         // An instanced component starts collapsed; everything else starts open. The set holds the
         // rows that have been clicked away from that default.
         let default_open = !node.instances;
-        let expanded = (default_open != open.contains(&(index, row))) || reveal.contains(&row);
+        let expanded =
+            (default_open != toggles.open.contains(&(index, row))) || reveal.contains(&row);
         if !node.children.is_empty() && !expanded {
             collapsed_at = Some(node.depth);
         }
@@ -1231,6 +1277,30 @@ fn tree(
         };
 
         ui.horizontal(|ui| {
+            // Hiding a node hides its subtree, so a row under a hidden one has nothing of its own
+            // left to switch off.
+            let inherited = node.parent.is_some_and(|parent| concealed[parent]);
+            let eye = match concealed[row] {
+                true => RichText::new(EYE).weak(),
+                false => RichText::new(EYE),
+            };
+            let toggle = ui.add_enabled(
+                !inherited,
+                Button::new(eye).frame(false).min_size(vec2(GUTTER, 0.0)),
+            );
+            if toggle
+                .on_hover_text(match concealed[row] {
+                    true => "Show",
+                    false => "Hide",
+                })
+                .clicked()
+            {
+                match toggles.hidden.contains(&(index, row)) {
+                    true => toggles.hidden.remove(&(index, row)),
+                    false => toggles.hidden.insert((index, row)),
+                };
+            }
+
             ui.add_space(node.depth.min(MAX_INDENT) as f32 * INDENT);
             match node.children.is_empty() {
                 true => ui.add_space(TRIANGLE),
@@ -1243,17 +1313,18 @@ fn tree(
                     };
                     paint_default_icon(ui, openness, &response);
                     if response.clicked() {
-                        match open.contains(&(index, row)) {
-                            true => open.remove(&(index, row)),
-                            false => open.insert((index, row)),
+                        match toggles.open.contains(&(index, row)) {
+                            true => toggles.open.remove(&(index, row)),
+                            false => toggles.open.insert((index, row)),
                         };
                     }
                 }
             }
 
             let label = RichText::new(&named);
-            // A hidden node is still part of the layout, so it is dimmed rather than dropped.
-            let label = match node.visible {
+            // A node that is not drawn -- because the file says so, or because the user switched it
+            // off -- is still part of the layout, so it is dimmed rather than dropped.
+            let label = match node.visible && !concealed[row] {
                 true => label,
                 false => label.weak(),
             };
@@ -1275,9 +1346,7 @@ pub fn details_ui(ui: &mut egui::Ui, layout: &Rendered, deps: &mut Deps, backend
     if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
         selected = None;
     }
-    let open_id = layout.selection.with("open");
-    let mut open: HashSet<(usize, usize)> =
-        ui.data(|data| data.get_temp(open_id).unwrap_or_default());
+    let mut toggles = layout.toggles(ui);
 
     ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
         if !layout.widgets.is_empty() {
@@ -1290,7 +1359,15 @@ pub fn details_ui(ui: &mut egui::Ui, layout: &Rendered, deps: &mut Deps, backend
                         if layout.widgets.len() > 1 {
                             ui.label(RichText::new(format!("Widget {}", widget.id)).weak());
                         }
-                        tree(ui, &mut open, index, widget, &mut selected, deps, backend);
+                        tree(
+                            ui,
+                            &mut toggles,
+                            index,
+                            widget,
+                            &mut selected,
+                            deps,
+                            backend,
+                        );
                     }
                 });
             ui.add_space(4.0);
@@ -1372,5 +1449,5 @@ pub fn details_ui(ui: &mut egui::Ui, layout: &Rendered, deps: &mut Deps, backend
     });
 
     layout.store(ui, selected);
-    ui.data_mut(|data| data.insert_temp(open_id, open));
+    ui.data_mut(|data| data.insert_temp(layout.toggles_id(), toggles));
 }
