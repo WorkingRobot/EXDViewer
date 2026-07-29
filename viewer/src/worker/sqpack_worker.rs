@@ -19,8 +19,8 @@ use crate::{
 };
 
 use super::{
-    WorkerDirectory, WorkerRequest, WorkerResponse, WorkerTexture, directory::verify_permission,
-    vfs::DirectoryVfs,
+    WorkerBytes, WorkerDirectory, WorkerFile, WorkerRequest, WorkerResponse, WorkerTexture,
+    directory::verify_permission, vfs::DirectoryVfs,
 };
 
 pub struct SqpackWorker {
@@ -174,7 +174,10 @@ impl Worker for SqpackWorker {
                         .file(&path)
                         .and_then(stream)
                         .map_err(|e| e.to_string());
-                    scope.respond(id, WorkerResponse::DataRequestFile(file));
+                    scope.respond(
+                        id,
+                        WorkerResponse::DataRequestFile(file.map(WorkerFile::from)),
+                    );
                 }
             }
             WorkerRequest::DataRequestFileByHash((repository, category, hash, split)) => {
@@ -187,13 +190,17 @@ impl Worker for SqpackWorker {
                         .file_by_hash(repository, category, index_hash(hash, split))
                         .and_then(stream)
                         .map_err(|e| e.to_string());
-                    scope.respond(id, WorkerResponse::DataRequestFileByHash(file));
+                    scope.respond(
+                        id,
+                        WorkerResponse::DataRequestFileByHash(file.map(WorkerFile::from)),
+                    );
                 }
             }
             WorkerRequest::DataPresence(paths) => {
                 let _stop = Stopwatch::new("SqpackWorker::DataPresence");
                 let map = match self.install_instance.borrow().as_ref() {
                     Some(inst) => build_local_presence(&inst.sqpack, &paths)
+                        .map(WorkerBytes)
                         .map_err(|error| error.to_string()),
                     None => Err("no install is set up".to_string()),
                 };

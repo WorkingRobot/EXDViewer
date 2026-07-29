@@ -6,6 +6,22 @@ pub struct WorkerDirectory(
     #[serde(with = "serde_wasm_bindgen::preserve")] pub FileSystemDirectoryHandle,
 );
 
+#[derive(Serialize, Deserialize)]
+pub struct WorkerFile {
+    pub kind: String,
+    #[serde(with = "bytes")]
+    pub bytes: Vec<u8>,
+}
+
+impl From<(String, Vec<u8>)> for WorkerFile {
+    fn from((kind, bytes): (String, Vec<u8>)) -> Self {
+        Self { kind, bytes }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WorkerBytes(#[serde(with = "bytes")] pub Vec<u8>);
+
 /// A decoded texture crossing the message port: RGBA pixels at whatever mip covered the requested
 /// size, and the size of the texture they came from. Anything indexing into a texture is expressed
 /// in that space rather than the decoded image's, so a caller cropping the result needs both.
@@ -56,10 +72,9 @@ pub enum WorkerResponse {
     DataStore(Result<(), String>),
 
     DataSetup(Result<(), String>),
-    /// `(stream kind, bytes)`
-    DataRequestFile(Result<(String, Vec<u8>), String>),
-    DataRequestFileByHash(Result<(String, Vec<u8>), String>),
-    DataPresence(Result<Vec<u8>, String>),
+    DataRequestFile(Result<WorkerFile, String>),
+    DataRequestFileByHash(Result<WorkerFile, String>),
+    DataPresence(Result<WorkerBytes, String>),
     DataRequestTexture(Result<WorkerTexture, String>),
     DecodeTexture(Result<WorkerTexture, String>),
     DataRequestExists(Result<Vec<bool>, String>),

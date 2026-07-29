@@ -60,9 +60,9 @@ impl FileProvider for WorkerFileProvider {
         if let WorkerResponse::DataRequestFile(result) =
             worker::transact(WorkerRequest::DataRequestFile(path.to_string())).await
         {
-            let (kind, bytes) =
+            let file =
                 result.map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))?;
-            Ok((Some(kind), bytes))
+            Ok((Some(file.kind), file.bytes))
         } else {
             Err(anyhow::anyhow!(
                 "WorkerFileProvider: invalid response from worker"
@@ -81,7 +81,7 @@ impl FileProvider for WorkerFileProvider {
             worker::transact(WorkerRequest::DataPresence(paths.clone())).await
         {
             let presence = result.map_err(|e| anyhow::anyhow!("WorkerFileProvider: {e}"))?;
-            Ok((paths, presence))
+            Ok((paths, presence.0))
         } else {
             Err(anyhow::anyhow!(
                 "WorkerFileProvider: invalid response from worker"
@@ -102,9 +102,9 @@ impl FileProvider for WorkerFileProvider {
         )
         .await
         {
-            let (kind, bytes) =
+            let file =
                 result.map_err(|e| ironworks::Error::NotFound(ironworks::ErrorValue::Other(e)))?;
-            Ok((Some(kind), bytes))
+            Ok((Some(file.kind), file.bytes))
         } else {
             Err(anyhow::anyhow!(
                 "WorkerFileProvider: invalid response from worker"
