@@ -23,7 +23,9 @@ use crate::utils::{CollapsibleSidePanel, FuzzyMatcher, Side, TrackedPromise};
 use pathlist::{PathList, Presence};
 
 pub mod deps;
+mod magic;
 mod viewers;
+use magic::Format;
 use viewers::{Preview, Viewer};
 
 /// Directories examined per frame while a search runs. Keeps the scan off the critical path without
@@ -533,6 +535,8 @@ pub struct AssetBrowser {
     /// store reports one, and its raw bytes.
     bytes: Load<(Option<String>, Vec<u8>)>,
     bytes_of: Option<String>,
+    /// What `bytes` turned out to hold, where its leading bytes say. Read once per selection.
+    sniffed: Option<Format>,
     /// Rendered view of `bytes`, decoded once per selection.
     preview: Option<Preview>,
     /// Assets the current preview references, such as a material's textures.
@@ -560,6 +564,7 @@ impl Default for AssetBrowser {
             state: Load::Idle,
             bytes: Load::Idle,
             bytes_of: None,
+            sniffed: None,
             deps: deps::Deps::default(),
             preview: None,
             selected_unnamed: None,
@@ -1103,7 +1108,7 @@ impl AssetBrowser {
                 }
             }
 
-            let showing = self.viewer.unwrap_or_else(|| Viewer::recommended(&path));
+            let showing = self.viewer.unwrap_or(self.recommended(&path));
             CentralPanel::default().show(ui, |ui| {
                 if CollapsibleSidePanel::is_collapsed(ui.ctx(), "asset_info")
                     && self.preview.as_ref().is_some_and(Preview::has_details)
@@ -1146,16 +1151,32 @@ impl AssetBrowser {
         follow
     }
 
-    /// Fetch the selected file if it is not already in hand, and decode a view of it.
-    /// The viewer dropdown, which reads its recommendation from the path and throws the decoded
-    /// preview away whenever the choice changes.
+    /// What a file is shown with unless the dropdown says otherwise. The bytes are taken over the
+    /// name wherever they say anything, which is the only thing an unnamed file has to go on.
+    fn recommended(&self, path: &str) -> Viewer {
+        self.sniffed
+            .map_or_else(|| Viewer::from_extension(path), Format::viewer)
+    }
+
+    /// The viewer dropdown, which throws the decoded preview away whenever the choice changes. Where
+    /// the bytes and the extension disagree, the extension's reading stays on offer below the
+    /// recommendation rather than being dropped.
     fn viewer_picker(&mut self, ui: &mut egui::Ui, path: &str) {
-        let recommended = Viewer::recommended(path);
-        let chosen = self.viewer.unwrap_or(recommended);
+        let extension = Viewer::from_extension(path);
+        let recommended = self.recommended(path);
+        let named = self
+            .sniffed
+            .map_or_else(|| recommended.label(), Format::label);
+        // Following the recommendation reads as whatever the file turned out to be, so a sheet page
+        // does not sit closed as the `Bytes` it is shown with.
+        let chosen = match self.viewer {
+            Some(viewer) => viewer.label(),
+            None => named,
+        };
         // A real dropdown, not a bare button: ComboBox draws the indicator and closes itself on
         // click, which is why the arms below never call `close`.
         egui::ComboBox::from_id_salt("asset_viewer")
-            .selected_text(chosen.label())
+            .selected_text(chosen)
             .show_ui(ui, |ui| {
                 let mut pick = |ui: &mut egui::Ui, viewer: Option<Viewer>, label: String| {
                     if ui.selectable_label(self.viewer == viewer, label).clicked() {
@@ -1163,7 +1184,16 @@ impl AssetBrowser {
                         self.preview = None;
                     }
                 };
-                pick(ui, None, format!("Recommended ({})", recommended.label()));
+                pick(ui, None, format!("{named} (Recommended)"));
+                // Only where the name claims something of its own, and something else: an
+                // unrecognised extension has nothing to say that `Bytes` below does not.
+                if extension != recommended && extension != Viewer::Raw {
+                    pick(
+                        ui,
+                        Some(extension),
+                        format!("{} (Extension)", extension.label()),
+                    );
+                }
                 pick(ui, Some(Viewer::Raw), Viewer::Raw.label().to_owned());
                 ui.separator();
                 for viewer in Viewer::RENDERED {
@@ -1178,9 +1208,11 @@ impl AssetBrowser {
             });
     }
 
+    /// Fetch the selected file if it is not already in hand, and decode a view of it.
     fn ensure_bytes(&mut self, ui: &mut egui::Ui, backend: &Backend, path: &str) {
         if self.bytes_of.as_deref() != Some(path) {
             self.bytes_of = Some(path.to_string());
+            self.sniffed = None;
             self.preview = None;
             self.mip = 0;
             self.slice = 0;
@@ -1218,14 +1250,17 @@ impl AssetBrowser {
             && let Some(result) = promise.try_get()
         {
             self.bytes = match result.as_ref() {
-                Ok(bytes) => Load::Ready(bytes.clone()),
+                Ok((kind, bytes)) => {
+                    self.sniffed = magic::sniff(bytes);
+                    Load::Ready((kind.clone(), bytes.clone()))
+                }
                 Err(e) => Load::Failed(e.to_string()),
             };
         }
 
         // Decoding uploads a texture, so it needs the context and happens here rather than in the
         // fetch. Once per file, or again when a different mipmap is picked.
-        let viewer = self.viewer.unwrap_or_else(|| Viewer::recommended(path));
+        let viewer = self.viewer.unwrap_or(self.recommended(path));
         if let Load::Ready((_, bytes)) = &self.bytes
             && !bytes.is_empty()
             && self.preview.is_none()

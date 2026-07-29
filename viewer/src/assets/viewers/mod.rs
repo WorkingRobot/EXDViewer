@@ -419,8 +419,8 @@ impl Viewer {
         }
     }
 
-    /// What a path is shown with unless the dropdown says otherwise.
-    pub fn recommended(path: &str) -> Self {
+    /// What a path's name says it holds. An unnamed file has nothing here to go on.
+    pub fn from_extension(path: &str) -> Self {
         match path.rsplit('.').next().unwrap_or_default() {
             "tex" | "atex" => Self::Texture,
             "png" => Self::Image,
