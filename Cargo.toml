@@ -3,7 +3,7 @@ members = ["glyphnames", "pathlist", "shaders", "viewer", "web"]
 resolver = "3"
 
 [workspace.package]
-version = "1.7.0"
+version = "1.8.0"
 authors = ["Asriel Camora <asriel@camora.dev>"]
 repository = "https://github.com/WorkingRobot/EXDViewer"
 edition = "2024"

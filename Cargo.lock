@@ -2902,7 +2902,7 @@ dependencies = [
 
 [[package]]
 name = "glyphnames"
-version = "1.7.0"
+version = "1.8.0"
 dependencies = [
  "unicode_names2",
 ]
@@ -4817,7 +4817,7 @@ checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pathlist"
-version = "1.7.0"
+version = "1.8.0"
 dependencies = [
  "anyhow",
  "ironworks",
@@ -6131,7 +6131,7 @@ dependencies = [
 
 [[package]]
 name = "shaders"
-version = "1.7.0"
+version = "1.8.0"
 dependencies = [
  "crc",
 ]
@@ -7171,7 +7171,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viewer"
-version = "1.7.0"
+version = "1.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7503,7 +7503,7 @@ dependencies = [
 
 [[package]]
 name = "web"
-version = "1.7.0"
+version = "1.8.0"
 dependencies = [
  "actix-cors",
  "actix-files",
