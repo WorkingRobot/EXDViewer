@@ -1,20 +1,13 @@
 //! Names for the shader resources a material refers to by hash.
-//!
-//! The game identifies constants, samplers, shader keys and their values by a CRC-32 of the name
-//! (standard polynomial, zero init, no final xor), so nearly every id is derivable from its string
-//! and only the string is stored. A handful of ids come from tooling that recovered the value
-//! without the name that produced it; those are listed with their hash instead.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// Names whose id is the crc32 of the name itself.
-static DERIVED: &str = include_str!("shader_names.txt");
+static DERIVED: &str = include_str!("names.txt");
 /// `hash name` for ids that cannot be derived.
-static EXPLICIT: &str = include_str!("shader_hashes.txt");
+static EXPLICIT: &str = include_str!("hashes.txt");
 
-/// The parameterisation the game hashes shader resource names with: the standard polynomial, but
-/// with zero init and no final xor, so `crc32fast` cannot be used for it.
 static SHADER_NAME_CRC: crc::Algorithm<u32> = crc::Algorithm {
     width: 32,
     poly: 0x04C1_1DB7,
@@ -26,7 +19,8 @@ static SHADER_NAME_CRC: crc::Algorithm<u32> = crc::Algorithm {
     residue: 0x0000_0000,
 };
 
-fn crc32(bytes: &[u8]) -> u32 {
+/// The id the game would give a name, for matching a string back to a table keyed by hash.
+pub fn hash(bytes: &[u8]) -> u32 {
     crc::Crc::<u32>::new(&SHADER_NAME_CRC).checksum(bytes)
 }
 
@@ -36,7 +30,7 @@ fn entries(text: &str) -> impl Iterator<Item = &str> {
 }
 
 static NAMES: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| {
-    let derived = entries(DERIVED).map(|name| (crc32(name.as_bytes()), name));
+    let derived = entries(DERIVED).map(|name| (hash(name.as_bytes()), name));
     let explicit = entries(EXPLICIT).filter_map(|line| {
         let (hash, name) = line.split_once(' ')?;
         Some((u32::from_str_radix(hash, 16).ok()?, name))
@@ -51,7 +45,7 @@ pub fn resolve(id: u32) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DERIVED, EXPLICIT, NAMES, crc32, entries, resolve};
+    use super::{DERIVED, EXPLICIT, NAMES, entries, hash, resolve};
 
     /// Every line has to be usable; a malformed one would drop a name rather than fail.
     #[test]
@@ -65,9 +59,9 @@ mod tests {
     #[test]
     fn explicit_hashes_are_not_derivable() {
         for line in entries(EXPLICIT) {
-            let (hash, name) = line.split_once(' ').expect(line);
-            let hash = u32::from_str_radix(hash, 16).expect(line);
-            assert_ne!(crc32(name.as_bytes()), hash, "{name} could be derived");
+            let (listed, name) = line.split_once(' ').expect(line);
+            let listed = u32::from_str_radix(listed, 16).expect(line);
+            assert_ne!(hash(name.as_bytes()), listed, "{name} could be derived");
         }
     }
 

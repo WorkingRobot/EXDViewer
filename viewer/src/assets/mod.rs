@@ -1137,10 +1137,10 @@ impl AssetBrowser {
                         hex_dump(ui, bytes, &mut page);
                         self.hex_page = page;
                     }
-                    Load::Ready(_) => {
+                    Load::Ready((_, bytes)) => {
                         if let Some(preview) = &self.preview
                             && let Some(target) =
-                                preview.ui(ui, self.slice, &mut self.deps, backend)
+                                preview.ui(ui, bytes, self.slice, &mut self.deps, backend)
                         {
                             follow = Some(target);
                         }

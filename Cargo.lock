@@ -1841,6 +1841,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "dxbc"
+version = "0.1.0"
+dependencies = [
+ "memchr",
+ "nostdio",
+ "smallvec",
+]
+
+[[package]]
 name = "ecolor"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3105,6 +3114,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "hlsl"
+version = "0.1.0"
+dependencies = [
+ "dxbc",
+]
+
+[[package]]
 name = "home"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4215,6 +4231,12 @@ name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
+
+[[package]]
+name = "nostdio"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dd90a73af33ea00621a62c02e1c918457df504135180c959577099f043b9e2e"
 
 [[package]]
 name = "noyalib"
@@ -6109,6 +6131,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shaders"
+version = "1.7.0"
+dependencies = [
+ "crc",
+]
+
+[[package]]
 name = "shadow-rs"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7154,6 +7183,7 @@ dependencies = [
  "crc",
  "cridecoder",
  "csv",
+ "dxbc",
  "eframe",
  "egui",
  "egui_extras",
@@ -7167,6 +7197,7 @@ dependencies = [
  "gloo-worker",
  "glyphnames",
  "half",
+ "hlsl",
  "image",
  "image_dds",
  "indexed-db",
@@ -7193,6 +7224,7 @@ dependencies = [
  "serde_json",
  "serde_yml",
  "sha2",
+ "shaders",
  "shadow-rs",
  "smallvec",
  "symphonia",

@@ -48,6 +48,7 @@ const MAGIC: &[(&[u8], Format)] = &[
     (b"uldh", Format::Shown(Viewer::Uld)),
     (b"fcsv", Format::Shown(Viewer::Font)),
     (b"gftd0100", Format::Shown(Viewer::Icons)),
+    (b"ShPk", Format::Shown(Viewer::Shpk)),
     (b"blks", Format::Named("Skeleton")),
     (b"SEDBSSCF", Format::Named("Sound")),
     (b"EXHF", Format::Named("Sheet header")),
@@ -126,6 +127,7 @@ mod tests {
         assert_eq!(label(b"uldh0100rest of it"), Some("Layout"));
         assert_eq!(label(b"fcsv0100\0\0\0\0"), Some("Font"));
         assert_eq!(label(b"gftd0100\0\0\0\0"), Some("Icons"));
+        assert_eq!(label(b"ShPk\0\0\0\0"), Some("Shader"));
         assert_eq!(label(b"\x89PNG\r\n\x1a\n\0\0\0\0"), Some("Image"));
         assert_eq!(label(b"SEDBSSCF\0\0\0\0"), Some("Sound"));
         assert_eq!(label(b"blks\0\0\0\0"), Some("Skeleton"));

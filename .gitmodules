@@ -4,3 +4,6 @@
 [submodule "deps/ffxiv-downloader"]
 	path = deps/ffxiv-downloader
 	url = https://github.com/WorkingRobot/ffxiv-downloader.git
+[submodule "deps/d3dasm"]
+	path = deps/d3dasm
+	url = https://github.com/WorkingRobot/d3dasm.git

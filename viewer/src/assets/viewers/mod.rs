@@ -13,7 +13,7 @@ pub mod font;
 pub mod icons;
 pub mod material;
 pub mod png;
-pub mod shader_names;
+pub mod shpk;
 pub mod texture;
 pub mod uld;
 
@@ -156,6 +156,8 @@ pub enum Preview {
     Font(Box<font::Rendered>),
     /// The parsed icon sheet.
     Icons(Box<icons::Rendered>),
+    /// A parsed shader package.
+    Shpk(Box<shpk::Rendered>),
     /// Nothing to render; an empty message means the type simply has no viewer.
     Failed(String),
 }
@@ -179,6 +181,7 @@ impl Preview {
             Viewer::Uld => uld::decode(path, bytes),
             Viewer::Font => font::decode(path, bytes),
             Viewer::Icons => icons::decode(path, bytes),
+            Viewer::Shpk => shpk::decode(path, bytes),
             Viewer::Raw => return Self::Failed(String::new()),
         };
         result.unwrap_or_else(|e| Self::Failed(e.to_string()))
@@ -186,9 +189,12 @@ impl Preview {
 
     /// Draws the preview. Returns a path when the user follows a link out of it, such as a
     /// material's texture.
+    ///
+    /// `bytes` is the file the preview was decoded from, still owned by the browser.
     pub fn ui(
         &self,
         ui: &mut egui::Ui,
+        bytes: &[u8],
         slice: u16,
         deps: &mut crate::assets::deps::Deps,
         backend: &crate::backend::Backend,
@@ -203,6 +209,7 @@ impl Preview {
             }
             Self::Font(font) => font::ui(ui, font, deps, backend),
             Self::Icons(icons) => icons::ui(ui, icons, deps, backend),
+            Self::Shpk(package) => shpk::ui(ui, package, bytes),
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new("No viewer for this file type. Use Raw bytes.").weak());
@@ -266,7 +273,7 @@ impl Preview {
             Self::Image { .. } => true,
             Self::Material(material) => material.has_params(),
             Self::Uld(layout) => layout.has_details(),
-            Self::Font(_) | Self::Icons(_) => true,
+            Self::Font(_) | Self::Icons(_) | Self::Shpk(_) => true,
             _ => false,
         }
     }
@@ -295,6 +302,10 @@ impl Preview {
         }
         if let Self::Icons(icons) = self {
             icons.details_ui(ui, follow);
+            return None;
+        }
+        if let Self::Shpk(package) = self {
+            package.details_ui(ui);
             return None;
         }
         let Self::Image {
@@ -389,6 +400,7 @@ pub enum Viewer {
     Uld,
     Font,
     Icons,
+    Shpk,
     Text,
     Raw,
 }
@@ -396,13 +408,14 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 7] = [
+    pub const RENDERED: [Self; 8] = [
         Self::Texture,
         Self::Image,
         Self::Material,
         Self::Uld,
         Self::Font,
         Self::Icons,
+        Self::Shpk,
         Self::Text,
     ];
 
@@ -414,6 +427,7 @@ impl Viewer {
             Self::Uld => "Layout",
             Self::Font => "Font",
             Self::Icons => "Icons",
+            Self::Shpk => "Shader",
             Self::Text => "Text",
             Self::Raw => "Bytes",
         }
@@ -428,6 +442,7 @@ impl Viewer {
             "uld" => Self::Uld,
             "fdt" => Self::Font,
             "gfd" => Self::Icons,
+            "shpk" => Self::Shpk,
             "txt" | "csv" => Self::Text,
             _ => Self::Raw,
         }

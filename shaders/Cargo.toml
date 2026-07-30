@@ -1,0 +1,13 @@
+[package]
+name = "shaders"
+description = "Names for the resources and parameters a shader package hashes"
+authors.workspace = true
+repository.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "shaders"
+
+[dependencies]
+crc = "3"

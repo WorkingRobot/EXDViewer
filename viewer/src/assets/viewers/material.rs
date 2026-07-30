@@ -13,7 +13,9 @@ use ironworks::file::{
 };
 use std::io::Cursor;
 
-use super::{Preview, link, section, shader_names};
+use shaders::names;
+
+use super::{Preview, link, section};
 use crate::assets::deps::{Dep, Deps};
 use crate::backend::Backend;
 use crate::sheet::draw_color;
@@ -40,7 +42,7 @@ fn sampler_name(id: u32) -> Option<&'static str> {
 fn label(id: u32, known: Option<&str>) -> String {
     known
         .map(str::to_owned)
-        .or_else(|| shader_names::resolve(id).map(str::to_owned))
+        .or_else(|| names::resolve(id).map(str::to_owned))
         .unwrap_or_else(|| format!("{id:#010x}"))
 }
 
