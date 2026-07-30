@@ -29,29 +29,38 @@ pub fn tick_promises(ctx: &egui::Context) {
     }
 }
 
+/// Holds a promise's place in the running count. Counting from a guard rather than around the await
+/// keeps the tally right when the UI abandons a request: dropping a promise cancels its future on
+/// native, so a count kept inside the future would never come back down.
+struct Running;
+
+impl Running {
+    fn new() -> Self {
+        RUNNING_PROMISES.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING_PROMISES.fetch_sub(1, Ordering::SeqCst);
+        PROMISE_CTX.get().inspect(|ctx| {
+            ctx.request_repaint();
+        });
+    }
+}
+
 impl<T: Send + 'static> TrackedPromise<T> {
     pub fn spawn_local(future: impl Future<Output = T> + 'static) -> Self {
+        let running = Running::new();
         Self(Promise::spawn_local(async move {
-            Self::increment();
-            let result = future.await;
-            Self::decrement();
-            result
+            let _running = running;
+            future.await
         }))
     }
 
     pub fn try_get(&self) -> Option<&T> {
         self.0.ready()
-    }
-
-    fn increment() {
-        RUNNING_PROMISES.fetch_add(1, Ordering::SeqCst);
-    }
-
-    fn decrement() {
-        RUNNING_PROMISES.fetch_sub(1, Ordering::SeqCst);
-        PROMISE_CTX.get().inspect(|ctx| {
-            ctx.request_repaint();
-        });
     }
 }
 

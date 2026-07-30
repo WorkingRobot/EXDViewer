@@ -316,7 +316,16 @@ async fn serve_hash(
             .insert_header(CacheControl(pinned()))
             .insert_header((STREAM_KIND, data.kind.name()))
             .body(data.bytes.clone())),
-        Err(err) if matches!(err, ironworks::Error::NotFound(_)) => Err(ErrorBadRequest(err)),
+        // A whole-path hash can name more than one file, which the caller has to resolve by asking
+        // for a path instead.
+        Err(err)
+            if matches!(
+                err,
+                ironworks::Error::NotFound(_) | ironworks::Error::Invalid(..)
+            ) =>
+        {
+            Err(ErrorBadRequest(err))
+        }
         Err(err) => Err(ErrorInternalServerError(err)),
     }
 }

@@ -1377,6 +1377,9 @@ impl App {
             match action {
                 assets::Action::Select(asset) => self.navigate(format!("/assets/{asset}")),
                 assets::Action::Navigate(route) => self.navigate(route),
+                assets::Action::Redirect(asset) => {
+                    self.navigate_replace(format!("/assets/{asset}"))
+                }
             }
         }
     }

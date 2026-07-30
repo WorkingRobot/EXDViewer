@@ -27,7 +27,18 @@ catppuccin-egui = { version = "5", default-features = false, features = [
 ] }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
-ironworks = { version = "0.4.1", features = ["excel", "sqpack", "tex", "scd", "mtrl", "uld", "fdt", "gfd", "shpk", "shcd"] }
+ironworks = { version = "0.4.1", features = [
+    "excel",
+    "sqpack",
+    "tex",
+    "scd",
+    "mtrl",
+    "uld",
+    "fdt",
+    "gfd",
+    "shpk",
+    "shcd",
+] }
 dxbc = "0.1"
 hlsl = "0.1"
 shaders = { path = "../shaders" }

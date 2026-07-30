@@ -33,6 +33,8 @@ use viewers::{Preview, Viewer};
 const SCAN_BATCH: usize = 600;
 /// Cap on search hits. Nobody scrolls past this, and it bounds the sort each frame.
 const MAX_RESULTS: usize = 500;
+/// How long a typed path has to stand still before the install is asked whether it holds it.\
+const EXISTS_DELAY: Duration = Duration::from_millis(250);
 
 /// One entry in the flattened view of the tree that is currently on screen.
 enum Row {
@@ -197,7 +199,7 @@ pub(crate) fn path_context(
         Some(file) if file.split => (Some(format!("{:016X}", file.hash)), None),
         Some(file) => (None, Some(format!("{:08X}", file.hash as u32))),
         None => {
-            let (split, whole) = IndexHash::of(path);
+            let (split, whole) = IndexHash::of(&path.to_lowercase());
             let IndexHash::Whole(whole) = whole else {
                 unreachable!("of() always returns a whole hash")
             };
@@ -519,6 +521,9 @@ struct Scan {
     pattern: Pattern,
     cursor: usize,
     hits: Vec<(u32, String)>,
+    direct: Option<String>,
+    exists: Load<bool>,
+    typed: Instant,
 }
 
 /// What the browser wants the app to do after a frame.
@@ -527,6 +532,58 @@ pub enum Action {
     Select(String),
     /// A handler wants to hand off to another tab.
     Navigate(String),
+    /// A link named a file by a hash the list has since learned a name for. Replaces the URL rather
+    /// than pushing, so going back does not land on the stale form and bounce forward again.
+    Redirect(String),
+}
+
+/// What a path from a link or the lookup box turns out to name.
+enum Revealed {
+    /// Read it by path, whether or not the list names it: the install is keyed by the hash of the
+    /// path either way.
+    Path,
+    /// A file the list does not name, read by the index entry the tree shows it under.
+    Hash(pathlist::Unnamed),
+    /// A hash the list has since learned a name for, so the link moves to the name.
+    Renamed(String),
+}
+
+/// The listed name a synthesised one stands for.
+fn named_by_hash(dir: &str, listed: &[Rc<str>], name: &str) -> Option<Rc<str>> {
+    use ironworks::sqpack::IndexHash;
+
+    if name.len() != 8 {
+        return None;
+    }
+    let want = u32::from_str_radix(name, 16).ok()?;
+    listed
+        .iter()
+        .find(|candidate| {
+            matches!(
+                IndexHash::of(&format!("{dir}/{candidate}").to_lowercase()).0,
+                Some(IndexHash::Split(hash)) if hash as u32 == want
+            )
+        })
+        .cloned()
+}
+
+/// The query read as a game path, so one the list does not carry can still be opened.
+///
+/// Every real path starts with a category directory and every listed name carries an extension, so
+/// those two together separate a path from a fuzzy fragment such as `uld/mkd`. The install hashes a
+/// lowercased path, so lowercasing loses nothing and makes the URL canonical.
+fn direct_path(query: &str, roots: impl Fn(&str) -> bool) -> Option<String> {
+    let query = query.trim().trim_matches('/').to_lowercase();
+    // The query is handed straight to a URL, where a `#` would quietly truncate it. No character a
+    // real path is spelled with falls outside this.
+    if !query
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "_./-".contains(c))
+    {
+        return None;
+    }
+    let mut segments = query.split('/');
+    (roots(segments.next()?) && segments.next_back()?.contains('.')).then_some(query)
 }
 
 pub struct AssetBrowser {
@@ -556,6 +613,7 @@ pub struct AssetBrowser {
     expanded: HashMap<usize, bool>,
     selected: Option<String>,
     pending: Option<String>,
+    redirect: Option<String>,
 }
 
 impl Default for AssetBrowser {
@@ -580,6 +638,7 @@ impl Default for AssetBrowser {
             expanded: HashMap::new(),
             selected: None,
             pending: None,
+            redirect: None,
         }
     }
 }
@@ -606,8 +665,18 @@ impl AssetBrowser {
             Load::Idle | Load::Loading(_) => {}
             Load::Ready(_) => {
                 if let Some(pending) = self.pending.take() {
-                    self.selected_unnamed = self.reveal(&pending);
-                    self.selected = Some(pending);
+                    let (selected, unnamed) = match self.reveal(&pending) {
+                        Revealed::Path => (pending, None),
+                        Revealed::Hash(file) => (pending, Some(file)),
+                        // The name arrived after the link was made, so the hash is no longer a file
+                        // the tree shows; move the URL to the name it turned out to be.
+                        Revealed::Renamed(named) => {
+                            self.redirect = Some(named.clone());
+                            (named, None)
+                        }
+                    };
+                    self.selected_unnamed = unnamed;
+                    self.selected = Some(selected);
                 }
             }
             // Without an index the tree cannot expand to it, but the detail panel reads the file by
@@ -624,12 +693,17 @@ impl AssetBrowser {
     pub fn ui(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<Action> {
         self.poll(ui.ctx(), backend);
         self.apply_pending();
-        let clicked = self.side_panel(ui);
+        let clicked = self.side_panel(ui, backend);
         let followed = self.detail_panel(ui, backend);
-        self.goto
+        let moved = self
+            .goto
             .take()
             .map(Action::Navigate)
-            .or_else(|| clicked.or(followed).map(Action::Select))
+            .or_else(|| clicked.or(followed).map(Action::Select));
+        // A redirect only restores a URL the app is already showing the right file for, so anything
+        // the user did this frame supersedes it rather than firing over the top a frame later.
+        let redirect = self.redirect.take().map(Action::Redirect);
+        moved.or(redirect)
     }
 
     fn poll(&mut self, ctx: &egui::Context, backend: &Backend) {
@@ -665,37 +739,54 @@ impl AssetBrowser {
         }
     }
 
-    /// Expand the tree down to `path` so a deep link lands somewhere visible.
-    /// Reports the unnamed file the target refers to, or `None` if it is one of the listed names.
-    /// An unnamed file is shown as its hash, so its path is synthesised: it must not be hashed back,
-    /// and reading it has to go by hash instead.
-    fn reveal(&mut self, path: &str) -> Option<pathlist::Unnamed> {
+    /// Expand the tree down to `path` so a deep link lands somewhere visible, and report how the
+    /// target has to be read.
+    ///
+    /// A path the tree cannot place still selects, since the install is asked by path and knows
+    /// files the list does not name.
+    fn reveal(&mut self, path: &str) -> Revealed {
         let Load::Ready(loaded) = &mut self.state else {
-            return None;
+            return Revealed::Path;
         };
-        let cut = path.rfind('/')?;
-        let (dir, file) = (&path[..cut], &path[cut + 1..]);
+        let Some(cut) = path.rfind('/') else {
+            return Revealed::Path;
+        };
+        let (folder, file) = (&path[..cut], &path[cut + 1..]);
         let mut parent: Option<usize> = None;
-        for segment in dir.split('/') {
+        for segment in folder.split('/') {
             let children: &[usize] = match parent {
                 Some(p) => &loaded.nodes[p].children,
                 None => &loaded.roots,
             };
-            let &next = children
+            let Some(&next) = children
                 .iter()
-                .find(|&&c| &*loaded.nodes[c].segment == segment)?;
+                .find(|&&c| &*loaded.nodes[c].segment == segment)
+            else {
+                return Revealed::Path;
+            };
             self.expanded.insert(next, true);
             parent = Some(next);
         }
-        let dir = parent.and_then(|node| loaded.nodes[node].dir)?;
+        let Some(dir) = parent.and_then(|node| loaded.nodes[node].dir) else {
+            return Revealed::Path;
+        };
         let names = loaded.names(dir);
-        if names.all[..names.named].iter().any(|name| &**name == file) {
-            return None;
+        let listed = &names.all[..names.named];
+        if listed.iter().any(|name| &**name == file) {
+            return Revealed::Path;
         }
-        loaded.unnamed_file(dir, file)
+        // An unnamed file is shown as its hash, so its path is synthesised: it must not be hashed
+        // back, and reading it has to go by index entry instead.
+        if let Some(unnamed) = loaded.unnamed_file(dir, file) {
+            return Revealed::Hash(unnamed);
+        }
+        match named_by_hash(folder, listed, file) {
+            Some(named) => Revealed::Renamed(format!("{folder}/{named}")),
+            None => Revealed::Path,
+        }
     }
 
-    fn side_panel(&mut self, ui: &mut egui::Ui) -> Option<String> {
+    fn side_panel(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<String> {
         let mut clicked = None;
         CollapsibleSidePanel::new("asset_tree", Side::Left).show(ui, |ui, is_open| {
             if !is_open {
@@ -746,7 +837,7 @@ impl AssetBrowser {
                         self.scan = None;
                         self.draw_tree(ui)
                     } else {
-                        self.draw_search(ui)
+                        self.draw_search(ui, backend)
                     };
                 }
             });
@@ -857,8 +948,8 @@ impl AssetBrowser {
         clicked
     }
 
-    fn draw_search(&mut self, ui: &mut egui::Ui) -> Option<String> {
-        self.advance_scan(ui.ctx());
+    fn draw_search(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<String> {
+        self.advance_scan(ui.ctx(), backend);
         let Some(scan) = &self.scan else {
             return None;
         };
@@ -866,6 +957,50 @@ impl AssetBrowser {
             return None;
         };
         let total = loaded.paths.dirs().len();
+        let mut clicked = None;
+        // Offered above the matches, because someone typing a whole path already knows what they
+        // want and the sweep for it takes a moment.
+        if let Some(path) = scan.direct.clone() {
+            ui.label(RichText::new("Open by path").weak());
+            let offer = match &scan.exists {
+                Load::Idle | Load::Loading(_) => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Checking…");
+                    });
+                    false
+                }
+                Load::Ready(found) => {
+                    if !found {
+                        ui.label(RichText::new("This version has no such file.").weak());
+                    }
+                    *found
+                }
+                // A check that could not run is not evidence of absence, so the path is still
+                // offered and the reason is put where the user can see it.
+                Load::Failed(error) => {
+                    ui.label(RichText::new(format!("Could not check: {error}")).weak());
+                    true
+                }
+            };
+            if offer {
+                ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                    let selected = self.selected.as_deref() == Some(path.as_str());
+                    if Button::selectable(selected, path.as_str())
+                        .ui(ui)
+                        .on_hover_text(
+                            "Read this path from the install, whether or not the list names it",
+                        )
+                        .clicked()
+                    {
+                        clicked = Some(path);
+                    }
+                });
+            }
+            ui.separator();
+        }
+
         let scanning = scan.cursor < total;
         if scanning {
             ui.horizontal(|ui| {
@@ -893,7 +1028,6 @@ impl AssetBrowser {
             );
         }
 
-        let mut clicked = None;
         let row_height = ui.text_style_height(&egui::TextStyle::Button);
         ScrollArea::vertical().auto_shrink(false).show_rows(
             ui,
@@ -918,7 +1052,7 @@ impl AssetBrowser {
         clicked
     }
 
-    fn advance_scan(&mut self, ctx: &egui::Context) {
+    fn advance_scan(&mut self, ctx: &egui::Context, backend: &Backend) {
         let Load::Ready(loaded) = &mut self.state else {
             return;
         };
@@ -926,7 +1060,47 @@ impl AssetBrowser {
             pattern: FuzzyMatcher::parse_pattern(&self.search),
             cursor: 0,
             hits: Vec::new(),
+            direct: direct_path(&self.search, |root| {
+                loaded
+                    .roots
+                    .iter()
+                    .any(|&node| &*loaded.nodes[node].segment == root)
+            }),
+            exists: Load::Idle,
+            typed: Instant::now(),
         });
+
+        if let Some(path) = &scan.direct {
+            let settled = match &scan.exists {
+                Load::Idle if scan.typed.elapsed() >= EXISTS_DELAY => {
+                    let path = path.clone();
+                    let files = backend.files().clone();
+                    Some(Load::Loading(TrackedPromise::spawn_local(async move {
+                        Ok(files
+                            .exists_many(&[path])
+                            .await?
+                            .first()
+                            .copied()
+                            .unwrap_or(false))
+                    })))
+                }
+                Load::Idle => {
+                    ctx.request_repaint_after(EXISTS_DELAY);
+                    None
+                }
+                Load::Loading(promise) => promise.try_get().map(|result| {
+                    match result.as_ref().map_err(|e| e.to_string()) {
+                        Ok(exists) => Load::Ready(*exists),
+                        Err(error) => Load::Failed(error),
+                    }
+                }),
+                Load::Ready(_) | Load::Failed(_) => None,
+            };
+            if let Some(settled) = settled {
+                scan.exists = settled;
+            }
+        }
+
         let total = loaded.paths.dirs().len();
         if scan.cursor >= total {
             return;
