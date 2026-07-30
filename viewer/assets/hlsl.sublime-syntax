@@ -1,0 +1,50 @@
+%YAML 1.2
+---
+name: HLSL
+file_extensions: [hlsl, fx, hlsli]
+scope: source.hlsl
+
+contexts:
+  main:
+    - match: //.*
+      scope: comment.line.double-slash.hlsl
+
+    - match: \b(?:if|else|for|while|do|switch|case|default|break|continue|return|discard)\b
+      scope: keyword.control.hlsl
+
+    - match: \b(?:cbuffer|tbuffer|struct|register|packoffset|static|const|uniform|extern|inline|in|out|inout|groupshared|typedef|namespace|sizeof)\b
+      scope: keyword.other.hlsl
+
+    - match: \b(?:row_major|column_major|precise|centroid|nointerpolation|noperspective|linear|snorm|unorm|volatile)\b
+      scope: storage.modifier.hlsl
+
+    - match: \b(?:void|bool|int|uint|dword|half|float|double|min16float|min10float|min16int|min12int|min16uint)(?:[1-4](?:x[1-4])?)?\b
+      scope: storage.type.hlsl
+
+    - match: \b(?:matrix|vector|Buffer|ByteAddressBuffer|RWByteAddressBuffer|StructuredBuffer|RWStructuredBuffer|AppendStructuredBuffer|ConsumeStructuredBuffer|Texture1D|Texture1DArray|Texture2D|Texture2DArray|Texture2DMS|Texture2DMSArray|Texture3D|TextureCube|TextureCubeArray|RWBuffer|RWTexture1D|RWTexture1DArray|RWTexture2D|RWTexture2DArray|RWTexture3D|SamplerState|SamplerComparisonState|PointStream|LineStream|TriangleStream|InputPatch|OutputPatch)\b
+      scope: storage.type.hlsl
+
+    - match: \b(?:true|false)\b
+      scope: constant.language.hlsl
+
+    - match: \bSV_[A-Za-z]\w*
+      scope: entity.name.tag.hlsl
+
+    - match: \b(?:POSITION|POSITIONT|NORMAL|TANGENT|BINORMAL|COLOR|TEXCOORD|BLENDWEIGHT|BLENDINDICES|PSIZE|FOG|TESSFACTOR|DEPTH|VFACE|VPOS)\d*\b
+      scope: entity.name.tag.hlsl
+
+    - match: \b\d+\.\d*(?:[eE][-+]?\d+)?[fFhH]?|\.\d+(?:[eE][-+]?\d+)?[fFhH]?|\b0[xX][0-9a-fA-F]+[uUlL]*|\b\d+(?:[eE][-+]?\d+)?[uUlLfFhH]*\b
+      scope: constant.numeric.hlsl
+
+    # A name the line goes on to call, which the swizzle rule below would otherwise take the dot of.
+    - match: '[A-Za-z_]\w*(?=\s*\()'
+      scope: support.function.hlsl
+
+    # The \b is what stops the lookahead backtracking to a shorter name: without it `.GatherRed(`
+    # matches as far as `.GatherRe`, where the next character is not a bracket.
+    - match: '\.\s*[A-Za-z_]\w*\b(?!\s*\()'
+      scope: variable.other.member.hlsl
+
+    # A temporary the reading named after the register it came from.
+    - match: \br\d+(?:_\d+)?\b
+      scope: variable.other.hlsl

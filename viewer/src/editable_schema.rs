@@ -288,6 +288,9 @@ impl EditableSchema {
                     .show(ui, |ui| {
                         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                             let theme = CODE_SYNTAX_THEME.get(ui.ctx());
+                            if let Some((fill, _)) = theme.surface() {
+                                ui.visuals_mut().text_edit_bg_color = Some(fill);
+                            }
 
                             let mut layouter =
                                 |ui: &egui::Ui, buf: &dyn TextBuffer, wrap_width: f32| {

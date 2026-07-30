@@ -13,6 +13,8 @@ pub mod font;
 pub mod icons;
 pub mod material;
 pub mod png;
+mod shader;
+pub mod shcd;
 pub mod shpk;
 pub mod texture;
 pub mod uld;
@@ -118,6 +120,41 @@ fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(4.0);
 }
 
+/// A group heading inside a section, for the tables that come in several kinds.
+fn heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(text).weak());
+    ui.add_space(4.0);
+}
+
+/// The weak header row above a striped table.
+fn headers(ui: &mut egui::Ui, names: &[&str]) {
+    for name in names {
+        ui.label(RichText::new(*name).weak().small());
+    }
+    ui.allocate_space(vec2(ui.available_width(), 0.0));
+    ui.end_row();
+}
+
+/// A clickable id, with the hover and copy menu every crc-named value in the browser gets.
+fn hashed(ui: &mut egui::Ui, kind: &str, name: &str, id: u32, dim: bool) {
+    labelled(ui, kind, name, name, id, dim);
+}
+
+/// The same, drawn under a shorter label. Hovering still gives the whole name and its hash, so
+/// nothing is lost by not spelling out a key's own name in every one of its values.
+fn labelled(ui: &mut egui::Ui, kind: &str, name: &str, shown: &str, id: u32, dim: bool) {
+    let text = RichText::new(shown).monospace();
+    let response = ui.add(
+        egui::Label::new(match dim {
+            true => text.weak(),
+            false => text,
+        })
+        .sense(Sense::click()),
+    );
+    crate::assets::crc_context(&response, kind, name, id);
+}
+
 /// A path rendered as a link: hyperlink colour, pointer cursor, and the same hover and right-click
 /// menu every other path in the browser gets. Returns whether it was followed.
 fn link(ui: &mut egui::Ui, text: &str, path: &str) -> bool {
@@ -158,6 +195,8 @@ pub enum Preview {
     Icons(Box<icons::Rendered>),
     /// A parsed shader package.
     Shpk(Box<shpk::Rendered>),
+    /// A parsed shader.
+    Shcd(Box<shcd::Rendered>),
     /// Nothing to render; an empty message means the type simply has no viewer.
     Failed(String),
 }
@@ -182,6 +221,7 @@ impl Preview {
             Viewer::Font => font::decode(path, bytes),
             Viewer::Icons => icons::decode(path, bytes),
             Viewer::Shpk => shpk::decode(path, bytes),
+            Viewer::Shcd => shcd::decode(path, bytes),
             Viewer::Raw => return Self::Failed(String::new()),
         };
         result.unwrap_or_else(|e| Self::Failed(e.to_string()))
@@ -210,6 +250,7 @@ impl Preview {
             Self::Font(font) => font::ui(ui, font, deps, backend),
             Self::Icons(icons) => icons::ui(ui, icons, deps, backend),
             Self::Shpk(package) => shpk::ui(ui, package, bytes),
+            Self::Shcd(code) => shcd::ui(ui, code, bytes),
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new("No viewer for this file type. Use Raw bytes.").weak());
@@ -273,7 +314,7 @@ impl Preview {
             Self::Image { .. } => true,
             Self::Material(material) => material.has_params(),
             Self::Uld(layout) => layout.has_details(),
-            Self::Font(_) | Self::Icons(_) | Self::Shpk(_) => true,
+            Self::Font(_) | Self::Icons(_) | Self::Shpk(_) | Self::Shcd(_) => true,
             _ => false,
         }
     }
@@ -306,6 +347,10 @@ impl Preview {
         }
         if let Self::Shpk(package) = self {
             package.details_ui(ui);
+            return None;
+        }
+        if let Self::Shcd(code) = self {
+            code.details_ui(ui);
             return None;
         }
         let Self::Image {
@@ -401,6 +446,7 @@ pub enum Viewer {
     Font,
     Icons,
     Shpk,
+    Shcd,
     Text,
     Raw,
 }
@@ -408,7 +454,7 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 8] = [
+    pub const RENDERED: [Self; 9] = [
         Self::Texture,
         Self::Image,
         Self::Material,
@@ -416,6 +462,7 @@ impl Viewer {
         Self::Font,
         Self::Icons,
         Self::Shpk,
+        Self::Shcd,
         Self::Text,
     ];
 
@@ -427,7 +474,8 @@ impl Viewer {
             Self::Uld => "Layout",
             Self::Font => "Font",
             Self::Icons => "Icons",
-            Self::Shpk => "Shader",
+            Self::Shpk => "Shader package",
+            Self::Shcd => "Shader code",
             Self::Text => "Text",
             Self::Raw => "Bytes",
         }
@@ -443,6 +491,7 @@ impl Viewer {
             "fdt" => Self::Font,
             "gfd" => Self::Icons,
             "shpk" => Self::Shpk,
+            "shcd" => Self::Shcd,
             "txt" | "csv" => Self::Text,
             _ => Self::Raw,
         }

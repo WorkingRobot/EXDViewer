@@ -1,0 +1,42 @@
+%YAML 1.2
+---
+name: DXBC
+file_extensions: [dxbc]
+scope: source.dxbc
+
+contexts:
+  main:
+    - match: //.*
+      scope: comment.line.double-slash.dxbc
+
+    # The profile the shader was compiled for, which opens the listing.
+    - match: ^\s*(?:vs|ps|gs|hs|ds|cs)_\d+_\d+\b
+      scope: entity.name.function.dxbc
+
+    - match: ^\s*dcl_\w+
+      scope: keyword.other.dxbc
+
+    - match: ^\s*[a-z][a-z0-9_]*
+      scope: keyword.control.dxbc
+
+    - match: \b(?:cb|icb|r|v|o|t|s|u|g|x|m)\d+\b
+      scope: variable.other.dxbc
+
+    - match: \b(?:vThreadID|vThreadGroupID|vThreadIDInGroup|vThreadIDInGroupFlattened|vCoverage|vPrim|vDomain|vOutputControlPointID|vForkInstanceID|vJoinInstanceID|vicp|vocp|vpc|oDepth|oDepthLE|oDepthGE|oMask|oStencilRef)\b
+      scope: variable.other.dxbc
+
+    # The marker an immediate operand is written under.
+    - match: \bl(?=\()
+      scope: support.function.dxbc
+
+    - match: \b(?:float|uint|sint|unorm|snorm|mixed|double)\b
+      scope: storage.type.dxbc
+
+    - match: \b(?:immediateIndexed|dynamicIndexed|mode_default|mode_comparison|mode_mono|refactoringAllowed|enableRawAndStructuredBuffers|enableMinimumPrecision|enableDoublePrecisionFloatOps|enable11_1DoubleExtensions|skipOptimization|forceEarlyDepthStencil|allResourcesBound|earlyDepthStencil|constant|linear|centroid|noperspective|sample|texture1d|texture1darray|texture2d|texture2darray|texture2dms|texture2dmsarray|texture3d|texturecube|texturecubearray|buffer|raw_buffer|structured_buffer|point|line|triangle|lineadj|triangleadj|pointlist|linelist|linestrip|trianglelist|trianglestrip)\b
+      scope: constant.other.dxbc
+
+    - match: '-?\b\d+\.\d+(?:[eE][-+]?\d+)?|-?\b0[xX][0-9a-fA-F]+|-?\b\d+\b'
+      scope: constant.numeric.dxbc
+
+    - match: \.[xyzw]+\b
+      scope: variable.other.member.dxbc

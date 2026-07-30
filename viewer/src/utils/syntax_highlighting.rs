@@ -71,9 +71,33 @@ impl CodeTheme {
             .map(|(k, v)| (k.as_str(), v.name.as_deref().unwrap_or(k.as_str())))
             .collect()
     }
+
+    pub fn surface(&self) -> Option<(egui::Color32, egui::Color32)> {
+        let held = THEME_SET.themes.get(&self.theme)?;
+        let colour =
+            |from: syntect::highlighting::Color| egui::Color32::from_rgb(from.r, from.g, from.b);
+        Some((
+            colour(held.settings.background?),
+            colour(held.settings.foreground?),
+        ))
+    }
 }
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+const BUNDLED: [&str; 2] = [
+    include_str!("../../assets/hlsl.sublime-syntax"),
+    include_str!("../../assets/dxbc.sublime-syntax"),
+];
+
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(|| {
+    let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
+    for source in BUNDLED {
+        builder.add(
+            syntect::parsing::SyntaxDefinition::load_from_str(source, true, None)
+                .expect("bundled grammar parses"),
+        );
+    }
+    builder.build()
+});
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 #[derive(Default)]
