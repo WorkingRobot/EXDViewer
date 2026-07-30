@@ -13,6 +13,7 @@ cache:
   max_concurrent_downloads: 4
   storage_directory: cache
   storage_capacity_bytes: 1073741824 # 1GiB
+  clut_ram_bytes: 536870912 # 512 MiB
 # How much of a file to download at once. Larger values reduces amortized latency.
 file_readahead: 8388608 # 8 MiB
 path_list:
