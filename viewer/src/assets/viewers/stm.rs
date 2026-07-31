@@ -10,7 +10,13 @@ use ironworks::file::{
 use std::io::Cursor;
 
 use super::{Preview, facts, headers, section, swatch};
+use crate::assets::deps::Deps;
+use crate::backend::Backend;
 use crate::sheet::draw_color;
+
+/// Stains are numbered by their row in this sheet: slot 1 is Snow White, 4 Slate Grey, 7 Rose Pink.
+/// The file carries more slots than the sheet has dyes, and the tail of them is unnamed.
+const STAIN_SHEET: &str = "Stain";
 
 /// The file that predates the field counts being stated, and the only one carrying the shorter row.
 const LEGACY: u16 = 0x0101;
@@ -84,7 +90,7 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     })))
 }
 
-pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
+pub fn ui(ui: &mut egui::Ui, file: &Rendered, deps: &mut Deps, backend: &Backend) {
     let templates = file.templates.templates();
     let Some(last) = templates.len().checked_sub(1) else {
         ui.centered_and_justified(|ui| {
@@ -114,7 +120,7 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
     ui.separator();
     section(ui, "Stains");
     ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-        let mut names = vec!["#", "Diffuse", "Specular", "Emissive"];
+        let mut names = vec!["#", "Dye", "Diffuse", "Specular", "Emissive"];
         names.extend(file.scalars.iter().map(|(name, _)| *name));
         egui::Grid::new("stm_stains")
             .num_columns(names.len())
@@ -126,6 +132,10 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
                         continue;
                     };
                     ui.label(RichText::new(stain.to_string()).monospace());
+                    match deps.text(ui.ctx(), backend, STAIN_SHEET, u32::from(stain)) {
+                        Some(name) => ui.label(name),
+                        None => ui.label(RichText::new("—").weak()),
+                    };
                     for color in [dye.diffuse, dye.specular, dye.emissive] {
                         ui.scope(|ui| {
                             ui.set_max_size(SWATCH);
