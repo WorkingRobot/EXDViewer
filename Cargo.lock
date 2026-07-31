@@ -6130,6 +6130,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "shadermerge"
+version = "1.8.0"
+dependencies = [
+ "dxbc",
+ "hlsl",
+ "ironworks",
+ "shaders",
+]
+
+[[package]]
 name = "shaders"
 version = "1.8.0"
 dependencies = [
@@ -7223,6 +7233,7 @@ dependencies = [
  "serde_json",
  "serde_yml",
  "sha2",
+ "shadermerge",
  "shaders",
  "shadow-rs",
  "smallvec",
