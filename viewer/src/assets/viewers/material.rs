@@ -15,7 +15,7 @@ use std::io::Cursor;
 
 use shaders::names;
 
-use super::{Preview, link, section};
+use super::{Preview, link, section, swatch};
 use crate::assets::deps::{Dep, Deps};
 use crate::backend::Backend;
 use crate::sheet::draw_color;
@@ -197,13 +197,6 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
         rows,
         table_kind,
     })))
-}
-
-/// Half-float colours are linear and can exceed 1.0, so they are tone-mapped rather than clamped;
-/// otherwise every bright row renders as flat white.
-fn swatch(color: [f32; 3]) -> Color32 {
-    let map = |v: f32| ((v / (1.0 + v)).clamp(0.0, 1.0) * 255.0) as u8;
-    Color32::from_rgb(map(color[0]), map(color[1]), map(color[2]))
 }
 
 pub fn ui(

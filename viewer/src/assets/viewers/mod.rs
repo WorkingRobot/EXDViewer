@@ -11,11 +11,13 @@ use super::{Bytes, Channels, MAX_TEXT_PREVIEW};
 
 pub mod font;
 pub mod icons;
+pub mod imc;
 pub mod material;
 pub mod png;
 mod shader;
 pub mod shcd;
 pub mod shpk;
+pub mod stm;
 pub mod texture;
 pub mod uld;
 
@@ -136,6 +138,49 @@ fn headers(ui: &mut egui::Ui, names: &[&str]) {
     ui.end_row();
 }
 
+/// One row of a monospace table, each cell padded to its column so the header above and every row
+/// below hold the same columns.
+fn line<'a>(columns: &[(&str, usize)], cells: impl IntoIterator<Item = &'a str>) -> String {
+    columns
+        .iter()
+        .zip(cells)
+        .map(|((_, width), cell)| format!("{cell:<width$}  "))
+        .collect()
+}
+
+/// A monospace table, virtualised by row for the formats whose row count is whatever the file
+/// holds. The header stays above the scroll area rather than moving with the rows, and the columns
+/// line up because both are padded by [`line`].
+fn table(
+    ui: &mut egui::Ui,
+    columns: &[(&str, usize)],
+    count: usize,
+    mut row: impl FnMut(&mut egui::Ui, usize),
+) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    ui.label(
+        RichText::new(line(columns, columns.iter().map(|(name, _)| *name)))
+            .monospace()
+            .weak(),
+    );
+    let height = ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
+    ScrollArea::vertical()
+        .auto_shrink(false)
+        .show_rows(ui, height, count, |ui, shown| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            for index in shown {
+                row(ui, index);
+            }
+        });
+}
+
+/// Half-float colours are linear and can exceed 1.0, so they are tone-mapped rather than clamped;
+/// otherwise every bright row renders as flat white.
+fn swatch(color: [f32; 3]) -> Color32 {
+    let map = |v: f32| ((v / (1.0 + v)).clamp(0.0, 1.0) * 255.0) as u8;
+    Color32::from_rgb(map(color[0]), map(color[1]), map(color[2]))
+}
+
 /// A clickable id, with the hover and copy menu every crc-named value in the browser gets.
 fn hashed(ui: &mut egui::Ui, kind: &str, name: &str, id: u32, dim: bool) {
     labelled(ui, kind, name, name, id, dim);
@@ -197,6 +242,10 @@ pub enum Preview {
     Shpk(Box<shpk::Rendered>),
     /// A parsed shader.
     Shcd(Box<shcd::Rendered>),
+    /// A parsed image change file.
+    Imc(Box<imc::Rendered>),
+    /// A parsed staining template file.
+    Stm(Box<stm::Rendered>),
     /// Nothing to render; an empty message means the type simply has no viewer.
     Failed(String),
 }
@@ -222,6 +271,8 @@ impl Preview {
             Viewer::Icons => icons::decode(path, bytes),
             Viewer::Shpk => shpk::decode(path, bytes),
             Viewer::Shcd => shcd::decode(path, bytes),
+            Viewer::Imc => imc::decode(path, bytes),
+            Viewer::Stm => stm::decode(path, bytes),
             Viewer::Raw => return Self::Failed(String::new()),
         };
         result.unwrap_or_else(|e| Self::Failed(e.to_string()))
@@ -251,6 +302,8 @@ impl Preview {
             Self::Icons(icons) => icons::ui(ui, icons, deps, backend),
             Self::Shpk(package) => shpk::ui(ui, package, bytes),
             Self::Shcd(code) => shcd::ui(ui, code, bytes),
+            Self::Imc(change) => imc::ui(ui, change),
+            Self::Stm(templates) => stm::ui(ui, templates),
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new("No viewer for this file type. Use Raw bytes.").weak());
@@ -314,7 +367,12 @@ impl Preview {
             Self::Image { .. } => true,
             Self::Material(material) => material.has_params(),
             Self::Uld(layout) => layout.has_details(),
-            Self::Font(_) | Self::Icons(_) | Self::Shpk(_) | Self::Shcd(_) => true,
+            Self::Font(_)
+            | Self::Icons(_)
+            | Self::Shpk(_)
+            | Self::Shcd(_)
+            | Self::Imc(_)
+            | Self::Stm(_) => true,
             _ => false,
         }
     }
@@ -351,6 +409,14 @@ impl Preview {
         }
         if let Self::Shcd(code) = self {
             code.details_ui(ui);
+            return None;
+        }
+        if let Self::Imc(change) = self {
+            change.details_ui(ui);
+            return None;
+        }
+        if let Self::Stm(templates) = self {
+            templates.details_ui(ui);
             return None;
         }
         let Self::Image {
@@ -447,6 +513,8 @@ pub enum Viewer {
     Icons,
     Shpk,
     Shcd,
+    Imc,
+    Stm,
     Text,
     Raw,
 }
@@ -454,7 +522,7 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 9] = [
+    pub const RENDERED: [Self; 11] = [
         Self::Texture,
         Self::Image,
         Self::Material,
@@ -463,6 +531,8 @@ impl Viewer {
         Self::Icons,
         Self::Shpk,
         Self::Shcd,
+        Self::Imc,
+        Self::Stm,
         Self::Text,
     ];
 
@@ -476,6 +546,8 @@ impl Viewer {
             Self::Icons => "Icons",
             Self::Shpk => "Shader package",
             Self::Shcd => "Shader code",
+            Self::Imc => "Image change",
+            Self::Stm => "Staining templates",
             Self::Text => "Text",
             Self::Raw => "Bytes",
         }
@@ -492,6 +564,8 @@ impl Viewer {
             "gfd" => Self::Icons,
             "shpk" => Self::Shpk,
             "shcd" => Self::Shcd,
+            "imc" => Self::Imc,
+            "stm" => Self::Stm,
             "txt" | "csv" => Self::Text,
             _ => Self::Raw,
         }
