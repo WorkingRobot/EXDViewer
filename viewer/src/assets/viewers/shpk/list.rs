@@ -5,6 +5,7 @@ use egui::{RichText, ScrollArea, vec2};
 use super::super::hashed;
 use super::super::shader::{Register, code, named};
 use super::Rendered;
+use super::merged;
 use crate::assets::Bytes;
 
 /// Key and value pairs across one row of the condition filter. More than this and a long key name
@@ -17,11 +18,49 @@ const CONDITION_WIDTH: f32 = 110.0;
 /// thousand shaders.
 const LIST_ROWS: usize = 8;
 
+/// How many shaders merging this pass would read, or what the chips would have to say first.
+///
+/// A merged source stands for one stage of one pass, so both chip rows have to name one thing. The
+/// control is on screen either way, and this is what it says when it cannot be pressed.
+fn mergeable(package: &Rendered, stage: usize, pass: usize) -> Result<usize, String> {
+    let named = stage
+        .checked_sub(1)
+        .and_then(|index| package.stages.get(index))
+        .map(|(name, _, _)| *name);
+    let row = pass
+        .checked_sub(1)
+        .and_then(|index| package.keys.passes.get(index));
+    match (named, row) {
+        (Some(named), Some(row)) => Ok(row
+            .shaders
+            .iter()
+            .filter(|index| {
+                package
+                    .shaders
+                    .get(**index)
+                    .is_some_and(|shader| shader.stage == named)
+            })
+            .count()),
+        (None, Some(_)) => {
+            Err("Pick one shader stage to merge this pass into a single source.".to_owned())
+        }
+        (Some(_), None) => {
+            Err("Pick one pass to merge this stage into a single source.".to_owned())
+        }
+        (None, None) => {
+            Err("Pick one shader stage and one pass to merge them into a single source.".to_owned())
+        }
+    }
+}
+
 pub fn ui(ui: &mut egui::Ui, package: &Rendered, bytes: &[u8]) {
     let (mut stage, mut pass, mut picked) = ui
         .data(|data| data.get_temp::<(usize, usize, usize)>(package.state))
         .unwrap_or((0, 0, 0));
 
+    // Reading the pass whole is always on offer, so the control never moves or appears from
+    // nowhere; when the two chip rows do not name one stage and one pass it says what it wants.
+    let mut whole = merged::reading(ui, package.state);
     ui.horizontal_wrapped(|ui| {
         if ui
             .selectable_label(stage == 0, format!("All ({})", package.shaders.len()))
@@ -35,7 +74,67 @@ pub fn ui(ui: &mut egui::Ui, package: &Rendered, bytes: &[u8]) {
                 stage = index + 1;
             }
         }
+        let held = mergeable(package, stage, pass);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let label = match held {
+                Ok(count) => format!("Merge {count} shaders"),
+                Err(_) => "Merge shaders".to_owned(),
+            };
+            let button = egui::Button::new(label).selected(whole && held.is_ok());
+            let asked = ui
+                .add_enabled(held.is_ok(), button)
+                .on_disabled_hover_text(held.err().unwrap_or_default());
+            if asked.clicked() {
+                whole = !whole;
+            }
+        });
     });
+    if !package.keys.passes.is_empty() {
+        ui.add_space(2.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.selectable_label(pass == 0, "Any pass").clicked() {
+                pass = 0;
+            }
+            for (index, row) in package.keys.passes.iter().enumerate() {
+                let label = format!("{} ({})", row.name, row.shaders.len());
+                if ui.selectable_label(pass == index + 1, label).clicked() {
+                    pass = index + 1;
+                }
+            }
+        });
+    }
+
+    // The stage and the pass together name what to read; the conditions below only narrow the list
+    // within that. A merged source is a question about exactly that pair, so the choice between the
+    // two readings belongs beside them, not underneath the shader it stands in for.
+    let stage_name = stage
+        .checked_sub(1)
+        .and_then(|index| package.stages.get(index))
+        .map(|(name, _, _)| *name);
+    let named = stage_name
+        .and_then(|name| match name {
+            "Vertex" => Some(0),
+            "Pixel" => Some(1),
+            "Hull" => Some(2),
+            "Domain" => Some(3),
+            "Geometry" => Some(4),
+            _ => None,
+        })
+        .zip(
+            pass.checked_sub(1)
+                .and_then(|index| package.keys.passes.get(index)),
+        );
+    whole &= named.is_some();
+    merged::set_reading(ui, package.state, whole);
+    if let Some((held, row)) = named
+        && whole
+    {
+        ui.data_mut(|data| data.insert_temp(package.state, (stage, pass, picked)));
+        ui.add_space(4.0);
+        merged::ui(ui, package, bytes, held, row.id);
+        return;
+    }
+
     let slot = package.state.with("conditions");
     let mut chosen: Vec<Option<u32>> = ui
         .data(|data| data.get_temp::<Vec<Option<u32>>>(slot))
@@ -101,21 +200,6 @@ pub fn ui(ui: &mut egui::Ui, package: &Rendered, bytes: &[u8]) {
             });
     }
     ui.data_mut(|data| data.insert_temp(slot, chosen.clone()));
-
-    if !package.keys.passes.is_empty() {
-        ui.add_space(2.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui.selectable_label(pass == 0, "Any pass").clicked() {
-                pass = 0;
-            }
-            for (index, row) in package.keys.passes.iter().enumerate() {
-                let label = format!("{} ({})", row.name, row.shaders.len());
-                if ui.selectable_label(pass == index + 1, label).clicked() {
-                    pass = index + 1;
-                }
-            }
-        });
-    }
     ui.add_space(4.0);
 
     // Zero is the unfiltered chip, so the stages are offset by one.
@@ -124,10 +208,10 @@ pub fn ui(ui: &mut egui::Ui, package: &Rendered, bytes: &[u8]) {
         .and_then(|index| package.stages.get(index))
         .map(|(name, _, _)| *name);
     // Zero is the unfiltered chip here too.
-    let drawn = pass
+    let pass_row = pass
         .checked_sub(1)
-        .and_then(|index| package.keys.passes.get(index))
-        .map(|row| row.shaders.as_slice());
+        .and_then(|index| package.keys.passes.get(index));
+    let drawn = pass_row.map(|row| row.shaders.as_slice());
     let listed: Vec<usize> = package
         .shaders
         .iter()
