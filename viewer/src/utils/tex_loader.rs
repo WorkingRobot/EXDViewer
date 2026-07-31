@@ -124,8 +124,8 @@ fn read_gray8(width: u16, height: u16, data: &[u8]) -> Result<DynamicImage> {
     Ok(DynamicImage::ImageLuma8(buffer))
 }
 
-/// Widen an 8-bit-per-channel image to RGBA. One channel shows as grey rather than red, since these
-/// are masks and lookups far more often than they are colour.
+/// Widen an 8-bit-per-channel image to RGBA. One channel shows as gray rather than red, since these
+/// are masks and lookups far more often than they are color.
 fn read_channels8(width: u16, height: u16, data: &[u8], channels: usize) -> Result<DynamicImage> {
     let pixels = data
         .chunks_exact(channels)
@@ -159,7 +159,7 @@ fn read_unorm16(width: u16, height: u16, data: &[u8], channels: usize) -> Result
     to_rgba(width, height, data, channels * 2, channels, values)
 }
 
-/// Half and single precision are scene values rather than colours, so they are clamped into the
+/// Half and single precision are scene values rather than colors, so they are clamped into the
 /// unit range instead of being scaled by whatever the maximum in the image happens to be.
 fn read_half(width: u16, height: u16, data: &[u8], channels: usize) -> Result<DynamicImage> {
     let values = |texel: &[u8]| -> Vec<u8> {
@@ -194,7 +194,7 @@ fn to_u8(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0) as u8
 }
 
-/// Lay decoded channels out as RGBA: one channel greys, two fill red and green, four map straight.
+/// Lay decoded channels out as RGBA: one channel grays, two fill red and green, four map straight.
 fn to_rgba(
     width: u16,
     height: u16,

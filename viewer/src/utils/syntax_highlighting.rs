@@ -74,11 +74,11 @@ impl CodeTheme {
 
     pub fn surface(&self) -> Option<(egui::Color32, egui::Color32)> {
         let held = THEME_SET.themes.get(&self.theme)?;
-        let colour =
+        let color =
             |from: syntect::highlighting::Color| egui::Color32::from_rgb(from.r, from.g, from.b);
         Some((
-            colour(held.settings.background?),
-            colour(held.settings.foreground?),
+            color(held.settings.background?),
+            color(held.settings.foreground?),
         ))
     }
 }

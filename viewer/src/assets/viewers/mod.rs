@@ -179,7 +179,7 @@ fn table(
         });
 }
 
-/// Half-float colours are linear and can exceed 1.0, so they are tone-mapped rather than clamped;
+/// Half-float colors are linear and can exceed 1.0, so they are tone-mapped rather than clamped;
 /// otherwise every bright row renders as flat white.
 fn swatch(color: [f32; 3]) -> Color32 {
     let map = |v: f32| ((v / (1.0 + v)).clamp(0.0, 1.0) * 255.0) as u8;
@@ -205,7 +205,7 @@ fn labelled(ui: &mut egui::Ui, kind: &str, name: &str, shown: &str, id: u32, dim
     crate::assets::crc_context(&response, kind, name, id);
 }
 
-/// A path rendered as a link: hyperlink colour, pointer cursor, and the same hover and right-click
+/// A path rendered as a link: hyperlink color, pointer cursor, and the same hover and right-click
 /// menu every other path in the browser gets. Returns whether it was followed.
 fn link(ui: &mut egui::Ui, text: &str, path: &str) -> bool {
     let response = ui
@@ -502,7 +502,7 @@ impl Preview {
                 ui.label(RichText::new("Channels").weak());
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    // A single-component format is drawn as grey, so it has no toggles at all.
+                    // A single-component format is drawn as gray, so it has no toggles at all.
                     let offered: &mut [(&str, &mut bool)] = match components {
                         2 => &mut [("R", &mut channels.r), ("G", &mut channels.g)],
                         3 => &mut [

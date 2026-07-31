@@ -1,8 +1,8 @@
-//! `.mtrl` materials: the shader a surface is drawn with, the textures bound to it, and the colour
+//! `.mtrl` materials: the shader a surface is drawn with, the textures bound to it, and the color
 //! table applied to the surfaces that reference it.
 //!
 //! Laid out as three regions rather than one table, because the interesting parts are different
-//! shapes: identity is label/value, the colour table is a grid of swatches, and the textures are
+//! shapes: identity is label/value, the color table is a grid of swatches, and the textures are
 //! images worth previewing in place.
 
 use anyhow::Result;
@@ -119,7 +119,7 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     }
     for set in material.color_sets() {
         identity.push((
-            "Colour set",
+            "Color set",
             format!("{} (#{})", set.name(), set.index()),
             None,
         ));
@@ -180,7 +180,7 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     };
 
     log::info!(
-        "assets/mtrl: {path} shader {}, {} samplers, {} colour rows",
+        "assets/mtrl: {path} shader {}, {} samplers, {} color rows",
         material.shader(),
         material.samplers().len(),
         rows.len()

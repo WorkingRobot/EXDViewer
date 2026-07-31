@@ -1507,8 +1507,8 @@ impl AssetBrowser {
                         .response
                         .rect;
 
-                    // Centred on the row rather than on the gap the two sides leave, which is off
-                    // centre whenever they differ in width. Never wide enough to reach either of
+                    // Centered on the row rather than on the gap the two sides leave, which is off
+                    // center whenever they differ in width. Never wide enough to reach either of
                     // them, so a long path truncates rather than running underneath one.
                     let font = TextStyle::Body.resolve(ui.style());
                     let width = ui
@@ -1551,7 +1551,7 @@ impl AssetBrowser {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             // Mirror of the tree panel: the arrow goes against this panel's outer
-                            // edge, which is the left one, and the heading centres in the rest.
+                            // edge, which is the left one, and the heading centers in the rest.
                             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                                 CollapsibleSidePanel::draw_arrow(ui, "asset_info", Side::Right);
                                 ui.vertical_centered_justified(|ui| ui.heading("Details"));
@@ -1662,7 +1662,7 @@ impl AssetBrowser {
                 };
                 pick(ui, None, format!("{named} (Recommended)"));
                 // Only where the name claims something of its own, and something else: an
-                // unrecognised extension has nothing to say that `Bytes` below does not.
+                // unrecognized extension has nothing to say that `Bytes` below does not.
                 if extension != recommended && extension != Viewer::Raw {
                     pick(
                         ui,
@@ -1828,12 +1828,12 @@ impl Kind {
             "fdt" => Kind::Other("Bitmap font."),
             "gfd" => Kind::Other("Gaiji, the in-text icon glyphs."),
             "stm" => Kind::Other("Stain map."),
-            "cmp" => Kind::Other("Colour map."),
+            "cmp" => Kind::Other("Color map."),
             "plt" => Kind::Other("Palette."),
             "png" => Kind::Other("PNG image."),
             "csv" | "txt" => Kind::Other("Plain text."),
             "" => Kind::Other("No extension."),
-            _ => Kind::Other("Unrecognised file type."),
+            _ => Kind::Other("Unrecognized file type."),
         }
     }
 }
@@ -2155,7 +2155,7 @@ mod tests {
 /// label is not something egui should be asked to lay out.
 pub const MAX_TEXT_PREVIEW: usize = 256 * 1024;
 
-/// Which colour channels of an image to show. Masking them off is how a packed texture (normal
+/// Which color channels of an image to show. Masking them off is how a packed texture (normal
 /// maps, masks, occlusion) is read: the interesting data is rarely the RGB composite.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Channels {
@@ -2181,7 +2181,7 @@ impl Channels {
         self.r && self.g && self.b && self.a
     }
 
-    /// Zero the unselected channels, or, when exactly one is picked, show it as greyscale so a
+    /// Zero the unselected channels, or, when exactly one is picked, show it as grayscale so a
     /// single packed channel is actually readable.
     fn apply(self, image: &mut image::RgbaImage) {
         if self.all() {
@@ -2201,7 +2201,7 @@ impl Channels {
                     let value = pixel.0[channel];
                     [value, value, value, u8::MAX]
                 }
-                // Alpha is forced opaque when deselected, so the colour channels stay visible.
+                // Alpha is forced opaque when deselected, so the color channels stay visible.
                 None => [
                     if self.r { r } else { 0 },
                     if self.g { g } else { 0 },
