@@ -581,7 +581,7 @@ fn draw_icon(ctx: &GlobalContext, ui: &mut egui::Ui, icon_id: u32) -> egui::Resp
     resp
 }
 
-/// A color cell: the swatch, its hex on hover, and a right-click copy. Shared so every colour in
+/// A color cell: the swatch, its hex on hover, and a right-click copy. Shared so every color in
 /// the app reads and behaves the same way.
 pub(crate) fn draw_color(ui: &mut egui::Ui, color: Color32) -> egui::Response {
     let resp = {

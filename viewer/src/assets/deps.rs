@@ -141,7 +141,7 @@ impl Deps {
         )
     }
 
-    /// Ask for one colour channel of a font texture, as white ink to be tinted when it is drawn.
+    /// Ask for one color channel of a font texture, as white ink to be tinted when it is drawn.
     /// Four fonts share a texture, a channel each, so a glyph is only legible once its own channel
     /// is pulled out of the others.
     pub fn glyph_sheet(
@@ -265,7 +265,7 @@ fn poll<'a, T>(
 }
 
 /// One channel of a decoded texture, as white pixels carrying it as their alpha. Drawn tinted, so
-/// glyphs read against either theme rather than being whatever colour the channel happened to be.
+/// glyphs read against either theme rather than being whatever color the channel happened to be.
 fn ink(ctx: &egui::Context, path: &str, decoded: &DecodedTexture, channel: usize) -> TextureHandle {
     let dimensions = [
         decoded.image.width() as usize,

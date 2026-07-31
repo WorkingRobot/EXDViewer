@@ -127,8 +127,8 @@ pub fn listing(ui: &mut egui::Ui, salt: &str, lines: &[String], from: usize, lan
     let lines = &lines[from.min(lines.len())..];
 
     let theme = CODE_SYNTAX_THEME.get(ui.ctx());
-    // A theme's colours are chosen against its own background, so the code is drawn on that rather
-    // than on the panel; the gutter takes the theme's text colour for the same reason. Without one
+    // A theme's colors are chosen against its own background, so the code is drawn on that rather
+    // than on the panel; the gutter takes the theme's text color for the same reason. Without one
     // declared, this is the surface the schema editor's own code sits on.
     let (fill, ink) = theme
         .surface()

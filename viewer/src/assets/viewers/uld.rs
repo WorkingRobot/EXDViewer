@@ -51,8 +51,8 @@ const SNIPPET: usize = 24;
 /// this is better off without the smudge.
 const LEGIBLE: f32 = 4.0;
 
-/// Bits of a text node's second flag byte that hand its colours to the current UI theme, leaving
-/// the colour fields holding a palette row rather than a colour.
+/// Bits of a text node's second flag byte that hand its colors to the current UI theme, leaving
+/// the color fields holding a palette row rather than a color.
 const THEME_FILL: u8 = 0x02;
 const THEME_EDGE: u8 = 0x04;
 
@@ -135,7 +135,7 @@ struct TextRef {
     row: u32,
     align: Align2,
     size: f32,
-    /// `None` where the node takes the current UI theme's colour, which is what nearly all of them
+    /// `None` where the node takes the current UI theme's color, which is what nearly all of them
     /// do; the rest state one outright.
     color: Option<Color32>,
 }
@@ -241,7 +241,7 @@ fn text_ref(node: &uld::Node) -> Option<TextRef> {
     })
 }
 
-/// A colour as a text node states it: the channels in memory order, so the byte written first is
+/// A color as a text node states it: the channels in memory order, so the byte written first is
 /// red rather than the alpha the hex reading suggests.
 fn color_of(value: u32) -> Color32 {
     let [r, g, b, a] = value.to_le_bytes();
@@ -347,8 +347,8 @@ fn describe(node: &uld::Node, layout: &uld::UiLayout) -> (String, String) {
     }
 }
 
-/// One of a text node's two colour fields as written: a row of the theme's palette where the node
-/// defers to it, and a colour of its own otherwise.
+/// One of a text node's two color fields as written: a row of the theme's palette where the node
+/// defers to it, and a color of its own otherwise.
 fn stated(value: u32, themed: bool) -> String {
     if themed {
         return format!("theme {value}");
@@ -492,7 +492,7 @@ fn properties(node: &uld::Node, layout: &uld::UiLayout, rect: Rect) -> Vec<(&'st
                 },
             ));
             props.push(("Font", format!("{:?} {}", text.font, text.font_size)));
-            props.push(("Colour", stated(text.color, text.flags2 & THEME_FILL != 0)));
+            props.push(("Color", stated(text.color, text.flags2 & THEME_FILL != 0)));
             props.push((
                 "Edge",
                 stated(text.edge_color, text.flags2 & THEME_EDGE != 0),

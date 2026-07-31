@@ -18,9 +18,9 @@ use crate::{Error, canon, pick, synth};
 /// What a shader leaves behind: each output component, and each side effect under the condition it
 /// fires under.
 ///
-/// The effects are the part worth naming. An output that goes missing takes the shader's colour with
+/// The effects are the part worth naming. An output that goes missing takes the shader's color with
 /// it and is hard to overlook; a `discard` that keeps its own test but loses the branch it sat under
-/// still compiles, still writes the right colour, and kills every pixel.
+/// still compiles, still writes the right color, and kills every pixel.
 #[derive(PartialEq, Eq, Debug)]
 struct Leaves {
     outputs: BTreeMap<String, u64>,

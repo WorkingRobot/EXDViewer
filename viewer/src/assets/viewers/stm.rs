@@ -1,4 +1,4 @@
-//! `.stm` staining templates: the value every dyeable field of a colour table row takes for each of
+//! `.stm` staining templates: the value every dyeable field of a color table row takes for each of
 //! the game's stains.
 
 use anyhow::Result;
@@ -14,14 +14,14 @@ use crate::assets::deps::Deps;
 use crate::backend::Backend;
 use crate::sheet::draw_color;
 
-/// Stains are numbered by their row in this sheet: slot 1 is Snow White, 4 Slate Grey, 7 Rose Pink.
+/// Stains are numbered by their row in this sheet: slot 1 is Snow White, 4 Slate Gray, 7 Rose Pink.
 /// The file carries more slots than the sheet has dyes, and the tail of them is unnamed.
 const STAIN_SHEET: &str = "Stain";
 
 /// The file that predates the field counts being stated, and the only one carrying the shorter row.
 const LEGACY: u16 = 0x0101;
 
-/// Space a colour swatch is drawn in.
+/// Space a color swatch is drawn in.
 const SWATCH: Vec2 = vec2(48.0, 16.0);
 
 /// A scalar column: its heading, and how a stain's value for it reads.

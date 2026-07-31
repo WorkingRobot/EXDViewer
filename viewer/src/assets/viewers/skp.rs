@@ -57,7 +57,7 @@ fn axes(values: [f32; 3]) -> String {
     format!("{:.3}, {:.3}, {:.3}", values[0], values[1], values[2])
 }
 
-/// A name buffer as written, where the game leaves uninitialised bytes past the terminator.
+/// A name buffer as written, where the game leaves uninitialized bytes past the terminator.
 fn named(name: skp::Name) -> String {
     name.as_str().unwrap_or("?").to_owned()
 }

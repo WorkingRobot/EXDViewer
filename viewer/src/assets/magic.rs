@@ -1,7 +1,7 @@
 //! What a file is, read from its bytes rather than from its name.
 //!
 //! Most of what the game ships leads with a magic. The two formats here that do not are `.tex`,
-//! recognised by the shape of its fixed header, and `.mtrl`, which is small enough to read outright
+//! recognized by the shape of its fixed header, and `.mtrl`, which is small enough to read outright
 //! and names a shader package that gives it away. Anything left over that decodes cleanly is text.
 
 use std::io::Cursor;

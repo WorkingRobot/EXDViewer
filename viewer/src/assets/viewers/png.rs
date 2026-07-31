@@ -19,7 +19,7 @@ pub fn decode(
             "Dimensions",
             format!("{} x {}", image.width(), image.height()),
         ),
-        ("Colour", format!("{:?}", image.color())),
+        ("Color", format!("{:?}", image.color())),
         ("File size", Bytes(bytes.len()).to_string()),
     ];
     Ok(upload(ctx, path, image, 1, 4, facts, Vec::new(), channels))
