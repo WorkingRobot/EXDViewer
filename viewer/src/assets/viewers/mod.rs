@@ -328,7 +328,7 @@ impl Preview {
             Self::Est(templates) => follow = est::ui(ui, templates),
             Self::Skp(parameters) => follow = skp::ui(ui, parameters),
             Self::Tera(terrain) => follow = tera::ui(ui, terrain),
-            Self::Stm(templates) => stm::ui(ui, templates),
+            Self::Stm(templates) => stm::ui(ui, templates, deps, backend),
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new("No viewer for this file type. Use Raw bytes.").weak());
