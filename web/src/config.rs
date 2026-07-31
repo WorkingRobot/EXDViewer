@@ -15,6 +15,7 @@ pub struct AssetCache {
 #[serde(default)]
 pub struct PathList {
     pub url: String,
+    pub extra_urls: Vec<String>,
     pub ttl_minutes: u64,
     pub cache_directory: Option<PathBuf>,
 }
@@ -50,6 +51,10 @@ impl Default for PathList {
     fn default() -> Self {
         Self {
             url: "https://rl2.perchbird.dev/download/export/PathList.gz".to_string(),
+            extra_urls: vec![
+                "https://raw.githubusercontent.com/WorkingRobot/EXDViewer/main/paths/extra.txt"
+                    .to_string(),
+            ],
             ttl_minutes: 12 * 60,
             cache_directory: Some(PathBuf::from("cache/paths")),
         }

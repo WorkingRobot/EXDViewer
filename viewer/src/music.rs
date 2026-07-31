@@ -164,8 +164,14 @@ enum Cmd {
 }
 
 impl MusicPlayer {
+    /// The track playing, or the one about to be, so that entering the bare route restores the
+    /// same URL either way.
     pub fn now_playing_row(&self) -> Option<u32> {
-        self.now_playing.as_ref().map(|track| track.row_id)
+        self.now_playing
+            .as_ref()
+            .map(|track| track.row_id)
+            .or_else(|| self.loading.as_ref().map(|track| track.row_id))
+            .or(self.pending)
     }
 
     pub fn name_of(&self, row_id: u32) -> Option<&str> {
@@ -177,6 +183,27 @@ impl MusicPlayer {
 
     pub fn request(&mut self, row_id: u32) {
         self.pending = Some(row_id);
+    }
+
+    /// Drop everything that came from the install, so a reconnect reads it all again.
+    ///
+    /// The track playing is stopped here rather than left for `begin_load`, which never runs if the
+    /// new install has no such row, and re-armed as pending so it plays again from the new one.
+    pub fn reset(&mut self) {
+        if let Some(player) = &mut self.player {
+            player.stop();
+        }
+        self.index = Index::Idle;
+        self.avail = Avail::Idle;
+        self.rows_stale = true;
+        // Both have to be cleared before the re-arm: `poll` drops a pending row that is already
+        // loading or playing, which after a reset is exactly the row that has to be fetched again.
+        self.pending = self
+            .loading
+            .take()
+            .map(|track| track.row_id)
+            .or(self.now_playing.take().map(|track| track.row_id))
+            .or(self.pending);
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<u32> {
@@ -952,4 +979,50 @@ async fn check_availability(
         }
     }
     Ok(available)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `poll` drops a pending row that is already playing, so re-arming the track before clearing
+    /// it would leave the previous install's audio playing and never fetch it again.
+    #[test]
+    fn reconnecting_rearms_the_playing_track() {
+        let mut music = MusicPlayer {
+            index: Index::Loaded(Vec::new()),
+            avail: Avail::Ready(HashSet::new()),
+            now_playing: Some(NowPlaying {
+                name: "Prelude".to_string(),
+                path: "music/ffxiv/bgm_system_title.scd".to_string(),
+                row_id: 7,
+                channels: 2,
+                sample_rate: 44100,
+                loop_range_secs: None,
+                info: StreamInfo {
+                    codec: Codec::OggVorbis,
+                    file_size: 0,
+                    stream_size: 0,
+                },
+            }),
+            ..Default::default()
+        };
+
+        music.reset();
+
+        assert_eq!(
+            music.pending,
+            Some(7),
+            "the track has to be read again from the new install"
+        );
+        assert!(
+            music.now_playing.is_none(),
+            "or poll sees the row as already playing and drops it"
+        );
+        assert!(
+            matches!(music.index, Index::Idle),
+            "the BGM sheet is per version"
+        );
+        assert!(matches!(music.avail, Avail::Idle), "as is which files ship");
+    }
 }

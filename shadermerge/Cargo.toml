@@ -1,0 +1,16 @@
+[package]
+name = "shadermerge"
+description = "One HLSL source per shader package pass, merged from the variants the package compiled"
+authors.workspace = true
+repository.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "shadermerge"
+
+[dependencies]
+dxbc = "0.1"
+hlsl = "0.1"
+ironworks = { version = "0.4.1", features = ["shpk"] }
+shaders = { path = "../shaders" }

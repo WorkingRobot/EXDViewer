@@ -1240,6 +1240,12 @@ impl App {
             self.sheet_data.clear();
             self.schema_data.clear();
             self.sheet_languages.clear();
+            // The sheet list is keyed on the filter alone, and icons on their id, so neither
+            // notices that they now belong to a different install.
+            self.sheet_filter_data.clear();
+            self.icon_manager.clear();
+            self.assets.reset();
+            self.music.reset();
             CURRENT_SHEET_LANGUAGES.remove(ui.ctx());
 
             BACKEND_CONFIG.set(ui.ctx(), Some(config));

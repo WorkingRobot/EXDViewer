@@ -3,6 +3,7 @@
 
 mod keys;
 mod list;
+mod merged;
 mod params;
 
 use std::collections::{HashMap, HashSet};
@@ -230,9 +231,11 @@ impl Rendered {
     pub fn details_ui(&self, ui: &mut egui::Ui) {
         ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             // Whichever shader the list has picked, so that clicking between two leaves this in
-            // place and what differs is the rows that changed.
-            if let Some((_, _, picked)) =
-                ui.data(|data| data.get_temp::<(usize, usize, usize)>(self.state))
+            // place and what differs is the rows that changed. A merged source is every shader of
+            // the pass at once, so there is no one set of conditions it was compiled under.
+            if let Some((_, _, picked)) = ui
+                .data(|data| data.get_temp::<(usize, usize, usize)>(self.state))
+                .filter(|_| !merged::reading(ui, self.state))
             {
                 self.keys.defines_ui(ui, picked);
                 ui.add_space(8.0);
