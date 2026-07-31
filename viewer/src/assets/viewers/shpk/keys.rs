@@ -30,7 +30,7 @@ pub struct KeyRow {
 /// tells one variant from another: a package's shaders divide cleanly along it.
 pub struct PassRow {
     pub name: String,
-    id: u32,
+    pub id: u32,
     pub shaders: Vec<usize>,
 }
 

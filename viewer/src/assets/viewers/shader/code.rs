@@ -84,15 +84,19 @@ pub fn ui(
     let mut hide = ui
         .data(|data| data.get_temp::<bool>(folded))
         .unwrap_or(false);
+    let from = match hide {
+        true => body,
+        false => 0,
+    };
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(format!("{} lines", lines.len()))
+            RichText::new(format!("{} lines", lines.len() - from))
                 .weak()
                 .small(),
         );
         if ui.small_button("Copy").clicked() {
-            // Always the whole thing: what is hidden is what makes the rest compile.
-            ui.ctx().copy_text(lines.join("\n"));
+            // What is on screen, so a fold takes the declarations out of the clipboard too.
+            ui.ctx().copy_text(lines[from..].join("\n"));
         }
         if body > 0 {
             ui.checkbox(&mut hide, RichText::new("Hide declarations").small());
@@ -106,11 +110,21 @@ pub fn ui(
         }
     });
     ui.data_mut(|data| data.insert_temp(folded, hide));
-    let from = match hide {
-        true => body,
-        false => 0,
-    };
-    let lines = &lines[from..];
+    listing(
+        ui,
+        "shader_code",
+        lines,
+        from,
+        match source {
+            true => "HLSL",
+            false => "DXBC",
+        },
+    );
+}
+
+/// The code itself, numbered from `from` and drawn on the theme's own surface.
+pub fn listing(ui: &mut egui::Ui, salt: &str, lines: &[String], from: usize, language: &str) {
+    let lines = &lines[from.min(lines.len())..];
 
     let theme = CODE_SYNTAX_THEME.get(ui.ctx());
     // A theme's colours are chosen against its own background, so the code is drawn on that rather
@@ -119,10 +133,6 @@ pub fn ui(
     let (fill, ink) = theme
         .surface()
         .unwrap_or_else(|| (ui.visuals().text_edit_bg_color(), ui.visuals().text_color()));
-    let language = match source {
-        true => "HLSL",
-        false => "DXBC",
-    };
     let height = ui.text_style_height(&egui::TextStyle::Monospace);
     egui::Frame::new()
         .fill(fill)
@@ -134,7 +144,7 @@ pub fn ui(
             // one line to the next, so a line highlighted alone reads as it would in a whole-file
             // pass.
             ScrollArea::both()
-                .id_salt("shader_code")
+                .id_salt(salt)
                 // What is left of the panel, which is the point of moving everything else out of it.
                 .max_height(ui.available_height().max(height * 12.0))
                 .auto_shrink([false, true])
