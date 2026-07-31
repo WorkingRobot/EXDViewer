@@ -9,6 +9,9 @@ use egui::{
 
 use super::{Bytes, Channels, MAX_TEXT_PREVIEW};
 
+pub mod atch;
+pub mod eid;
+pub mod est;
 pub mod font;
 pub mod icons;
 pub mod imc;
@@ -17,7 +20,9 @@ pub mod png;
 mod shader;
 pub mod shcd;
 pub mod shpk;
+pub mod skp;
 pub mod stm;
+pub mod tera;
 pub mod texture;
 pub mod uld;
 
@@ -244,6 +249,16 @@ pub enum Preview {
     Shcd(Box<shcd::Rendered>),
     /// A parsed image change file.
     Imc(Box<imc::Rendered>),
+    /// A parsed attach point file.
+    Atch(Box<atch::Rendered>),
+    /// A parsed bind point file.
+    Eid(Box<eid::Rendered>),
+    /// A parsed skeleton template file.
+    Est(Box<est::Rendered>),
+    /// A parsed skeleton parameter file.
+    Skp(Box<skp::Rendered>),
+    /// A parsed terrain file.
+    Tera(Box<tera::Rendered>),
     /// A parsed staining template file.
     Stm(Box<stm::Rendered>),
     /// Nothing to render; an empty message means the type simply has no viewer.
@@ -272,6 +287,11 @@ impl Preview {
             Viewer::Shpk => shpk::decode(path, bytes),
             Viewer::Shcd => shcd::decode(path, bytes),
             Viewer::Imc => imc::decode(path, bytes),
+            Viewer::Atch => atch::decode(path, bytes),
+            Viewer::Eid => eid::decode(path, bytes),
+            Viewer::Est => est::decode(path, bytes),
+            Viewer::Skp => skp::decode(path, bytes),
+            Viewer::Tera => tera::decode(path, bytes),
             Viewer::Stm => stm::decode(path, bytes),
             Viewer::Raw => return Self::Failed(String::new()),
         };
@@ -303,6 +323,11 @@ impl Preview {
             Self::Shpk(package) => shpk::ui(ui, package, bytes),
             Self::Shcd(code) => shcd::ui(ui, code, bytes),
             Self::Imc(change) => imc::ui(ui, change),
+            Self::Atch(points) => atch::ui(ui, points),
+            Self::Eid(points) => follow = eid::ui(ui, points),
+            Self::Est(templates) => follow = est::ui(ui, templates),
+            Self::Skp(parameters) => follow = skp::ui(ui, parameters),
+            Self::Tera(terrain) => follow = tera::ui(ui, terrain),
             Self::Stm(templates) => stm::ui(ui, templates),
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
@@ -372,7 +397,12 @@ impl Preview {
             | Self::Shpk(_)
             | Self::Shcd(_)
             | Self::Imc(_)
-            | Self::Stm(_) => true,
+            | Self::Stm(_)
+            | Self::Atch(_)
+            | Self::Eid(_)
+            | Self::Est(_)
+            | Self::Skp(_)
+            | Self::Tera(_) => true,
             _ => false,
         }
     }
@@ -417,6 +447,26 @@ impl Preview {
         }
         if let Self::Stm(templates) = self {
             templates.details_ui(ui);
+            return None;
+        }
+        if let Self::Atch(points) = self {
+            points.details_ui(ui);
+            return None;
+        }
+        if let Self::Eid(points) = self {
+            points.details_ui(ui);
+            return None;
+        }
+        if let Self::Est(templates) = self {
+            templates.details_ui(ui);
+            return None;
+        }
+        if let Self::Skp(parameters) = self {
+            parameters.details_ui(ui);
+            return None;
+        }
+        if let Self::Tera(terrain) = self {
+            terrain.details_ui(ui);
             return None;
         }
         let Self::Image {
@@ -515,6 +565,11 @@ pub enum Viewer {
     Shcd,
     Imc,
     Stm,
+    Atch,
+    Eid,
+    Est,
+    Skp,
+    Tera,
     Text,
     Raw,
 }
@@ -522,7 +577,7 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 11] = [
+    pub const RENDERED: [Self; 16] = [
         Self::Texture,
         Self::Image,
         Self::Material,
@@ -533,6 +588,11 @@ impl Viewer {
         Self::Shcd,
         Self::Imc,
         Self::Stm,
+        Self::Atch,
+        Self::Eid,
+        Self::Est,
+        Self::Skp,
+        Self::Tera,
         Self::Text,
     ];
 
@@ -548,6 +608,11 @@ impl Viewer {
             Self::Shcd => "Shader code",
             Self::Imc => "Image change",
             Self::Stm => "Staining templates",
+            Self::Atch => "Attach points",
+            Self::Eid => "Bind points",
+            Self::Est => "Skeleton templates",
+            Self::Skp => "Skeleton parameters",
+            Self::Tera => "Terrain",
             Self::Text => "Text",
             Self::Raw => "Bytes",
         }
@@ -566,6 +631,11 @@ impl Viewer {
             "shcd" => Self::Shcd,
             "imc" => Self::Imc,
             "stm" => Self::Stm,
+            "atch" => Self::Atch,
+            "eid" => Self::Eid,
+            "est" => Self::Est,
+            "skp" => Self::Skp,
+            "tera" => Self::Tera,
             "txt" | "csv" => Self::Text,
             _ => Self::Raw,
         }

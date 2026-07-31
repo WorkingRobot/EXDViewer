@@ -18,8 +18,11 @@ const LEGACY: u16 = 0x0101;
 /// Space a colour swatch is drawn in.
 const SWATCH: Vec2 = vec2(48.0, 16.0);
 
+/// A scalar column: its heading, and how a stain's value for it reads.
+type Scalar = (&'static str, fn(&DyePack) -> String);
+
 /// The scalar fields the current file states, in the order it holds them.
-const SCALARS: [(&str, fn(&DyePack) -> String); 9] = [
+const SCALARS: [Scalar; 9] = [
     ("Scalar3", |dye| format!("{:.2}", dye.scalar3)),
     ("Metal", |dye| format!("{:.2}", dye.metalness)),
     ("Rough", |dye| format!("{:.2}", dye.roughness)),
@@ -33,14 +36,13 @@ const SCALARS: [(&str, fn(&DyePack) -> String); 9] = [
 
 /// The pre-Dawntrail pair, which Penumbra.GameData names Shininess and SpecularMask and which
 /// arrives in the first two fields of the row above.
-const LEGACY_SCALARS: [(&str, fn(&DyePack) -> String); 2] =
-    [("Shininess", SCALARS[0].1), ("Specular mask", SCALARS[1].1)];
+const LEGACY_SCALARS: [Scalar; 2] = [("Shininess", SCALARS[0].1), ("Specular mask", SCALARS[1].1)];
 
 /// A staining template file, decoded and ready to draw.
 pub struct Rendered {
     identity: Vec<(&'static str, String)>,
     templates: stm::StainingTemplates,
-    scalars: &'static [(&'static str, fn(&DyePack) -> String)],
+    scalars: &'static [Scalar],
     /// Which template is on show, kept per file the way the font viewer keeps its blocks.
     picked: egui::Id,
 }
