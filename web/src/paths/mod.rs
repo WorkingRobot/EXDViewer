@@ -30,11 +30,11 @@ pub struct MasterList {
 }
 
 impl MasterList {
-    fn parse(text: &str) -> Self {
+    fn parse(sources: &[String]) -> Self {
         let mut by_dir: HashMap<&str, Vec<&str>> = HashMap::new();
-        for line in text.lines() {
+        for line in sources.iter().flat_map(|source| source.lines()) {
             let line = line.trim();
-            if line.is_empty() {
+            if line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let (dir, name) = match line.rfind('/') {
@@ -102,8 +102,14 @@ impl MasterList {
 }
 
 struct Freshness {
-    etag: Option<String>,
+    etags: HashMap<String, String>,
     checked_at: Instant,
+}
+
+/// A source's body, or nothing when it has not changed since the etag we hold.
+enum Fetched {
+    Unchanged,
+    Body(String, Option<String>),
 }
 
 pub struct PathIndex {
@@ -135,6 +141,39 @@ impl PathIndex {
         }
     }
 
+    /// One source's body. Only ResLogger's ships gzipped; an extra list is plain text.
+    async fn fetch(&self, url: &str, etag: Option<&str>, packed: bool) -> Result<Fetched> {
+        let mut request = self.client.get(url);
+        if let Some(etag) = etag {
+            request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+        }
+        let response = request.send().await?.error_for_status()?;
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            return Ok(Fetched::Unchanged);
+        }
+
+        let etag = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let body = response.bytes().await?;
+        log::info!("Fetched {url} ({} bytes)", body.len());
+
+        let text = tokio::task::spawn_blocking(move || match packed {
+            true => {
+                let mut text = String::new();
+                GzDecoder::new(&body[..])
+                    .read_to_string(&mut text)
+                    .context("failed to decompress path list")?;
+                anyhow::Ok(text)
+            }
+            false => anyhow::Ok(String::from_utf8(body.to_vec())?),
+        })
+        .await??;
+        Ok(Fetched::Body(text, etag))
+    }
+
     async fn master(&self) -> Result<Arc<MasterList>> {
         let mut freshness = self.freshness.lock().await;
         let ttl = Duration::from_secs(self.config.ttl_minutes * 60);
@@ -146,41 +185,71 @@ impl PathIndex {
             return Ok(list.clone());
         }
 
-        let mut request = self.client.get(&self.config.url);
-        if let Some(etag) = freshness
-            .as_ref()
-            .and_then(|f| f.etag.as_deref())
-            .filter(|_| cached.is_some())
-        {
-            request = request.header(reqwest::header::IF_NONE_MATCH, etag);
-        }
-        let response = request.send().await?.error_for_status()?;
+        let urls: Vec<&str> = std::iter::once(self.config.url.as_str())
+            .chain(self.config.extra_urls.iter().map(String::as_str))
+            .collect();
+        let mut bodies: Vec<Option<String>> = vec![None; urls.len()];
+        let mut unchanged: Vec<usize> = Vec::new();
+        let mut etags: HashMap<String, String> = HashMap::new();
 
-        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
-            let list = cached.context("upstream returned 304 with no list cached")?;
-            log::info!("Path list unchanged upstream");
-            if let Some(f) = freshness.as_mut() {
-                f.checked_at = Instant::now();
+        // Two passes, because a source that answers 304 leaves us without its text and we keep only
+        // etags between refreshes. The second pass only runs when something actually moved.
+        for pass in 0..2 {
+            let wanted: Vec<usize> = match pass {
+                0 => (0..urls.len()).collect(),
+                _ if unchanged.len() == urls.len() => break,
+                _ => std::mem::take(&mut unchanged),
+            };
+            for index in wanted {
+                let url = urls[index];
+                let known = (pass == 0)
+                    .then(|| freshness.as_ref().and_then(|f| f.etags.get(url)))
+                    .flatten()
+                    .filter(|_| cached.is_some())
+                    .cloned();
+                match self.fetch(url, known.as_deref(), index == 0).await {
+                    Ok(Fetched::Unchanged) => {
+                        unchanged.push(index);
+                        if let Some(etag) = known {
+                            etags.insert(url.to_owned(), etag);
+                        }
+                    }
+                    Ok(Fetched::Body(text, etag)) => {
+                        bodies[index] = Some(text);
+                        if let Some(etag) = etag {
+                            etags.insert(url.to_owned(), etag);
+                        }
+                    }
+                    // An extra source only adds to the list. Rebuilding without one would change
+                    // the list id and discard every presence map built against it, so a cached list
+                    // is served on instead and the extra is picked up at the next refresh.
+                    Err(error) if index > 0 => {
+                        log::error!("Could not fetch extra path list {url}: {error}");
+                        if let Some(list) = cached.clone() {
+                            if let Some(f) = freshness.as_mut() {
+                                f.checked_at = Instant::now();
+                            }
+                            return Ok(list);
+                        }
+                        log::error!("No list is cached, so building without {url}");
+                    }
+                    Err(error) => return Err(error),
+                }
             }
-            return Ok(list);
+            if pass == 0 && unchanged.len() == urls.len() {
+                let list = cached.context("every source answered 304 with no list cached")?;
+                log::info!("Path lists unchanged upstream");
+                if let Some(f) = freshness.as_mut() {
+                    f.checked_at = Instant::now();
+                }
+                return Ok(list);
+            }
         }
 
-        let etag = response
-            .headers()
-            .get(reqwest::header::ETAG)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let gz = response.bytes().await?;
+        let bodies: Vec<String> = bodies.into_iter().flatten().collect();
+        anyhow::ensure!(!bodies.is_empty(), "no path list source produced a body");
 
-        log::info!("Fetched path list ({} bytes compressed)", gz.len());
-        let list = tokio::task::spawn_blocking(move || {
-            let mut text = String::new();
-            GzDecoder::new(&gz[..])
-                .read_to_string(&mut text)
-                .context("failed to decompress path list")?;
-            anyhow::Ok(MasterList::parse(&text))
-        })
-        .await??;
+        let list = tokio::task::spawn_blocking(move || MasterList::parse(&bodies)).await?;
         log::info!(
             "Parsed path list: {} paths across {} directories",
             list.path_count(),
@@ -190,7 +259,7 @@ impl PathIndex {
         let list = Arc::new(list);
         *self.list.write().await = Some(list.clone());
         *freshness = Some(Freshness {
-            etag,
+            etags,
             checked_at: Instant::now(),
         });
         Ok(list)
@@ -345,18 +414,45 @@ impl PathIndex {
 mod tests {
     use super::*;
 
+    fn parse(sources: &[&str]) -> MasterList {
+        MasterList::parse(&sources.iter().map(|s| (*s).to_string()).collect::<Vec<_>>())
+    }
+
     #[test]
     fn list_id_distinguishes_a_shifted_split() {
-        let a = MasterList::parse("dir/ab\ndir/c\n");
-        let b = MasterList::parse("dir/a\ndir/bc\n");
+        let a = parse(&["dir/ab\ndir/c\n"]);
+        let b = parse(&["dir/a\ndir/bc\n"]);
         assert_eq!(a.path_count(), b.path_count());
         assert_ne!(a.id(), b.id());
     }
 
     #[test]
     fn list_id_ignores_input_order() {
-        let a = MasterList::parse("b/two\na/one\n");
-        let b = MasterList::parse("a/one\nb/two\n");
+        let a = parse(&["b/two\na/one\n"]);
+        let b = parse(&["a/one\nb/two\n"]);
         assert_eq!(a.id(), b.id());
+    }
+
+    /// Extra sources are unioned, so which one carries a path cannot change the list.
+    #[test]
+    fn extra_sources_merge_without_regard_to_order_or_overlap() {
+        let together = parse(&["a/one\nb/two\n"]);
+
+        assert_eq!(parse(&["a/one\n", "b/two\n"]).id(), together.id());
+        assert_eq!(parse(&["b/two\n", "a/one\n"]).id(), together.id());
+        assert_eq!(
+            parse(&["a/one\nb/two\n", "b/two\n"]).id(),
+            together.id(),
+            "a path both sources carry is listed once"
+        );
+        assert_eq!(together.path_count(), 2);
+    }
+
+    /// The extra list is hand-maintained, so it has to tolerate comments and blank lines.
+    #[test]
+    fn comments_are_not_paths() {
+        let list = parse(&["# a note\n\na/one\n   # indented\n"]);
+        assert_eq!(list.path_count(), 1);
+        assert_eq!(list.id(), parse(&["a/one\n"]).id());
     }
 }
