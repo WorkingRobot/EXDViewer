@@ -51,7 +51,9 @@ struct Row {
 pub struct Rendered {
     identity: Vec<(&'static str, String)>,
     rows: Vec<Row>,
-    columns: &'static [(&'static str, usize)],
+    /// Whether a part's position names a slot, which a file holding a single part has nothing to
+    /// say for.
+    named_parts: bool,
 }
 
 /// The attributes a variant enables, as the letters the model names them by.
@@ -108,19 +110,20 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     Ok(Preview::Imc(Box::new(Rendered {
         identity,
         rows,
-        columns: match parts.len() {
-            0 | 1 => &SINGLE,
-            _ => &COLUMNS,
-        },
+        named_parts: parts.len() > 1,
     })))
 }
 
 pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
+    let columns: &[(&str, usize)] = match file.named_parts {
+        true => &COLUMNS,
+        false => &SINGLE,
+    };
     section(ui, "Entries");
-    table(ui, file.columns, file.rows.len(), |ui, index| {
+    table(ui, columns, file.rows.len(), |ui, index| {
         let row = &file.rows[index];
         let mut cells = vec![row.variant.to_string()];
-        if file.columns.len() == COLUMNS.len() {
+        if file.named_parts {
             cells.push(
                 PARTS
                     .get(usize::from(row.part))
@@ -135,7 +138,7 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
             row.animation.to_string(),
             attributes(row.attributes),
         ]);
-        ui.label(RichText::new(line(file.columns, cells.iter().map(String::as_str))).monospace());
+        ui.label(RichText::new(line(columns, cells.iter().map(String::as_str))).monospace());
     });
 }
 
