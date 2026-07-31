@@ -560,8 +560,15 @@ enum Load<T: Send + 'static, R = T> {
 
 struct Scan {
     pattern: Pattern,
+    /// The query as typed, lowercased. Empty when nothing but filter terms were given.
+    query: String,
+    /// The suffix a name has to end with, `.` included, or empty for no extension filter.
+    suffix: String,
+    literal: bool,
     cursor: usize,
     hits: Vec<(u32, String)>,
+    /// Everything that matched, which outruns `hits` once the cap is reached.
+    matched: usize,
     direct: Option<String>,
     exists: Load<bool>,
     typed: Instant,
@@ -587,6 +594,120 @@ enum Revealed {
     Hash(pathlist::Unnamed),
     /// A hash the list has since learned a name for, so the link moves to the name.
     Renamed(String),
+}
+
+/// What a typed query asks for, once its filter terms have been read off the front.
+struct Query {
+    /// What is left to match on, which is empty when the query was nothing but filters.
+    text: String,
+    /// The suffix a name has to end with, `.` included, or empty for no extension filter.
+    suffix: String,
+    /// Whether to match the path itself rather than score it fuzzily.
+    literal: bool,
+}
+
+/// Read the filter terms out of a query, leaving the rest to match on.
+///
+/// `ext:` is spelled the way the Everything search box spells it, and a query carrying a `/` is
+/// taken to be part of a path rather than a fuzzy fragment, which is the same rule: nobody types a
+/// separator into a fuzzy search, and typing `exd/` should leave that folder alone on screen.
+fn parse_query(search: &str) -> Query {
+    let mut suffix = String::new();
+    let mut rest = Vec::new();
+    for term in search.split_whitespace() {
+        match term.strip_prefix("ext:") {
+            Some(extension) => {
+                let extension = extension.trim_start_matches('.');
+                if !extension.is_empty() {
+                    suffix = format!(".{}", extension.to_lowercase());
+                }
+            }
+            None => rest.push(term),
+        }
+    }
+    let text = rest.join(" ");
+    Query {
+        literal: text.contains('/'),
+        text,
+        suffix,
+    }
+}
+
+/// `haystack.contains(needle)` without folding a copy of either. Game paths are ASCII, and folding
+/// one per name would allocate more over a sweep than the matching itself costs.
+///
+/// `needle` is never empty: an empty query is answered before anything gets this far.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let (haystack, needle) = (haystack.as_bytes(), needle.as_bytes());
+    haystack.len() >= needle.len()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// One line of the result tree: a folder holding matches, or a match itself.
+enum Hit<'a> {
+    Dir {
+        path: &'a str,
+        depth: usize,
+        collapsed: bool,
+    },
+    File {
+        path: &'a str,
+        depth: usize,
+        name: &'a str,
+    },
+}
+
+/// Every directory a path passes through, outermost first, each as a whole path.
+fn lineage(dir: &str) -> impl Iterator<Item = &str> {
+    dir.match_indices('/')
+        .map(move |(at, _)| &dir[..at])
+        .chain(std::iter::once(dir))
+}
+
+/// Lay sorted matches out as the folders they sit in, so a search keeps the shape of the tree.
+///
+/// The rows are built from what matched rather than by pruning the real tree, which would mean
+/// deciding which of six figures of directories hold a match before anything could be drawn.
+fn group<'a>(paths: &[&'a str], collapsed: &HashSet<String>) -> Vec<Hit<'a>> {
+    let mut rows = Vec::new();
+    let mut open: Vec<&str> = Vec::new();
+    for path in paths {
+        let Some((dir, name)) = path.rsplit_once('/') else {
+            continue;
+        };
+        let want: Vec<&str> = lineage(dir).collect();
+        let common = open
+            .iter()
+            .zip(&want)
+            .take_while(|(open, want)| open == want)
+            .count();
+        open.truncate(common);
+        // A folder the user shut still gets its row, so it can be opened again; everything under it
+        // is walked but not drawn.
+        let mut hidden = open.iter().any(|dir| collapsed.contains(*dir));
+        for (depth, dir) in want.iter().enumerate().skip(common) {
+            open.push(dir);
+            let shut = collapsed.contains(*dir);
+            if !hidden {
+                rows.push(Hit::Dir {
+                    path: dir,
+                    depth,
+                    collapsed: shut,
+                });
+            }
+            hidden |= shut;
+        }
+        if !hidden {
+            rows.push(Hit::File {
+                path,
+                depth: want.len(),
+                name,
+            });
+        }
+    }
+    rows
 }
 
 /// The listed name a synthesised one stands for.
@@ -649,9 +770,14 @@ pub struct AssetBrowser {
     hex_page: usize,
     goto: Option<String>,
     search: String,
+    /// Show matches in the folders they sit in rather than as one flat list.
+    grouped: bool,
     scan: Option<Scan>,
     matcher: FuzzyMatcher,
     expanded: HashMap<usize, bool>,
+    /// Folders the user collapsed in the results, keyed by path: the result tree is rebuilt from
+    /// whatever matched, so it has no stable node indices to key on the way the full tree does.
+    collapsed: HashSet<String>,
     selected: Option<String>,
     pending: Option<String>,
     redirect: Option<String>,
@@ -674,9 +800,11 @@ impl Default for AssetBrowser {
             hex_page: 0,
             goto: None,
             search: String::new(),
+            grouped: false,
             scan: None,
             matcher: FuzzyMatcher::new(),
             expanded: HashMap::new(),
+            collapsed: HashSet::new(),
             selected: None,
             pending: None,
             redirect: None,
@@ -861,6 +989,7 @@ impl AssetBrowser {
                     });
                 });
                 ui.add_space(4.0);
+                let mut restart = false;
                 ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                     if ui
                         .add_enabled(!self.search.is_empty(), Button::new("↩"))
@@ -868,17 +997,23 @@ impl AssetBrowser {
                         .clicked()
                     {
                         self.search.clear();
+                        restart = true;
                     }
-                    if ui
+                    ui.toggle_value(&mut self.grouped, "📂")
+                        .on_hover_text("View as Tree");
+                    restart |= ui
                         .add_sized(
                             Vec2::new(ui.available_width(), 0.0),
                             TextEdit::singleline(&mut self.search).hint_text("Search paths"),
                         )
-                        .changed()
-                    {
-                        self.scan = None;
-                    }
+                        .on_hover_text(
+                            "ext:stm for one extension, or include a / to match the path itself",
+                        )
+                        .changed();
                 });
+                if restart {
+                    self.scan = None;
+                }
                 ui.add_space(4.0);
             });
 
@@ -1073,42 +1208,119 @@ impl AssetBrowser {
         } else if scan.hits.is_empty() {
             ui.label("No matches.");
         } else {
+            // The cap is stated against everything that matched rather than left implicit: a tree
+            // holding an arbitrary 500 of 40,000 reads as missing folders, not as a limit.
             ui.label(
-                RichText::new(format!(
-                    "{} match{}{}",
-                    scan.hits.len(),
-                    if scan.hits.len() == 1 { "" } else { "es" },
-                    if scan.hits.len() >= MAX_RESULTS {
-                        " (capped)"
-                    } else {
-                        ""
-                    }
-                ))
+                RichText::new(if scan.matched > scan.hits.len() {
+                    format!("{} of {} matches", scan.hits.len(), scan.matched)
+                } else {
+                    format!(
+                        "{} match{}",
+                        scan.matched,
+                        if scan.matched == 1 { "" } else { "es" }
+                    )
+                })
                 .weak(),
             );
         }
 
         let row_height = ui.text_style_height(&egui::TextStyle::Button);
+        if !self.grouped {
+            ScrollArea::vertical().auto_shrink(false).show_rows(
+                ui,
+                row_height,
+                scan.hits.len(),
+                |ui, range| {
+                    ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
+                        for (_, path) in &scan.hits[range] {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                            let selected = self.selected.as_deref() == Some(path.as_str());
+                            if Button::selectable(selected, path.as_str())
+                                .ui(ui)
+                                .on_hover_text(path)
+                                .clicked()
+                            {
+                                clicked = Some(path.clone());
+                            }
+                        }
+                    });
+                },
+            );
+            return clicked;
+        }
+
+        // Score order is what ranks a flat list, but a tree only reads as one in path order.
+        let mut paths: Vec<&str> = scan.hits.iter().map(|(_, path)| path.as_str()).collect();
+        paths.sort_unstable();
+        let rows = group(&paths, &self.collapsed);
+
+        let mut toggle = None;
+        let space_width =
+            ui.fonts_mut(|f| f.glyph_width(&TextStyle::Button.resolve(ui.style()), ' '));
+        let icon_width = ui.spacing().icon_width;
         ScrollArea::vertical().auto_shrink(false).show_rows(
             ui,
             row_height,
-            scan.hits.len(),
+            rows.len(),
             |ui, range| {
                 ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
-                    for (_, path) in &scan.hits[range] {
+                    for row in &rows[range] {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                        let selected = self.selected.as_deref() == Some(path.as_str());
-                        if Button::selectable(selected, path.as_str())
-                            .ui(ui)
-                            .on_hover_text(path)
-                            .clicked()
-                        {
-                            clicked = Some(path.clone());
+                        match row {
+                            Hit::Dir {
+                                path,
+                                depth,
+                                collapsed,
+                            } => {
+                                let segment = path.rsplit('/').next().unwrap_or(path);
+                                let text = RichText::new(format!(
+                                    "{}    {segment}",
+                                    "    ".repeat(*depth)
+                                ));
+                                let response = Button::selectable(false, text).ui(ui);
+                                let icon = Rect::from_center_size(
+                                    pos2(
+                                        response.rect.left()
+                                            + space_width * 4.0 * *depth as f32
+                                            + icon_width / 2.0,
+                                        response.rect.center().y,
+                                    ),
+                                    Vec2::splat(icon_width),
+                                );
+                                paint_default_icon(
+                                    ui,
+                                    if *collapsed { 0.0 } else { 1.0 },
+                                    &response.clone().with_new_rect(icon),
+                                );
+                                if response.clicked() {
+                                    toggle = Some((*path, !*collapsed));
+                                }
+                            }
+                            Hit::File { path, depth, name } => {
+                                let text =
+                                    RichText::new(format!("{}{name}", "    ".repeat(*depth)));
+                                let selected = self.selected.as_deref() == Some(*path);
+                                if Button::selectable(selected, text)
+                                    .ui(ui)
+                                    .on_hover_text(*path)
+                                    .clicked()
+                                {
+                                    clicked = Some((*path).to_owned());
+                                }
+                            }
                         }
                     }
                 });
             },
         );
+
+        if let Some((path, collapsed)) = toggle {
+            if collapsed {
+                self.collapsed.insert(path.to_owned());
+            } else {
+                self.collapsed.remove(path);
+            }
+        }
         clicked
     }
 
@@ -1116,18 +1328,25 @@ impl AssetBrowser {
         let Load::Ready(loaded) = &mut self.state else {
             return;
         };
-        let scan = self.scan.get_or_insert_with(|| Scan {
-            pattern: FuzzyMatcher::parse_pattern(&self.search),
-            cursor: 0,
-            hits: Vec::new(),
-            direct: direct_path(&self.search, |root| {
-                loaded
-                    .roots
-                    .iter()
-                    .any(|&node| &*loaded.nodes[node].segment == root)
-            }),
-            exists: Load::Idle,
-            typed: Instant::now(),
+        let scan = self.scan.get_or_insert_with(|| {
+            let query = parse_query(&self.search);
+            Scan {
+                pattern: FuzzyMatcher::parse_pattern(&query.text),
+                literal: query.literal,
+                query: query.text.to_lowercase(),
+                suffix: query.suffix,
+                cursor: 0,
+                hits: Vec::new(),
+                matched: 0,
+                direct: direct_path(&query.text, |root| {
+                    loaded
+                        .roots
+                        .iter()
+                        .any(|&node| &*loaded.nodes[node].segment == root)
+                }),
+                exists: Load::Idle,
+                typed: Instant::now(),
+            }
         });
 
         if let Some(path) = &scan.direct {
@@ -1170,9 +1389,32 @@ impl AssetBrowser {
         for dir in scan.cursor..end {
             let dir_path = loaded.paths.dirs()[dir].clone();
             for name in loaded.decode(dir) {
+                // Cheapest test first: an extension rules a name out without building its path or
+                // scoring it, which is what keeps an extension-only sweep of the whole list quick.
+                // Compared as bytes because folding the case of every one of a million-odd names
+                // would allocate more than the rest of the sweep put together; a path is ASCII.
+                let tail = name.len().checked_sub(scan.suffix.len());
+                if !tail.is_some_and(|at| {
+                    name.as_bytes()[at..].eq_ignore_ascii_case(scan.suffix.as_bytes())
+                }) {
+                    continue;
+                }
                 let path = format!("{dir_path}/{name}");
-                if let Some(score) = self.matcher.score_one(&scan.pattern, &path) {
-                    scan.hits.push((score.get(), path));
+                // An empty query is every file the filters left, which is what `ext:stm` on its own
+                // has to mean. The fuzzy matcher scores nothing against an empty pattern, so asking
+                // it here would answer that with no matches at all.
+                let score = if scan.query.is_empty() {
+                    Some(0)
+                } else if scan.literal {
+                    contains_ignore_ascii_case(&path, &scan.query).then_some(0)
+                } else {
+                    self.matcher
+                        .score_one(&scan.pattern, &path)
+                        .map(|score| score.get())
+                };
+                if let Some(score) = score {
+                    scan.matched += 1;
+                    scan.hits.push((score, path));
                 }
             }
         }
@@ -1799,6 +2041,113 @@ mod tests {
         let dirs_mapped: Vec<Option<usize>> = nodes.iter().map(|n| n.dir).collect();
         assert!(dirs_mapped.contains(&Some(0)) && dirs_mapped.contains(&Some(2)));
         assert!(!dirs_mapped.contains(&Some(1)));
+    }
+
+    /// An extension on its own has to match every file carrying it. The fuzzy matcher scores
+    /// nothing against an empty pattern, so leaving the query to it answered `ext:stm` with no
+    /// matches unless something else was typed too.
+    #[test]
+    fn an_extension_on_its_own_leaves_nothing_to_match_on() {
+        let query = parse_query("ext:stm");
+        assert_eq!(query.suffix, ".stm");
+        assert!(
+            query.text.is_empty(),
+            "the filter term is not left to match on"
+        );
+        assert!(!query.literal);
+    }
+
+    #[test]
+    fn filter_terms_come_out_of_the_query_wherever_they_sit() {
+        let query = parse_query("ext:.STM chara");
+        assert_eq!(
+            (query.suffix.as_str(), query.text.as_str()),
+            (".stm", "chara")
+        );
+
+        // A separator is what tells a path apart from a fuzzy fragment, so `uld/mkd` is a path and
+        // `mkd` is not.
+        assert!(parse_query("bg/ffxiv").literal);
+        assert!(!parse_query("terrain").literal);
+        assert!(parse_query("exd/ ext:exh").literal);
+    }
+
+    #[test]
+    fn a_path_matches_anywhere_in_it_whatever_its_case() {
+        assert!(contains_ignore_ascii_case(
+            "chara/xls/attachOffset/d1040.atch",
+            "attachoffset"
+        ));
+        assert!(contains_ignore_ascii_case("exd/root.exl", "exd/"));
+        assert!(!contains_ignore_ascii_case("exd/root.exl", "exdx"));
+        assert!(
+            !contains_ignore_ascii_case("ab", "abc"),
+            "a needle longer than the haystack should not index past it"
+        );
+    }
+
+    /// Rows as `depth:name`, so a layout reads the way it is drawn.
+    fn laid_out(paths: &[&str], collapsed: &[&str]) -> Vec<String> {
+        let shut = collapsed.iter().map(|dir| (*dir).to_owned()).collect();
+        group(paths, &shut)
+            .iter()
+            .map(|row| match row {
+                Hit::Dir { path, depth, .. } => {
+                    format!("{depth}:{}/", path.rsplit('/').next().unwrap())
+                }
+                Hit::File { depth, name, .. } => format!("{depth}:{name}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn matches_keep_the_folders_they_sit_in() {
+        let rows = laid_out(
+            &[
+                "bg/ffxiv/fst_f1/bgplate/terrain.tera",
+                "bg/ffxiv/sea_s1/bgplate/terrain.tera",
+                "chara/base_material/stainingtemplate.stm",
+            ],
+            &[],
+        );
+        assert_eq!(
+            rows,
+            [
+                "0:bg/",
+                "1:ffxiv/",
+                "2:fst_f1/",
+                "3:bgplate/",
+                "4:terrain.tera",
+                // Only the part that differs is reopened; `bg/ffxiv` is not drawn twice.
+                "2:sea_s1/",
+                "3:bgplate/",
+                "4:terrain.tera",
+                "0:chara/",
+                "1:base_material/",
+                "2:stainingtemplate.stm",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_shut_folder_keeps_its_row_and_hides_what_is_under_it() {
+        let paths = [
+            "bg/ffxiv/fst_f1/bgplate/terrain.tera",
+            "bg/ffxiv/sea_s1/bgplate/terrain.tera",
+            "chara/base_material/stainingtemplate.stm",
+        ];
+        let rows = laid_out(&paths, &["bg/ffxiv"]);
+        assert_eq!(
+            rows,
+            [
+                "0:bg/",
+                "1:ffxiv/",
+                "0:chara/",
+                "1:base_material/",
+                "2:stainingtemplate.stm"
+            ],
+            "the shut folder should still be there to reopen, and nothing below it drawn"
+        );
     }
 }
 
