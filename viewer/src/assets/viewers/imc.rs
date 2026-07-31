@@ -90,17 +90,17 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
         })
         .collect::<Vec<_>>();
 
+    // Variant 0 is the default, which the header does not count.
+    let variants = u32::from(file.variant_count()) + 1;
     let identity = vec![
-        // Variant 0 is the default, which the header does not count.
-        ("Variants", (file.variant_count() + 1).to_string()),
+        ("Variants", variants.to_string()),
         ("Parts", parts.len().to_string()),
         ("Part mask", format!("{:#014b}", file.part_mask())),
         ("Entries", rows.len().to_string()),
     ];
 
     log::info!(
-        "assets/imc: {path} {} variants, {} parts, {} entries",
-        file.variant_count() + 1,
+        "assets/imc: {path} {variants} variants, {} parts, {} entries",
         parts.len(),
         rows.len()
     );

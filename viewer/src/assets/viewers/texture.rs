@@ -4,9 +4,8 @@ use anyhow::Result;
 use std::io::Cursor;
 
 use super::{Mip, Preview, upload};
-use crate::assets::Channels;
 use crate::assets::Bytes;
-
+use crate::assets::Channels;
 
 pub fn texture_kind_name(kind: ironworks::file::tex::TextureKind) -> &'static str {
     use ironworks::file::tex::TextureKind;
@@ -19,7 +18,6 @@ pub fn texture_kind_name(kind: ironworks::file::tex::TextureKind) -> &'static st
         TextureKind::Unknown => "Unknown",
     }
 }
-
 
 pub fn decode(
     ctx: &egui::Context,
@@ -68,6 +66,14 @@ pub fn decode(
         })
         .collect();
     let image = crate::utils::tex_loader::decode_mip(&texture, mip, path)?;
-    Ok(upload(ctx, path, image, texture.layers(), texture.format().components(), facts, mips, channels))
+    Ok(upload(
+        ctx,
+        path,
+        image,
+        texture.layers(),
+        texture.format().components(),
+        facts,
+        mips,
+        channels,
+    ))
 }
-
