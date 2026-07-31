@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -304,6 +304,28 @@ fn category_name(category: u8) -> Option<&'static str> {
     })
 }
 
+/// A listed directory's ancestors, for the hashes asked about, as `(directory, byte length)` so the
+/// name can be sliced back out without owning it. Only walked when something failed to place, since
+/// the large majority of unnamed files land on a directory that holds listed files of its own.
+fn ancestors(dirs: &[Box<str>], wanted: &HashSet<u32>) -> HashMap<u32, (usize, usize)> {
+    use ironworks::sqpack::IndexHash;
+
+    let mut found = HashMap::new();
+    if wanted.is_empty() {
+        return found;
+    }
+    for (index, dir) in dirs.iter().enumerate() {
+        let name = dir.to_ascii_lowercase();
+        for (at, _) in name.match_indices('/') {
+            let hash = IndexHash::directory(&name[..at]);
+            if wanted.contains(&hash) {
+                found.entry(hash).or_insert((index, at));
+            }
+        }
+    }
+    found
+}
+
 /// Give every unnamed file a home. The install records these only as hashes, but the directory half
 /// of a split hash can be matched against the directories we do know, which lands the large majority
 /// of them in their real folder. The rest fall back to a folder named for their directory hash.
@@ -317,20 +339,31 @@ fn place_unnamed(
 
     let mut by_hash: HashMap<u32, usize> = HashMap::with_capacity(dirs.len());
     for (index, dir) in dirs.iter().enumerate() {
-        by_hash.insert(IndexHash::directory(dir), index);
+        // The install is keyed on the lowercased path, and a few listed directories carry a capital.
+        let name = dir.to_ascii_lowercase();
+        let hash = IndexHash::directory(&name);
+        // Some directories are listed under both spellings. Prefer the one already lowercase, so
+        // which of the two nodes takes the files does not depend on iteration order.
+        if name == **dir || !by_hash.contains_key(&hash) {
+            by_hash.insert(hash, index);
+        }
     }
+
+    // `.index2` records a whole-path hash with no directory half, so there is nothing to match on;
+    // none are present today, but they would have to go somewhere else.
+    let split = || unnamed_files.iter().filter(|file| file.split);
+    let unplaced: HashSet<u32> = split()
+        .map(|file| (file.hash >> 32) as u32)
+        .filter(|directory| !by_hash.contains_key(directory))
+        .collect();
+    let ancestors = ancestors(dirs, &unplaced);
 
     let mut extra_dirs: Vec<Box<str>> = Vec::new();
     let mut synthesised: HashMap<(u8, u8, u32), usize> = HashMap::new();
     let mut unnamed: HashMap<usize, Vec<pathlist::Unnamed>> = HashMap::new();
     let mut resolved = 0;
 
-    for file in unnamed_files {
-        // `.index2` records a whole-path hash with no directory half, so there is nothing to
-        // match on; none are present today, but they would have to go somewhere else.
-        if !file.split {
-            continue;
-        }
+    for file in split() {
         let directory = (file.hash >> 32) as u32;
         let dir = match by_hash.get(&directory) {
             Some(known) => {
@@ -340,15 +373,23 @@ fn place_unnamed(
             None => {
                 let key = (file.category, file.repository, directory);
                 *synthesised.entry(key).or_insert_with(|| {
-                    let category = category_name(file.category)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| format!("category{:02x}", file.category));
-                    let repository = match file.repository {
-                        0 => "ffxiv".to_owned(),
-                        n => format!("ex{n}"),
+                    let name = match ancestors.get(&directory) {
+                        // A directory holding nothing but other directories is not a key above, yet
+                        // the tree already draws it, so its files belong there and not in a hash
+                        // folder.
+                        Some(&(index, length)) => dirs[index][..length].to_owned(),
+                        None => {
+                            let category = category_name(file.category)
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| format!("category{:02x}", file.category));
+                            let repository = match file.repository {
+                                0 => "ffxiv".to_owned(),
+                                n => format!("ex{n}"),
+                            };
+                            format!("{category}/{repository}/{directory:08x}")
+                        }
                     };
-                    extra_dirs
-                        .push(format!("{category}/{repository}/{directory:08x}").into_boxed_str());
+                    extra_dirs.push(name.into_boxed_str());
                     dirs.len() + extra_dirs.len() - 1
                 })
             }
@@ -644,8 +685,10 @@ impl Default for AssetBrowser {
 }
 
 impl AssetBrowser {
+    /// The file on show, or the one about to be once there is an index to place it in, so that
+    /// entering the bare route restores the same URL either way.
     pub fn selected(&self) -> Option<&str> {
-        self.selected.as_deref()
+        self.selected.as_deref().or(self.pending.as_deref())
     }
 
     /// Select the path from a deep link once the index is available.
@@ -653,6 +696,23 @@ impl AssetBrowser {
         if self.selected.as_deref() != Some(path.as_str()) {
             self.pending = Some(path);
         }
+    }
+
+    /// Drop everything that came from the install, so a reconnect reads it all again.
+    ///
+    /// The selection becomes pending rather than being thrown away: the new install is asked for
+    /// the same file, and whether it is named there is decided against its presence map, not the
+    /// one that happened to be loaded when it was picked.
+    pub fn reset(&mut self) {
+        self.state = Load::Idle;
+        self.bytes = Load::Idle;
+        // Everything decoded from the bytes hangs off this, and `ensure_bytes` clears the lot when
+        // it does not match the selection.
+        self.bytes_of = None;
+        self.deps = deps::Deps::default();
+        self.selected_unnamed = None;
+        self.scan = None;
+        self.pending = self.pending.take().or(self.selected.take());
     }
 
     /// Apply a deep link, once there is an index to place it in.
@@ -1638,19 +1698,30 @@ mod tests {
     fn unnamed_files_land_in_their_real_directory_when_it_is_known() {
         use ironworks::sqpack::IndexHash;
 
-        let dirs: Vec<Box<str>> = ["common/savedata", "music/ffxiv"]
-            .iter()
-            .map(|d| (*d).into())
-            .collect();
+        let dirs: Vec<Box<str>> = [
+            "common/savedata",
+            "music/ffxiv",
+            // The list carries some directories with a capital, and a few under both spellings.
+            "sound/voice/Vo_Emote",
+            "sound/voice/Vo_Line",
+            "sound/voice/vo_line",
+            // Nothing is listed directly in common/graphics, only below it.
+            "common/graphics/texture",
+        ]
+        .iter()
+        .map(|d| (*d).into())
+        .collect();
+
+        let entry = |directory: &str, file: u64| pathlist::Unnamed {
+            repository: 0,
+            category: 0x00,
+            hash: (u64::from(IndexHash::directory(directory)) << 32) | file,
+            split: true,
+        };
 
         let unnamed = [
             // hashes into "common/savedata", which the list knows
-            pathlist::Unnamed {
-                repository: 0,
-                category: 0x00,
-                hash: (u64::from(IndexHash::directory("common/savedata")) << 32) | 0xdead_beef,
-                split: true,
-            },
+            entry("common/savedata", 0xdead_beef),
             // a directory nothing in the list hashes to
             pathlist::Unnamed {
                 repository: 4,
@@ -1658,18 +1729,38 @@ mod tests {
                 hash: (0x1234_5678u64 << 32) | 0x0000_00ff,
                 split: true,
             },
+            // the install hashes the lowercased name, whatever spelling the list recorded
+            entry("sound/voice/vo_emote", 0x0000_0001),
+            entry("sound/voice/vo_line", 0x0000_0002),
+            // a directory the list only ever mentions as the parent of another
+            entry("common/graphics", 0x0000_0003),
+            entry("common/graphics", 0x0000_0004),
         ];
         let (extra_dirs, placed, resolved) = place_unnamed(&dirs, &unnamed);
-        assert_eq!(resolved, 1, "one of the two hashes to a known directory");
+        assert_eq!(
+            resolved, 3,
+            "the ancestor is not a directory the list holds"
+        );
         assert_eq!(
             &*extra_dirs,
-            &["music/ex4/12345678".into()],
-            "the other is synthesised"
+            &["music/ex4/12345678".into(), "common/graphics".into()],
+            "an unknown directory is named for its hash, a known ancestor for itself"
         );
 
-        let savedata = dirs.iter().position(|d| &**d == "common/savedata").unwrap();
-        assert_eq!(placed[&savedata], vec![unnamed[0]]);
+        let at = |name: &str| dirs.iter().position(|d| &**d == name).unwrap();
+        assert_eq!(placed[&at("common/savedata")], vec![unnamed[0]]);
         assert_eq!(placed[&dirs.len()], vec![unnamed[1]]);
+        assert_eq!(placed[&at("sound/voice/Vo_Emote")], vec![unnamed[2]]);
+        assert_eq!(
+            placed[&at("sound/voice/vo_line")],
+            vec![unnamed[3]],
+            "the lowercase spelling wins over the capitalised duplicate"
+        );
+        assert_eq!(
+            placed[&(dirs.len() + 1)],
+            vec![unnamed[4], unnamed[5]],
+            "both files share the one synthesised common/graphics"
+        );
     }
 
     /// A path in the URL arrives many frames before the index has loaded. Holding it until then is
