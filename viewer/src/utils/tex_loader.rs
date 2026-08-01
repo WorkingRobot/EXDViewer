@@ -272,34 +272,50 @@ fn read_bgra8(width: u16, height: u16, data: &[u8]) -> Result<DynamicImage> {
     Ok(DynamicImage::ImageRgba8(buffer))
 }
 
+/// The game stores a level's cube faces, volume slices and array elements one after another, where
+/// image_dds expects each layer's whole mip chain before the next layer's. So a level is decoded on
+/// its own, a slice at a time, and the slices are stacked into the tall image the caller draws.
+///
+/// Slices are decoded apart rather than as one tall image because each is compressed independently:
+/// down the mip chain a slice shrinks past the 4x4 block grid and is padded back up to it, so a 2x2
+/// slice still occupies a whole block. Reading the level as one image would run those half-empty
+/// blocks together and shear everything below the first one.
 fn read_texture_bc(
     texture: &tex::Texture,
     level: u8,
     image_format: image_dds::ImageFormat,
 ) -> Result<DynamicImage> {
-    let surface = Surface {
-        width: texture.width().into(),
-        // image_dds wants a flat surface, and the game stores a volume's slices stacked, so the
-        // depth is folded into the height rather than declared.
-        height: u32::from(texture.height()) * u32::from(texture.layers()),
-        depth: 1,
-        layers: match texture.kind() {
-            tex::TextureKind::Cube => 6,
-            tex::TextureKind::D2Array => texture.array_size().into(),
-            _other => 1,
-        },
-        mipmaps: texture.mip_levels().into(),
-        image_format,
-        data: texture.data(),
-    };
+    let (width, height) = texture.mip_size(level);
+    let data = texture
+        .mip_data(level)
+        .with_context(|| format!("texture has no mipmap level {level}"))?;
+    let layers = usize::from(texture.layers());
+    let stride = data.len() / layers;
+    // A slice is at least one block, so this only trips on a truncated file, where chunking by zero
+    // would panic rather than fail.
+    anyhow::ensure!(stride > 0, "mipmap level {level} holds no {layers} slices");
 
-    let image = surface
-        .decode_rgba8()
-        .with_context(|| format!("failed to decode {image_format:?}"))?
-        .to_image(level.into())
-        .with_context(|| format!("failed to build image from mipmap level {level}"))?;
+    let mut pixels = Vec::with_capacity(data.len());
+    for slice in data.chunks_exact(stride) {
+        let surface = Surface {
+            width: width.into(),
+            height: height.into(),
+            depth: 1,
+            layers: 1,
+            mipmaps: 1,
+            image_format,
+            data: slice,
+        };
+        let decoded = surface
+            .decode_rgba8()
+            .with_context(|| format!("failed to decode {image_format:?}"))?;
+        pixels.extend_from_slice(&decoded.data);
+    }
 
-    Ok(image.into())
+    let height = u32::from(height) * u32::from(texture.layers());
+    let buffer = ImageBuffer::from_raw(width.into(), height, pixels)
+        .context("failed to build image buffer")?;
+    Ok(DynamicImage::ImageRgba8(buffer))
 }
 
 pub fn write(image: impl Into<DynamicImage>, format: ImageFormat) -> Result<Vec<u8>> {
