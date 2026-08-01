@@ -17,11 +17,12 @@ contexts:
     - match: ^\s*\d+(?=\s)
       scope: constant.numeric.line.luab
 
-    - match: \b[A-Z][A-Z0-9]*\b
-      scope: keyword.control.luab
-
+    # A register, constant, upvalue or function, which an opcode's name would otherwise take.
     - match: \b[RKUF]\d+\b
       scope: variable.other.luab
+
+    - match: \b[A-Z][A-Z0-9]*\b
+      scope: keyword.control.luab
 
     - match: '[-+]?\b\d+\b'
       scope: constant.numeric.luab
