@@ -1,0 +1,10 @@
+[package]
+name = "luadec"
+description = "Recovers Lua source from Lua 5.1 bytecode"
+authors.workspace = true
+repository.workspace = true
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "luadec"
