@@ -152,7 +152,11 @@ fn function(
         reader.active += 1;
     }
 
-    let body = reader.block(0, held.code().len(), None, None)?;
+    let mut body = reader.block(0, held.code().len(), None, None)?;
+    // Every function ends in a return the compiler writes for it, which nobody put in the source.
+    if matches!(body.last(), Some(Stat::Return(values)) if values.is_empty()) {
+        body.pop();
+    }
     counts.read += reader.counts.read;
     counts.raw += reader.counts.raw;
     Ok(Closure {
@@ -295,6 +299,24 @@ fn touches(held: Instruction, reads: &mut Vec<usize>) -> Option<usize> {
 /// A temporary is read once, by the instruction the compiler emitted next to consume it. Anything
 /// read twice, or read on the far side of a jump, sat in the register while something else ran, and
 /// only a local does that.
+/// Whether the instruction finishes what it was part of, so the next word starts a statement.
+fn settles(held: Instruction) -> bool {
+    matches!(
+        held.opcode(),
+        Opcode::SetGlobal
+            | Opcode::SetTable
+            | Opcode::SetUpval
+            | Opcode::Return
+            | Opcode::TailCall
+            | Opcode::Jmp
+            | Opcode::ForPrep
+            | Opcode::ForLoop
+            | Opcode::TForLoop
+            | Opcode::SetList
+            | Opcode::Close
+    ) || (held.opcode() == Opcode::Call && held.c() == 1)
+}
+
 fn sticky(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
     let code = held.code();
     let mut sticky = vec![None; code.len()];
@@ -314,6 +336,8 @@ fn sticky(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
     }
 
     let mut era = 0usize;
+    let mut active = usize::from(held.parameters()) + usize::from(held.has_arg());
+    let mut start = true;
     let mut seen = vec![0usize; 256];
     let mut reads = Vec::new();
     for (pc, instruction) in code.iter().enumerate() {
@@ -339,6 +363,34 @@ fn sticky(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
                 *slot = Some(slot.map_or(register, |held: usize| held.max(register)));
             }
         }
+        // At the start of a statement the next free register is where the locals stop, so a word
+        // that writes above where they were thought to stop says there are more of them, and the
+        // values in between were locals all along.
+        if start && let Some(top) = writes {
+            let first = usize::from(instruction.a());
+            if first > active {
+                for register in active..first {
+                    if let Some(Some((at, _))) = written.get(register).copied()
+                        && let Some(slot) = sticky.get_mut(at)
+                    {
+                        *slot = Some(slot.map_or(register, |held: usize| held.max(register)));
+                    }
+                }
+                active = first;
+            }
+            let _ = top;
+        }
+        start = settles(*instruction) || labels.get(pc + 1).copied().unwrap_or(false);
+        match instruction.opcode() {
+            // A numeric for opens a scope holding its three workings and the variable it counts.
+            Opcode::ForPrep => active = usize::from(instruction.a()) + 4,
+            Opcode::ForLoop => active = usize::from(instruction.a()),
+            Opcode::TForLoop => {
+                active = usize::from(instruction.a()) + 3 + usize::from(instruction.c()).max(1);
+            }
+            _ => (),
+        }
+
         if branches(instruction.opcode()) {
             era += 1;
         }
@@ -1091,6 +1143,16 @@ impl<'a> Reader<'a> {
 
     /// Read one instruction, and answer with where the reading goes next.
     fn step(&mut self, pc: usize) -> Reading<usize> {
+        let next = self.walk(pc)?;
+        // What the word left behind is a local rather than a temporary wherever the pass that
+        // measured the registers said so.
+        if let Some(Some(top)) = self.sticky.get(pc).copied() {
+            self.declare(top + 1)?;
+        }
+        Ok(next)
+    }
+
+    fn walk(&mut self, pc: usize) -> Reading<usize> {
         let instruction = self.at(pc)?;
         let a = usize::from(instruction.a());
         let (b, c) = (instruction.b(), instruction.c());
@@ -1307,9 +1369,6 @@ impl<'a> Reader<'a> {
 
             Opcode::Unknown(_) => return Err("the function holds an opcode Lua 5.1 does not have"),
         }
-        if let Some(Some(top)) = self.sticky.get(pc).copied() {
-            self.declare(top + 1)?;
-        }
         Ok(next)
     }
 
@@ -1343,8 +1402,10 @@ impl<'a> Reader<'a> {
         }
         let mut values = Vec::with_capacity(last - a);
         for register in (a..last).rev() {
+            // A further result is carried by the expression that made it, but its slot still has to
+            // be given up or the next statement finds it and declares a local nobody wrote.
             match self.slots.get(register) {
-                Some(Slot::Rest) => (),
+                Some(Slot::Rest) => self.slots[register] = Slot::Empty,
                 _ => values.push(self.take(register)?),
             }
         }

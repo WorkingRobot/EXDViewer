@@ -57,6 +57,35 @@ pub fn decompile(chunk: &Chunk) -> Decompiled {
     }
 }
 
+/// One function as source: the statements it holds, and the parameters it takes.
+pub struct Source {
+    /// Names of the fixed parameters.
+    pub parameters: Vec<String>,
+    /// Whether the parameter list ends in `...`.
+    pub vararg: bool,
+    /// The body, one entry per line, with no trailing newlines.
+    pub lines: Vec<String>,
+}
+
+/// Read one function on its own, or nothing where any part of it stayed disassembly.
+///
+/// This is what checking a reading against the compiler that wrote the bytecode needs: a function
+/// only round-trips if the whole of it came back as source.
+pub fn source(held: &Function) -> Option<Source> {
+    let mut counts = read::Counts::default();
+    let closure = read::closure(held, Vec::new(), 0, &mut counts);
+    if counts.raw > 0 {
+        return None;
+    }
+    let mut lines = Vec::new();
+    expr::write_block(&mut lines, &closure.body, 0);
+    Some(Source {
+        parameters: closure.parameters,
+        vararg: closure.vararg,
+        lines,
+    })
+}
+
 /// Disassemble a chunk, every function in the order the file holds them.
 pub fn disassemble(chunk: &Chunk) -> Vec<String> {
     let mut lines = Vec::new();
@@ -237,7 +266,7 @@ mod tests {
             constants: vec![Value::Text("print"), Value::Text("hi")],
             ..Proto::default()
         };
-        assert_eq!(source(held), "print(\"hi\")\nreturn");
+        assert_eq!(source(held), "print(\"hi\")");
     }
 
     /// A key that reads as a name prints as a field, and the object of a method lookup is not
@@ -255,7 +284,7 @@ mod tests {
             stack: 3,
             ..Proto::default()
         };
-        assert_eq!(source(held), "t:m()\nreturn");
+        assert_eq!(source(held), "t:m()");
     }
 
     /// The load reached by falling through is the false one, so a comparison standing as a value is
@@ -293,7 +322,7 @@ mod tests {
             stack: 2,
             ..Proto::default()
         };
-        assert_eq!(source(held), "if a0 == 1 then\n\tf()\nend\nreturn");
+        assert_eq!(source(held), "if a0 == 1 then\n\tf()\nend");
     }
 
     /// Two conditionals leaving for the same place are one condition, not one `if` inside another.
@@ -314,10 +343,7 @@ mod tests {
             stack: 3,
             ..Proto::default()
         };
-        assert_eq!(
-            source(held),
-            "if a0 == 1 and a1 == 2 then\n\tf()\nend\nreturn"
-        );
+        assert_eq!(source(held), "if a0 == 1 and a1 == 2 then\n\tf()\nend");
     }
 
     /// A conditional leaving for the body rather than past it is the left of an `or`.
@@ -338,10 +364,7 @@ mod tests {
             stack: 3,
             ..Proto::default()
         };
-        assert_eq!(
-            source(held),
-            "if a0 == 1 or a1 == 2 then\n\tf()\nend\nreturn"
-        );
+        assert_eq!(source(held), "if a0 == 1 or a1 == 2 then\n\tf()\nend");
     }
 
     #[test]
@@ -362,10 +385,7 @@ mod tests {
             stack: 2,
             ..Proto::default()
         };
-        assert_eq!(
-            source(held),
-            "if a0 == 1 then\n\tf()\nelse\n\tg()\nend\nreturn"
-        );
+        assert_eq!(source(held), "if a0 == 1 then\n\tf()\nelse\n\tg()\nend");
     }
 
     #[test]
@@ -386,7 +406,7 @@ mod tests {
             stack: 7,
             ..Proto::default()
         };
-        assert_eq!(source(held), "for v3 = 1, 3 do\n\tf(v3)\nend\nreturn");
+        assert_eq!(source(held), "for v3 = 1, 3 do\n\tf(v3)\nend");
     }
 
     /// The wrapper the game links units behind is not something anybody wrote, so it is not shown.
@@ -459,7 +479,7 @@ mod tests {
             }))
             .is_none()
         );
-        assert_eq!(source(held), "f()\nreturn");
+        assert_eq!(source(held), "f()");
     }
 
     /// A function the reading cannot resolve is kept as its own disassembly rather than dropped.
@@ -493,6 +513,6 @@ mod tests {
             constants: vec![Value::Text("t"), Value::Text("k"), Value::Bool(true)],
             ..Proto::default()
         };
-        assert_eq!(source(held), "t.k = true\nreturn");
+        assert_eq!(source(held), "t.k = true");
     }
 }
