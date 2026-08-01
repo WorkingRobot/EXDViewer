@@ -93,9 +93,7 @@ pub fn sniff(bytes: &[u8]) -> Option<Format> {
     is_text(bytes).then_some(Format::Shown(Viewer::Text))
 }
 
-/// Read as a material and believed only if it names a shader package, which nothing else would. The
-/// header states its own size as a `u16` and every count in it is a byte or a short, so this reads a
-/// bounded amount however little of the file is really a material.
+/// Read as a material and believed only if it names a shader package, which nothing else would.
 fn is_material(bytes: &[u8]) -> bool {
     bytes.len() <= usize::from(u16::MAX)
         && mtrl::Material::read(Cursor::new(bytes.to_vec()))

@@ -42,7 +42,7 @@ const ATLAS_SIZE: u16 = 512;
 const GLYPH_SHEET_SIZE: u16 = 1024;
 
 /// Glyph sheets held at once. Each is a whole font texture uploaded again with one channel pulled
-/// out of it, so this is sized for moving around within a font rather than for holding all of one.
+/// out of it.
 const SHEETS: usize = 8;
 
 /// What a viewer gets back when it asks for a dependency.

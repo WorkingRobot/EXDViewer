@@ -351,8 +351,7 @@ impl Preview {
                 depth,
                 ..
             } => {
-                // The whole volume is resident, so changing slice is a different uv rect rather
-                // than another decode and upload -- scrubbing costs nothing.
+                // The whole volume is resident, so changing slice is only a different uv rect.
                 let depth = f32::from((*depth).max(1));
                 let top = f32::from(slice) / depth;
                 let uv = egui::Rect::from_min_max(

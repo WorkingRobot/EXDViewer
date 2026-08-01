@@ -56,8 +56,8 @@ const LEGIBLE: f32 = 4.0;
 const THEME_FILL: u8 = 0x02;
 const THEME_EDGE: u8 = 0x04;
 
-/// How deep component instancing is followed. Components can only reference ones defined before
-/// them, so this is a backstop against a file that says otherwise rather than an expected limit.
+/// How deep component instancing is followed. Components may only reference ones defined before
+/// them.
 const MAX_DEPTH: usize = 16;
 
 /// How many repeats a tiling piece is drawn as before it is simply stretched. A window background

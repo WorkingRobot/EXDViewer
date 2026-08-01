@@ -1208,8 +1208,7 @@ impl AssetBrowser {
         } else if scan.hits.is_empty() {
             ui.label("No matches.");
         } else {
-            // The cap is stated against everything that matched rather than left implicit: a tree
-            // holding an arbitrary 500 of 40,000 reads as missing folders, not as a limit.
+            // Count everything that matched, not only what is shown.
             ui.label(
                 RichText::new(if scan.matched > scan.hits.len() {
                     format!("{} of {} matches", scan.hits.len(), scan.matched)
@@ -1649,8 +1648,7 @@ impl AssetBrowser {
             Some(viewer) => viewer.label(),
             None => named,
         };
-        // A real dropdown, not a bare button: ComboBox draws the indicator and closes itself on
-        // click, which is why the arms below never call `close`.
+        // ComboBox closes itself on click; the arms below never call `close`.
         egui::ComboBox::from_id_salt("asset_viewer")
             .selected_text(chosen)
             .show_ui(ui, |ui| {

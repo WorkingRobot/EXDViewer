@@ -156,9 +156,7 @@ pub fn resources_ui(ui: &mut egui::Ui, groups: &[(&'static str, Vec<ResourceRow>
     }
 }
 
-/// A constant buffer whose fields the bytecode named, as a collapsing row over its layout. The
-/// file's tables carry only the buffer, so this is the one thing on screen that comes from the
-/// compiled shaders rather than from its own headers.
+/// A constant buffer whose fields the bytecode named, as a collapsing row over its layout.
 fn members_ui(ui: &mut egui::Ui, resource: &ResourceRow) {
     let header = egui::CollapsingHeader::new(RichText::new(&resource.name).monospace())
         .id_salt(resource.id)

@@ -23,8 +23,7 @@ pub trait FileProvider {
     /// the header it travels in.
     async fn read_stream(&self, path: &str) -> anyhow::Result<(Option<String>, Vec<u8>)>;
 
-    /// Read a file the game records only as a hash. Unnamed files have no path, so this is the only
-    /// way to reach them.
+    /// Read a file the game records only as a hash.
     async fn read_stream_by_hash(
         &self,
         repository: u8,
