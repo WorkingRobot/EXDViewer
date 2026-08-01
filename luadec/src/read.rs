@@ -14,9 +14,10 @@ use crate::expr::{Binary, Closure, Expr, Stat, Target, Unary, is_name};
 /// malformed chunk, so a caller falls back to disassembling that one function.
 pub type Reading<T> = Result<T, &'static str>;
 
-/// Nesting the reading will follow. Recovery is recursive, and a stack overflow is not something a
-/// caller can catch, so the depth is counted instead.
-const MAX_DEPTH: usize = 96;
+/// Nesting the reading will follow. Recovery is recursive and a stack overflow is not something a
+/// caller can catch, so the depth is counted instead. An `elseif` chain nests once per arm, which is
+/// what needs the room; twice this still runs the corpus inside half a megabyte of stack.
+const MAX_DEPTH: usize = 200;
 
 /// How many values one [`Opcode::SetList`] word carries.
 const LIST_BLOCK: usize = 50;
@@ -49,8 +50,6 @@ struct Reader<'a> {
     pseudo: Vec<bool>,
     /// Where the value a word writes has to be a local, and up to which register.
     sticky: Vec<Option<usize>>,
-    /// Words whose value nothing ever reads.
-    dead: Vec<bool>,
     slots: Vec<Slot>,
     /// Name of the local each register holds, for registers below [`Self::active`].
     names: Vec<String>,
@@ -62,6 +61,8 @@ struct Reader<'a> {
     open: Option<usize>,
     /// The condition a `repeat` ended on, once its body has been walked.
     until: Option<Expr>,
+    /// Heads of the loops being read, so a body does not take its own jump back for another loop.
+    heads: Vec<usize>,
     out: Vec<Stat>,
     depth: usize,
     counts: Counts,
@@ -152,11 +153,9 @@ fn function(
     let parameters = usize::from(held.parameters());
     let marks = pseudo(held);
     let labels = labels(held, &marks);
-    let dead = dead(held, &marks, &labels);
     let mut reader = Reader {
         function: held,
-        sticky: sticky(held, &marks, &dead, &labels),
-        dead,
+        sticky: sticky(held, &marks, &labels),
         pseudo: marks,
         slots: vec![Slot::Empty; usize::from(held.max_stack()).max(parameters) + 3],
         names: (0..parameters).map(|at| format!("a{at}")).collect(),
@@ -165,6 +164,7 @@ fn function(
         declared: 0,
         open: None,
         until: None,
+        heads: Vec::new(),
         out: Vec::new(),
         depth,
         counts: Counts::default(),
@@ -335,56 +335,6 @@ fn labels(held: &Function, pseudo: &[bool]) -> Vec<bool> {
     labels
 }
 
-/// Which words put a value in a register that nothing goes on to read.
-///
-/// The compiler leaves one where an expression it built turned out not to be wanted. Read as a
-/// statement it would put a local nobody wrote in the way of the registers around it.
-fn dead(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<bool> {
-    let code = held.code();
-    let mut dead = vec![false; code.len()];
-    let mut written: Vec<Option<usize>> = vec![None; 256];
-    let mut reads = Vec::new();
-    for (pc, instruction) in code.iter().enumerate() {
-        if pseudo.get(pc).copied().unwrap_or(false) {
-            continue;
-        }
-        // Past a jump either way, a value could be read down a path this walk does not take.
-        if labels.get(pc).copied().unwrap_or(false) || branches(instruction.opcode()) {
-            written.iter_mut().for_each(|held| *held = None);
-        }
-        reads.clear();
-        let writes = touches(*instruction, &mut reads);
-        for register in reads.drain(..) {
-            if let Some(slot) = written.get_mut(register) {
-                *slot = None;
-            }
-        }
-        if let Some(top) = writes {
-            for register in usize::from(instruction.a())..=top.min(255) {
-                if let Some(Some(at)) = written.get(register).copied()
-                    && let Some(slot) = dead.get_mut(at)
-                {
-                    *slot = true;
-                }
-                if let Some(slot) = written.get_mut(register) {
-                    *slot = settable(instruction.opcode()).then_some(pc);
-                }
-            }
-        }
-        // A load that skips the word after it puts the two on paths only one of which runs, so
-        // neither overwrites the other.
-        if instruction.opcode() == Opcode::LoadBool && instruction.c() != 0 {
-            written.iter_mut().for_each(|held| *held = None);
-        }
-    }
-    dead
-}
-
-/// Where a value has to be a local rather than a temporary, keyed by the word that wrote it.
-///
-/// A temporary is read once, by the instruction the compiler emitted next to consume it. Anything
-/// read twice, or read on the far side of a jump, sat in the register while something else ran, and
-/// only a local does that.
 /// Whether the instruction finishes what it was part of, so the next word starts a statement.
 fn settles(held: Instruction) -> bool {
     matches!(
@@ -403,7 +353,12 @@ fn settles(held: Instruction) -> bool {
     ) || (held.opcode() == Opcode::Call && held.c() == 1)
 }
 
-fn sticky(held: &Function, pseudo: &[bool], dead: &[bool], labels: &[bool]) -> Vec<Option<usize>> {
+/// Where a value has to be a local rather than a temporary, keyed by the word that wrote it.
+///
+/// A temporary is read once, by the instruction the compiler emitted next to consume it. Anything
+/// read twice, or read on the far side of a jump, sat in the register while something else ran, and
+/// only a local does that.
+fn sticky(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<Option<usize>> {
     let code = held.code();
     let mut sticky = vec![None; code.len()];
     let mut written: Vec<Option<(usize, usize)>> = vec![None; 256];
@@ -430,7 +385,6 @@ fn sticky(held: &Function, pseudo: &[bool], dead: &[bool], labels: &[bool]) -> V
                 next.opcode() == Opcode::Self_
                     && Operand::from(next.c()) == Operand::Register(instruction.a())
             });
-        let skip = keying || dead.get(pc).copied().unwrap_or(false);
         reads.clear();
         let writes = touches(*instruction, &mut reads);
         for register in reads.drain(..) {
@@ -449,10 +403,9 @@ fn sticky(held: &Function, pseudo: &[bool], dead: &[bool], labels: &[bool]) -> V
         }
         // At the start of a statement the next free register is where the locals stop, so a word
         // that writes above where they were thought to stop says there are more of them, and the
-        // values in between were locals all along. A store nothing reads says nothing, because the
-        // compiler put it there rather than the source.
+        // values in between were locals all along.
         if start
-            && !skip
+            && !keying
             && let Some(top) = writes
         {
             let first = usize::from(instruction.a());
@@ -546,15 +499,6 @@ fn sticky(held: &Function, pseudo: &[bool], dead: &[bool], labels: &[bool]) -> V
     }
 
     sticky
-}
-
-/// Whether the instruction only puts a value in a register, reading none and reaching nothing. A
-/// store like that can be dropped where nothing reads it.
-fn settable(opcode: Opcode) -> bool {
-    matches!(
-        opcode,
-        Opcode::LoadK | Opcode::LoadBool | Opcode::LoadNil | Opcode::GetGlobal | Opcode::NewTable
-    )
 }
 
 fn conditional(opcode: Opcode) -> bool {
@@ -861,6 +805,9 @@ impl<'a> Reader<'a> {
 
     /// The word a loop starting at `pc` jumps back from, where one does.
     fn loops(&self, pc: usize, hi: usize) -> Reading<Option<usize>> {
+        if self.heads.contains(&pc) {
+            return Ok(None);
+        }
         let mut found = None;
         let mut at = pc;
         while at < hi {
@@ -878,7 +825,19 @@ impl<'a> Reader<'a> {
     fn loop_statement(&mut self, pc: usize, end: usize, hi: usize) -> Reading<usize> {
         self.flush()?;
         let escape = Some(end + 1);
+        self.heads.push(pc);
+        let held = self.loop_body(pc, end, hi, escape);
+        self.heads.pop();
+        held
+    }
 
+    fn loop_body(
+        &mut self,
+        pc: usize,
+        end: usize,
+        hi: usize,
+        escape: Option<usize>,
+    ) -> Reading<usize> {
         // A conditional at the head whose failure lands past the jump back is a `while`; a
         // conditional just before the jump back is a `repeat`; anything else loops forever.
         let tests = self.tests(pc, hi);
@@ -1003,6 +962,9 @@ impl<'a> Reader<'a> {
                 target: self.threaded(target, hi),
                 after: jump + 1,
             });
+            if tests.len() >= MAX_DEPTH {
+                return tests;
+            }
             at = jump + 1;
         }
     }
@@ -1307,9 +1269,6 @@ impl<'a> Reader<'a> {
 
     /// Read one instruction, and answer with where the reading goes next.
     fn step(&mut self, pc: usize) -> Reading<usize> {
-        if self.dead.get(pc).copied().unwrap_or(false) {
-            return Ok(self.after(pc));
-        }
         let next = self.walk(pc)?;
         // What the word left behind is a local rather than a temporary wherever the pass that
         // measured the registers said so.
