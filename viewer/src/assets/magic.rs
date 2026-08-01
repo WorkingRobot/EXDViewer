@@ -1,8 +1,9 @@
 //! What a file is, read from its bytes rather than from its name.
 //!
-//! Most of what the game ships leads with a magic. The two formats here that do not are `.tex`,
-//! recognized by the shape of its fixed header, and `.mtrl`, which is small enough to read outright
-//! and names a shader package that gives it away. Anything left over that decodes cleanly is text.
+//! Most of what the game ships leads with a magic. The three formats here that do not are `.tex`
+//! and `.tera`, recognized by the shape of their fixed headers, and `.mtrl`, which is small enough
+//! to read outright and names a shader package that gives it away. Anything left over that decodes
+//! cleanly is text.
 
 use std::io::Cursor;
 
@@ -16,6 +17,12 @@ const SAMPLE: usize = 1024;
 
 /// A `.tex` header, which the first surface follows immediately.
 const TEX_HEADER: u32 = 80;
+
+/// A `.tera` header, which the plate list follows immediately.
+const TERA_HEADER: usize = 52;
+
+/// The only `.tera` version the game ships. Earlier ones lay the header out differently.
+const TERA_VERSION: u32 = 0x0100_0003;
 
 /// A format as its bytes identify it.
 #[derive(Clone, Copy)]
@@ -50,14 +57,26 @@ const MAGIC: &[(&[u8], Format)] = &[
     (b"gftd0100", Format::Shown(Viewer::Icons)),
     (b"ShPk", Format::Shown(Viewer::Shpk)),
     (b"ShCd", Format::Shown(Viewer::Shcd)),
+    (b"die\0", Format::Shown(Viewer::Eid)),
+    (b"plks", Format::Shown(Viewer::Skp)),
     (b"blks", Format::Named("Skeleton")),
     (b"SEDBSSCF", Format::Named("Sound")),
     (b"EXHF", Format::Named("Sheet header")),
     (b"EXDF", Format::Named("Sheet page")),
+    (b"EXLT", Format::Named("Sheet list")),
+    (b"LGB1", Format::Named("Layer group")),
+    (b"SGB1", Format::Named("Shared group")),
+    (b"LVB1", Format::Named("Level")),
+    (b" dgg", Format::Named("Grass grid")),
+    (b"dzg\0", Format::Named("Grass zone")),
+    (b"pap ", Format::Named("Animation")),
+    (b"TMLB", Format::Named("Timeline")),
+    (b"CUTB", Format::Named("Cutscene")),
+    (b"XFVA", Format::Named("Visual effect")),
 ];
 
 /// What the bytes say the file is, or `None` where they say nothing. Ordered strongest test first:
-/// a magic settles it outright, and the two guesses below only ever see what no magic claimed.
+/// a magic settles it outright, and the three guesses below only ever see what no magic claimed.
 pub fn sniff(bytes: &[u8]) -> Option<Format> {
     if let Some((_, format)) = MAGIC.iter().find(|(magic, _)| bytes.starts_with(magic)) {
         return Some(*format);
@@ -67,6 +86,9 @@ pub fn sniff(bytes: &[u8]) -> Option<Format> {
     }
     if is_texture(bytes) {
         return Some(Format::Shown(Viewer::Texture));
+    }
+    if is_terrain(bytes) {
+        return Some(Format::Shown(Viewer::Tera));
     }
     is_text(bytes).then_some(Format::Shown(Viewer::Text))
 }
@@ -94,6 +116,18 @@ fn is_texture(bytes: &[u8]) -> bool {
         && short(10) > 0
         && (1..=13).contains(&(header[14] & 127))
         && word(28) == TEX_HEADER
+}
+
+/// Terrain leads with a version where the formats above lead with a magic, so it is taken on the
+/// shape of its header instead: that one version, a texture slot mask with only three bits defined,
+/// and 28 bytes of padding that is zero in every file the game ships.
+fn is_terrain(bytes: &[u8]) -> bool {
+    let Some(header) = bytes.get(..TERA_HEADER) else {
+        return false;
+    };
+    let word = |at: usize| u32::from_le_bytes(header[at..at + 4].try_into().unwrap());
+
+    word(0) == TERA_VERSION && word(20) <= 0b111 && header[24..].iter().all(|byte| *byte == 0)
 }
 
 /// The text the game ships is ASCII, so a control byte that is not whitespace rules it out. Only the
@@ -133,6 +167,23 @@ mod tests {
         assert_eq!(label(b"\x89PNG\r\n\x1a\n\0\0\0\0"), Some("Image"));
         assert_eq!(label(b"SEDBSSCF\0\0\0\0"), Some("Sound"));
         assert_eq!(label(b"blks\0\0\0\0"), Some("Skeleton"));
+        assert_eq!(label(b"die\0" as &[u8]), Some("Bind points"));
+        assert_eq!(label(b"plks0031"), Some("Skeleton parameters"));
+        assert_eq!(label(b"LGB1\0\0\0\0"), Some("Layer group"));
+        assert_eq!(label(b"SGB1\0\0\0\0"), Some("Shared group"));
+        assert_eq!(label(b"LVB1\0\0\0\0"), Some("Level"));
+        assert_eq!(label(b" dgg\0\0\0\0"), Some("Grass grid"));
+        assert_eq!(label(b"dzg\0\0\0\0\0"), Some("Grass zone"));
+        assert_eq!(label(b"pap \0\0\0\0"), Some("Animation"));
+        assert_eq!(label(b"TMLB\0\0\0\0"), Some("Timeline"));
+        assert_eq!(label(b"CUTB\0\0\0\0"), Some("Cutscene"));
+        assert_eq!(label(b"XFVA\0\0\0\0"), Some("Visual effect"));
+    }
+
+    /// A sheet list is the one magic that also passes as text, so the magic has to win.
+    #[test]
+    fn names_a_sheet_list_rather_than_calling_it_text() {
+        assert_eq!(label(b"EXLT,2\r\nAchievement,0\r\n"), Some("Sheet list"));
     }
 
     #[test]
@@ -163,6 +214,27 @@ mod tests {
                 "byte {at} went unchecked"
             );
         }
+    }
+
+    /// The other guess with no magic behind it. Terrain is all zeroes but for three words, so the
+    /// checks that reject a file matter more here than the ones that accept it.
+    #[test]
+    fn reads_a_terrain_header() {
+        let mut header = vec![0u8; TERA_HEADER];
+        header[..4].copy_from_slice(&TERA_VERSION.to_le_bytes());
+        header[20] = 0b111;
+        assert_eq!(label(&header), Some("Terrain"));
+
+        for (at, byte) in [(0, 0x04), (20, 0x08), (24, 0x01), (51, 0x01)] {
+            let mut broken = header.clone();
+            broken[at] = byte;
+            assert!(
+                label(&broken) != Some("Terrain"),
+                "byte {at} went unchecked"
+            );
+        }
+        // A header cut short is not a terrain file, however well the part that survived reads.
+        assert!(label(&header[..TERA_HEADER - 1]) != Some("Terrain"));
     }
 
     #[test]
