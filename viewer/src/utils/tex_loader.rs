@@ -75,7 +75,7 @@ pub fn decode_mip(texture: &tex::Texture, level: u8, path: &str) -> Result<Dynam
     // Volume slices, cube faces and array elements are all stored one after another, so they decode
     // as a single tall image and the caller picks which band to show.
     let (width, slice_height) = texture.mip_size(level);
-    let height = slice_height.saturating_mul(texture.layers());
+    let height = slice_height.saturating_mul(texture.layers(level));
     let plain = || {
         texture
             .mip_data(level)
@@ -289,7 +289,7 @@ fn read_texture_bc(
     let data = texture
         .mip_data(level)
         .with_context(|| format!("texture has no mipmap level {level}"))?;
-    let layers = usize::from(texture.layers());
+    let layers = usize::from(texture.layers(level));
     let stride = data.len() / layers;
     // A slice is at least one block, so this only trips on a truncated file, where chunking by zero
     // would panic rather than fail.
@@ -312,7 +312,7 @@ fn read_texture_bc(
         pixels.extend_from_slice(&decoded.data);
     }
 
-    let height = u32::from(height) * u32::from(texture.layers());
+    let height = u32::from(height) * u32::from(texture.layers(level));
     let buffer = ImageBuffer::from_raw(width.into(), height, pixels)
         .context("failed to build image buffer")?;
     Ok(DynamicImage::ImageRgba8(buffer))
