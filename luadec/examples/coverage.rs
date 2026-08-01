@@ -59,9 +59,20 @@ fn main() {
             _ => partial += 1,
         }
         if reasons {
+            // What a reason costs is the block of instructions it leaves commented, so the lines
+            // are counted rather than the functions.
+            let mut open: Option<String> = None;
             for line in &held.lines {
-                if let Some(reason) = line.split("-- -- not read as source: ").nth(1) {
-                    *why.entry(reason.to_owned()).or_default() += 1;
+                match line.split("-- -- not read as source: ").nth(1) {
+                    Some(reason) => open = Some(reason.to_owned()),
+                    None => {
+                        if !line.trim_start().starts_with("--") {
+                            open = None;
+                        }
+                    }
+                }
+                if let Some(reason) = &open {
+                    *why.entry(reason.clone()).or_default() += 1;
                 }
             }
         }
@@ -76,7 +87,7 @@ fn main() {
     if reasons {
         let mut ordered: Vec<_> = why.into_iter().collect();
         ordered.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-        println!("\nwhy a function stayed disassembly:");
+        println!("\ncommented lines each reason leaves:");
         for (reason, count) in ordered {
             println!("  {count:>7}  {reason}");
         }

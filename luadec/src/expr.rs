@@ -371,8 +371,26 @@ pub enum Stat {
 
 /// Print a block, one entry per line, indented from `indent` tabs.
 pub fn write_block(lines: &mut Vec<String>, block: &[Stat], indent: usize) {
-    for stat in block {
-        write_stat(lines, stat, indent);
+    for (at, stat) in block.iter().enumerate() {
+        // Lua wants `break` and `return` to end the block they are in. One the reading found in the
+        // middle of a block, which the compiler is free to leave there, takes a block of its own.
+        let last = at + 1 == block.len();
+        match stat {
+            Stat::Break if !last => lines.push(format!("{}do break end", "\t".repeat(indent))),
+            Stat::Return(values) if !last && values.is_empty() => {
+                lines.push(format!("{}do return end", "\t".repeat(indent)));
+            }
+            Stat::Return(_) if !last => {
+                let mut held = Vec::new();
+                write_stat(&mut held, stat, 0);
+                lines.push(format!(
+                    "{}do {} end",
+                    "\t".repeat(indent),
+                    held.join(" ").trim()
+                ));
+            }
+            _ => write_stat(lines, stat, indent),
+        }
     }
 }
 

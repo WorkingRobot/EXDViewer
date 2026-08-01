@@ -49,6 +49,8 @@ struct Reader<'a> {
     pseudo: Vec<bool>,
     /// Where the value a word writes has to be a local, and up to which register.
     sticky: Vec<Option<usize>>,
+    /// Words whose value nothing ever reads.
+    dead: Vec<bool>,
     slots: Vec<Slot>,
     /// Name of the local each register holds, for registers below [`Self::active`].
     names: Vec<String>,
@@ -90,29 +92,49 @@ pub fn closure(
             read
         }
         Err(reason) => {
-            counts.raw += protos(held);
-            disassembled(held, reason)
+            counts.raw += 1;
+            disassembled(held, reason, depth, counts)
         }
     }
 }
 
-fn protos(held: &Function) -> usize {
-    1 + held.functions().iter().map(protos).sum::<usize>()
-}
-
 /// A function as its instructions, commented out so the source around it still reads as Lua.
-fn disassembled(held: &Function, reason: &'static str) -> Closure {
+fn disassembled(
+    held: &Function,
+    reason: &'static str,
+    depth: usize,
+    counts: &mut Counts,
+) -> Closure {
     let mut lines = vec![format!("-- not read as source: {reason}")];
     crate::asm::listing(held, 0, &mut lines);
+    let mut body: Vec<Stat> = lines
+        .into_iter()
+        .map(|line| Stat::Raw(format!("-- {line}")))
+        .collect();
+
+    // What the function held still reads on its own, so it is put back rather than lost inside the
+    // comment. A name rather than a local keeps it clear of the limit on how many a function may
+    // declare, however many the one that failed was holding.
+    for (at, inner) in held.functions().iter().enumerate() {
+        let upvalues = (0..usize::from(inner.upvalues()))
+            .map(|at| format!("u{at}"))
+            .collect();
+        if at == 0 {
+            body.push(Stat::Raw("-- the functions it held:".to_owned()));
+        }
+        let read = closure(inner, upvalues, depth + 1, counts);
+        body.push(Stat::Assign(
+            vec![Target::Name(format!("f{at}"))],
+            vec![Expr::Function(Box::new(read))],
+        ));
+    }
+
     Closure {
         parameters: (0..usize::from(held.parameters()))
             .map(|at| format!("a{at}"))
             .collect(),
         vararg: held.is_vararg(),
-        body: lines
-            .into_iter()
-            .map(|line| Stat::Raw(format!("-- {line}")))
-            .collect(),
+        body,
     }
 }
 
@@ -129,9 +151,12 @@ fn function(
 
     let parameters = usize::from(held.parameters());
     let marks = pseudo(held);
+    let labels = labels(held, &marks);
+    let dead = dead(held, &marks, &labels);
     let mut reader = Reader {
         function: held,
-        sticky: sticky(held, &marks),
+        sticky: sticky(held, &marks, &dead, &labels),
+        dead,
         pseudo: marks,
         slots: vec![Slot::Empty; usize::from(held.max_stack()).max(parameters) + 3],
         names: (0..parameters).map(|at| format!("a{at}")).collect(),
@@ -277,14 +302,10 @@ fn touches(held: Instruction, reads: &mut Vec<usize>) -> Option<usize> {
             reads.extend(a..a + b.saturating_sub(1));
             None
         }
-        Opcode::ForLoop | Opcode::ForPrep => {
-            reads.extend(a..a + 3);
-            Some(a + 3)
-        }
-        Opcode::TForLoop => {
-            reads.extend(a..a + 3);
-            Some(a + 2 + c.max(1))
-        }
+        // A loop's three workings are the VM's, not the source's; counting them as reads would make
+        // locals of registers the loop itself is holding.
+        Opcode::ForLoop | Opcode::ForPrep => Some(a + 3),
+        Opcode::TForLoop => Some(a + 2 + c.max(1)),
         Opcode::SetList => {
             reads.extend(a + 1..=a + b.max(1));
             None
@@ -292,6 +313,71 @@ fn touches(held: Instruction, reads: &mut Vec<usize>) -> Option<usize> {
         Opcode::Vararg => Some(a + c.saturating_sub(1).max(0)),
         Opcode::Jmp | Opcode::Close | Opcode::Unknown(_) => None,
     }
+}
+
+/// Where a jump lands, which is where a walk of the words stops knowing what the registers hold.
+fn labels(held: &Function, pseudo: &[bool]) -> Vec<bool> {
+    let code = held.code();
+    let mut labels = vec![false; code.len() + 1];
+    for (pc, instruction) in code.iter().enumerate() {
+        if !pseudo.get(pc).copied().unwrap_or(false)
+            && matches!(
+                instruction.opcode(),
+                Opcode::Jmp | Opcode::ForLoop | Opcode::ForPrep
+            )
+            && let Ok(target) = usize::try_from(pc as i64 + 1 + i64::from(instruction.sbx()))
+            && let Some(label) = labels.get_mut(target)
+        {
+            *label = true;
+        }
+    }
+
+    labels
+}
+
+/// Which words put a value in a register that nothing goes on to read.
+///
+/// The compiler leaves one where an expression it built turned out not to be wanted. Read as a
+/// statement it would put a local nobody wrote in the way of the registers around it.
+fn dead(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<bool> {
+    let code = held.code();
+    let mut dead = vec![false; code.len()];
+    let mut written: Vec<Option<usize>> = vec![None; 256];
+    let mut reads = Vec::new();
+    for (pc, instruction) in code.iter().enumerate() {
+        if pseudo.get(pc).copied().unwrap_or(false) {
+            continue;
+        }
+        // Past a jump either way, a value could be read down a path this walk does not take.
+        if labels.get(pc).copied().unwrap_or(false) || branches(instruction.opcode()) {
+            written.iter_mut().for_each(|held| *held = None);
+        }
+        reads.clear();
+        let writes = touches(*instruction, &mut reads);
+        for register in reads.drain(..) {
+            if let Some(slot) = written.get_mut(register) {
+                *slot = None;
+            }
+        }
+        if let Some(top) = writes {
+            for register in usize::from(instruction.a())..=top.min(255) {
+                if let Some(Some(at)) = written.get(register).copied()
+                    && let Some(slot) = dead.get_mut(at)
+                {
+                    *slot = true;
+                }
+                if let Some(slot) = written.get_mut(register) {
+                    *slot = settable(instruction.opcode()).then_some(pc);
+                }
+            }
+        }
+        // A load that skips the word after it puts the two on paths only one of which runs, so
+        // neither overwrites the other.
+        if instruction.opcode() == Opcode::LoadBool && instruction.c() != 0 {
+            written.iter_mut().for_each(|held| *held = None);
+        }
+    }
+    dead
 }
 
 /// Where a value has to be a local rather than a temporary, keyed by the word that wrote it.
@@ -317,24 +403,10 @@ fn settles(held: Instruction) -> bool {
     ) || (held.opcode() == Opcode::Call && held.c() == 1)
 }
 
-fn sticky(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
+fn sticky(held: &Function, pseudo: &[bool], dead: &[bool], labels: &[bool]) -> Vec<Option<usize>> {
     let code = held.code();
     let mut sticky = vec![None; code.len()];
     let mut written: Vec<Option<(usize, usize)>> = vec![None; 256];
-    let mut labels = vec![false; code.len() + 1];
-    for (pc, instruction) in code.iter().enumerate() {
-        if !pseudo.get(pc).copied().unwrap_or(false)
-            && matches!(
-                instruction.opcode(),
-                Opcode::Jmp | Opcode::ForLoop | Opcode::ForPrep
-            )
-            && let Ok(target) = usize::try_from(pc as i64 + 1 + i64::from(instruction.sbx()))
-            && let Some(label) = labels.get_mut(target)
-        {
-            *label = true;
-        }
-    }
-
     let mut era = 0usize;
     let mut active = usize::from(held.parameters()) + usize::from(held.has_arg());
     let mut start = true;
@@ -347,6 +419,18 @@ fn sticky(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
         if labels.get(pc).copied().unwrap_or(false) {
             era += 1;
         }
+        // A method lookup reserves its two registers before it works out the key, so a key that
+        // needed a register of its own lands above where the locals stop rather than at it.
+        let keying = code
+            .iter()
+            .enumerate()
+            .skip(pc + 1)
+            .find(|(at, _)| !pseudo.get(*at).copied().unwrap_or(false))
+            .is_some_and(|(_, next)| {
+                next.opcode() == Opcode::Self_
+                    && Operand::from(next.c()) == Operand::Register(instruction.a())
+            });
+        let skip = keying || dead.get(pc).copied().unwrap_or(false);
         reads.clear();
         let writes = touches(*instruction, &mut reads);
         for register in reads.drain(..) {
@@ -365,8 +449,12 @@ fn sticky(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
         }
         // At the start of a statement the next free register is where the locals stop, so a word
         // that writes above where they were thought to stop says there are more of them, and the
-        // values in between were locals all along.
-        if start && let Some(top) = writes {
+        // values in between were locals all along. A store nothing reads says nothing, because the
+        // compiler put it there rather than the source.
+        if start
+            && !skip
+            && let Some(top) = writes
+        {
             let first = usize::from(instruction.a());
             if first > active {
                 for register in active..first {
@@ -381,12 +469,19 @@ fn sticky(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
             let _ = top;
         }
         start = settles(*instruction) || labels.get(pc + 1).copied().unwrap_or(false);
+        // A loop opens a scope over its three workings and the variables it counts, and closes it
+        // where it ends. A generic one opens at the jump into it, which is where its body begins.
         match instruction.opcode() {
-            // A numeric for opens a scope holding its three workings and the variable it counts.
             Opcode::ForPrep => active = usize::from(instruction.a()) + 4,
-            Opcode::ForLoop => active = usize::from(instruction.a()),
-            Opcode::TForLoop => {
-                active = usize::from(instruction.a()) + 3 + usize::from(instruction.c()).max(1);
+            Opcode::ForLoop | Opcode::TForLoop => active = usize::from(instruction.a()),
+            Opcode::Jmp => {
+                let target = usize::try_from(pc as i64 + 1 + i64::from(instruction.sbx()));
+                if let Ok(target) = target
+                    && let Some(held) = code.get(target)
+                    && held.opcode() == Opcode::TForLoop
+                {
+                    active = usize::from(held.a()) + 3 + usize::from(held.c()).max(1);
+                }
             }
             _ => (),
         }
@@ -405,7 +500,61 @@ fn sticky(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
             }
         }
     }
+    // A table is not built until the list that fills it, and a method is not looked up until the
+    // call that takes it, so a mark on the word that opens one moves to the word that closes it.
+    for pc in 0..code.len() {
+        if sticky.get(pc).copied().flatten().is_none() || pseudo.get(pc).copied().unwrap_or(false) {
+            continue;
+        }
+        let opening = code[pc];
+        let register = opening.a();
+        let closing = match opening.opcode() {
+            Opcode::NewTable => Opcode::SetList,
+            Opcode::Self_ => Opcode::Call,
+            _ => continue,
+        };
+        let mut found = None;
+        for (at, held) in code.iter().enumerate().skip(pc + 1) {
+            if pseudo.get(at).copied().unwrap_or(false) {
+                continue;
+            }
+            if held.opcode() == closing && held.a() == register {
+                found = Some(at);
+                // A long list takes several words to fill, so the last of them is the end of it.
+                if closing == Opcode::Call {
+                    break;
+                }
+                continue;
+            }
+            let mut reads = Vec::new();
+            let writes = touches(*held, &mut reads);
+            if writes.is_some_and(|top| usize::from(register) <= top)
+                && usize::from(held.a()) <= usize::from(register)
+            {
+                break;
+            }
+        }
+        if let Some(found) = found
+            && let Some(mark) = sticky.get_mut(pc).map(std::mem::take)
+            && let Some(slot) = sticky.get_mut(found)
+        {
+            *slot = Some(match (*slot, mark) {
+                (Some(held), Some(mark)) => held.max(mark),
+                (held, mark) => held.or(mark).unwrap_or(usize::from(register)),
+            });
+        }
+    }
+
     sticky
+}
+
+/// Whether the instruction only puts a value in a register, reading none and reaching nothing. A
+/// store like that can be dropped where nothing reads it.
+fn settable(opcode: Opcode) -> bool {
+    matches!(
+        opcode,
+        Opcode::LoadK | Opcode::LoadBool | Opcode::LoadNil | Opcode::GetGlobal | Opcode::NewTable
+    )
 }
 
 fn conditional(opcode: Opcode) -> bool {
@@ -692,13 +841,13 @@ impl<'a> Reader<'a> {
                 {
                     return self.generic_for(pc, target);
                 }
-                if escape == Some(target) {
+                if self.escapes(target, escape) {
                     self.flush()?;
                     self.out.push(Stat::Break);
                     return Ok(pc + 1);
                 }
                 // A jump to where the block ends only falls out of it.
-                match target == hi {
+                match target == hi || self.threaded(target, hi) == hi {
                     true => Ok(pc + 1),
                     false => Err("a jump goes somewhere no statement explains"),
                 }
@@ -858,16 +1007,21 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// Where a jump past the end of a block would land if it went to the block's own end instead,
-    /// which is what the compiler threaded it through.
+    /// Where a jump would land if it went to the end of the block instead. The compiler collapses a
+    /// jump to a jump, so one landing where the block's own last jump goes is that jump.
     fn threaded(&self, target: usize, hi: usize) -> usize {
-        match target > hi
+        match target != hi
             && self.at(hi).map(Instruction::opcode) == Ok(Opcode::Jmp)
             && self.target(hi) == Ok(target)
         {
             true => hi,
             false => target,
         }
+    }
+
+    /// Whether a jump to `target` leaves the loop, which is what a `break` is.
+    fn escapes(&self, target: usize, escape: Option<usize>) -> bool {
+        escape.is_some_and(|at| target == at || self.threaded(target, at) == at)
     }
 
     /// The condition one conditional falls through on.
@@ -960,8 +1114,19 @@ impl<'a> Reader<'a> {
             return Ok(next);
         }
 
+        // A conditional leaving for where a `break` lands has one on the arm that fails it, and
+        // everything after it in the block is the arm that does not.
         if false_target > hi {
-            return Err("a conditional leaves the block it is in");
+            if !self.escapes(false_target, escape) {
+                return Err("a conditional leaves the block it is in");
+            }
+            let condition = self.condition(&tests, count, pc)?;
+            self.flush()?;
+            self.out.push(Stat::If(
+                vec![(condition.negate(), vec![Stat::Break])],
+                None,
+            ));
+            return Ok(body_at);
         }
         let condition = self.condition(&tests, count, pc)?;
         self.flush()?;
@@ -974,7 +1139,7 @@ impl<'a> Reader<'a> {
             && self.at(false_target - 1).map(Instruction::opcode) == Ok(Opcode::Jmp)
             && !self.pseudo.get(false_target - 1).copied().unwrap_or(false)
         {
-            let over = self.target(false_target - 1)?;
+            let over = self.threaded(self.target(false_target - 1)?, hi);
             if over > false_target && over <= hi && escape != Some(over) {
                 let body = self.block(body_at, false_target - 1, escape, None)?;
                 arms.push((condition.clone(), body));
@@ -1143,6 +1308,9 @@ impl<'a> Reader<'a> {
 
     /// Read one instruction, and answer with where the reading goes next.
     fn step(&mut self, pc: usize) -> Reading<usize> {
+        if self.dead.get(pc).copied().unwrap_or(false) {
+            return Ok(self.after(pc));
+        }
         let next = self.walk(pc)?;
         // What the word left behind is a local rather than a temporary wherever the pass that
         // measured the registers said so.
@@ -1237,9 +1405,13 @@ impl<'a> Reader<'a> {
             }
 
             Opcode::Self_ => {
-                let name = match Operand::from(c) {
-                    Operand::Constant(at) => self.text(usize::from(at))?,
-                    Operand::Register(_) => return Err("a method is named by a register"),
+                // A function holding more than 256 constants cannot name a method in the
+                // instruction, so the name arrives in a register instead.
+                let name = match self.operand(c)? {
+                    Expr::Str(held) if is_name(&held) => {
+                        String::from_utf8_lossy(&held).into_owned()
+                    }
+                    _ => return Err("a method is named by something source cannot spell"),
                 };
                 let object = self.take(usize::from(b))?;
                 if self
