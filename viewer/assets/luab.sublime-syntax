@@ -1,0 +1,27 @@
+%YAML 1.2
+---
+name: Lua bytecode
+file_extensions: [luab]
+scope: source.luab
+
+contexts:
+  main:
+    # What a constant holds, which the listing puts after the operands.
+    - match: ;.*
+      scope: comment.line.semicolon.luab
+
+    - match: ^\s*--.*
+      scope: comment.line.double-dash.luab
+
+    # The line the instruction sits on, which opens every row.
+    - match: ^\s*\d+(?=\s)
+      scope: constant.numeric.line.luab
+
+    - match: \b[A-Z][A-Z0-9]*\b
+      scope: keyword.control.luab
+
+    - match: \b[RKUF]\d+\b
+      scope: variable.other.luab
+
+    - match: '[-+]?\b\d+\b'
+      scope: constant.numeric.luab

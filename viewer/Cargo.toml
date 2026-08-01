@@ -51,6 +51,7 @@ hlsl = "0.1"
 shaders = { path = "../shaders" }
 shadermerge = { path = "../shadermerge" }
 glyphnames = { path = "../glyphnames" }
+luadec = { path = "../luadec" }
 pathlist = { path = "../pathlist", default-features = false }
 symphonia = { version = "0.6", default-features = false, features = [
     "ogg",

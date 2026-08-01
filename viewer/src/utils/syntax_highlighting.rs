@@ -83,9 +83,10 @@ impl CodeTheme {
     }
 }
 
-const BUNDLED: [&str; 2] = [
+const BUNDLED: [&str; 3] = [
     include_str!("../../assets/hlsl.sublime-syntax"),
     include_str!("../../assets/dxbc.sublime-syntax"),
+    include_str!("../../assets/luab.sublime-syntax"),
 ];
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(|| {

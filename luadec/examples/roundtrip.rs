@@ -113,7 +113,6 @@ impl Tally {
 fn check(luac: &str, work: &Path, held: &Function, main: bool, tally: &mut Tally) {
     let source = luadec::source(held).filter(|_| main || held.upvalues() == 0);
     if let Some(source) = source {
-        tally.offered += protos(held);
         let text = match main {
             true => source.lines.join("\n"),
             false => {
@@ -130,9 +129,10 @@ fn check(luac: &str, work: &Path, held: &Function, main: bool, tally: &mut Tally
                 )
             }
         };
+        tally.offered += 1;
         let built = compile(luac, work, &text);
         let Some(built) = built else {
-            tally.rejected += protos(held);
+            tally.rejected += 1;
             return;
         };
         // A function was wrapped in a chunk that returns it, so it is the one that chunk holds.
@@ -140,11 +140,14 @@ fn check(luac: &str, work: &Path, held: &Function, main: bool, tally: &mut Tally
             true => Some(built.main()),
             false => built.main().functions().first(),
         };
-        match read.is_some_and(|read| same(read, held)) {
-            true => tally.matched += protos(held),
-            false => tally.differed += protos(held),
+        if read.is_some_and(|read| same(read, held)) {
+            tally.matched += protos(held);
+            tally.offered += protos(held) - 1;
+            return;
         }
-        return;
+        // Where a function came back as something else, what is inside it is tried on its own, so
+        // one disagreement is charged to the function it is in rather than to everything under it.
+        tally.differed += 1;
     }
     for nested in held.functions() {
         check(luac, work, nested, false, tally);

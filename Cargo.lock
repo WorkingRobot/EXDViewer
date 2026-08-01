@@ -7243,6 +7243,7 @@ dependencies = [
  "jsonschema",
  "log",
  "lru",
+ "luadec",
  "matchit",
  "nucleo-matcher",
  "num-traits",

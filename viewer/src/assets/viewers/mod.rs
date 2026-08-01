@@ -15,6 +15,7 @@ pub mod est;
 pub mod font;
 pub mod icons;
 pub mod imc;
+pub mod luab;
 pub mod material;
 pub mod png;
 mod shader;
@@ -243,6 +244,8 @@ pub enum Preview {
     Font(Box<font::Rendered>),
     /// The parsed icon sheet.
     Icons(Box<icons::Rendered>),
+    /// A read Lua chunk.
+    Luab(Box<luab::Rendered>),
     /// A parsed shader package.
     Shpk(Box<shpk::Rendered>),
     /// A parsed shader.
@@ -284,6 +287,7 @@ impl Preview {
             Viewer::Uld => uld::decode(path, bytes),
             Viewer::Font => font::decode(path, bytes),
             Viewer::Icons => icons::decode(path, bytes),
+            Viewer::Luab => luab::decode(path, bytes),
             Viewer::Shpk => shpk::decode(path, bytes),
             Viewer::Shcd => shcd::decode(path, bytes),
             Viewer::Imc => imc::decode(path, bytes),
@@ -320,6 +324,7 @@ impl Preview {
             }
             Self::Font(font) => font::ui(ui, font, deps, backend),
             Self::Icons(icons) => icons::ui(ui, icons, deps, backend),
+            Self::Luab(chunk) => luab::ui(ui, chunk),
             Self::Shpk(package) => shpk::ui(ui, package, bytes),
             Self::Shcd(code) => shcd::ui(ui, code, bytes),
             Self::Imc(change) => imc::ui(ui, change),
@@ -393,6 +398,7 @@ impl Preview {
             Self::Uld(layout) => layout.has_details(),
             Self::Font(_)
             | Self::Icons(_)
+            | Self::Luab(_)
             | Self::Shpk(_)
             | Self::Shcd(_)
             | Self::Imc(_)
@@ -430,6 +436,10 @@ impl Preview {
         }
         if let Self::Icons(icons) = self {
             icons.details_ui(ui, follow);
+            return None;
+        }
+        if let Self::Luab(chunk) = self {
+            chunk.details_ui(ui);
             return None;
         }
         if let Self::Shpk(package) = self {
@@ -560,6 +570,7 @@ pub enum Viewer {
     Uld,
     Font,
     Icons,
+    Luab,
     Shpk,
     Shcd,
     Imc,
@@ -576,13 +587,14 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 16] = [
+    pub const RENDERED: [Self; 17] = [
         Self::Texture,
         Self::Image,
         Self::Material,
         Self::Uld,
         Self::Font,
         Self::Icons,
+        Self::Luab,
         Self::Shpk,
         Self::Shcd,
         Self::Imc,
@@ -603,6 +615,7 @@ impl Viewer {
             Self::Uld => "Layout",
             Self::Font => "Font",
             Self::Icons => "Icons",
+            Self::Luab => "Lua",
             Self::Shpk => "Shader package",
             Self::Shcd => "Shader code",
             Self::Imc => "Image change",

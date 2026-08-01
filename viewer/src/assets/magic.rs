@@ -55,6 +55,7 @@ const MAGIC: &[(&[u8], Format)] = &[
     (b"uldh", Format::Shown(Viewer::Uld)),
     (b"fcsv", Format::Shown(Viewer::Font)),
     (b"gftd0100", Format::Shown(Viewer::Icons)),
+    (b"\x1bLua", Format::Shown(Viewer::Luab)),
     (b"ShPk", Format::Shown(Viewer::Shpk)),
     (b"ShCd", Format::Shown(Viewer::Shcd)),
     (b"die\0", Format::Shown(Viewer::Eid)),
@@ -161,6 +162,7 @@ mod tests {
         assert_eq!(label(b"fcsv0100\0\0\0\0"), Some("Font"));
         assert_eq!(label(b"gftd0100\0\0\0\0"), Some("Icons"));
         assert_eq!(label(b"ShPk\0\0\0\0"), Some("Shader package"));
+        assert_eq!(label(b"\x1bLua\x51\0\x01\x04"), Some("Lua"));
         assert_eq!(label(b"ShCd\0\0\0\0"), Some("Shader code"));
         assert_eq!(label(b"\x89PNG\r\n\x1a\n\0\0\0\0"), Some("Image"));
         assert_eq!(label(b"SEDBSSCF\0\0\0\0"), Some("Sound"));
