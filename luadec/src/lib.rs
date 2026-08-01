@@ -20,6 +20,8 @@ pub use expr::{Closure, Expr, Stat};
 pub struct Decompiled {
     /// The source, one entry per line, with no trailing newlines.
     pub lines: Vec<String>,
+    /// Statements the chunk holds. A chunk compiled from an empty file has none.
+    pub statements: usize,
     /// Functions recovered as source.
     pub functions: usize,
     /// Functions left as disassembly because the reading did not resolve them.
@@ -30,6 +32,7 @@ pub struct Decompiled {
 pub fn decompile(chunk: &Chunk) -> Decompiled {
     let mut counts = read::Counts::default();
     let mut lines = Vec::new();
+    let mut statements = 0;
 
     match units(chunk) {
         Some(units) => {
@@ -41,17 +44,20 @@ pub fn decompile(chunk: &Chunk) -> Decompiled {
                     lines.push(format!("-- unit {} of {}", at + 1, units.len()));
                 }
                 let held = read::closure(unit, Vec::new(), 0, &mut counts);
+                statements += held.body.len();
                 expr::write_block(&mut lines, &held.body, 0);
             }
         }
         None => {
             let held = read::closure(chunk.main(), Vec::new(), 0, &mut counts);
+            statements += held.body.len();
             expr::write_block(&mut lines, &held.body, 0);
         }
     }
 
     Decompiled {
         lines,
+        statements,
         functions: counts.read,
         disassembled: counts.raw,
     }

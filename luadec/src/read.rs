@@ -1114,19 +1114,18 @@ impl<'a> Reader<'a> {
             return Ok(next);
         }
 
-        // A conditional leaving for where a `break` lands has one on the arm that fails it, and
-        // everything after it in the block is the arm that does not.
+        // A conditional leaving for where a `break` lands has one on the arm that fails it, and the
+        // rest of the block is the arm that does not.
         if false_target > hi {
             if !self.escapes(false_target, escape) {
                 return Err("a conditional leaves the block it is in");
             }
             let condition = self.condition(&tests, count, pc)?;
             self.flush()?;
-            self.out.push(Stat::If(
-                vec![(condition.negate(), vec![Stat::Break])],
-                None,
-            ));
-            return Ok(body_at);
+            let body = self.block(body_at, hi, escape, None)?;
+            self.out
+                .push(Stat::If(vec![(condition, body)], Some(vec![Stat::Break])));
+            return Ok(hi);
         }
         let condition = self.condition(&tests, count, pc)?;
         self.flush()?;

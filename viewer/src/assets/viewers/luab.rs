@@ -12,8 +12,10 @@ pub struct Rendered {
     identity: Vec<(&'static str, String)>,
     source: Vec<String>,
     assembly: Vec<String>,
-    /// How much of the chunk came back as source rather than instructions.
-    read: (usize, usize),
+    /// Statements the reading recovered, which a chunk compiled from an empty file has none of.
+    statements: usize,
+    /// Functions left as commented instructions, each under a line saying why.
+    commented: usize,
     /// Which reading is on show, kept per file the way the shader viewers keep theirs.
     state: egui::Id,
 }
@@ -47,13 +49,11 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
             ),
         ),
         ("Units", units.to_string()),
-        ("Functions", chunk.function_count().to_string()),
         (
-            "Read as source",
+            "Functions",
             format!(
-                "{} of {}",
-                read.functions,
-                read.functions + read.disassembled
+                "{} read as source, {} left as bytecode",
+                read.functions, read.disassembled
             ),
         ),
         (
@@ -73,7 +73,8 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
         identity,
         source: read.lines,
         assembly: luadec::disassemble(&chunk),
-        read: (read.functions, read.functions + read.disassembled),
+        statements: read.statements,
+        commented: read.disassembled,
         state: egui::Id::new(("luab code", path)),
     })))
 }
@@ -89,19 +90,20 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut source, true, "Lua");
         ui.selectable_value(&mut source, false, "Bytecode");
-        ui.label(RichText::new(format!("{} lines", lines.len())).weak().small());
+        ui.label(
+            RichText::new(format!("{} lines", lines.len()))
+                .weak()
+                .small(),
+        );
         if ui.small_button("Copy").clicked() {
             ui.ctx().copy_text(lines.join("\n"));
         }
         if source {
-            let (read, held) = file.read;
             ui.label(
-                RichText::new(match read == held {
-                    true => "compiles, but not guaranteed to be perfect".to_owned(),
-                    false => format!(
-                        "{} of {held} functions read as source; the rest are commented instructions",
-                        read
-                    ),
+                RichText::new(match file.commented {
+                    0 => "compiles, but not guaranteed to be perfect".to_owned(),
+                    1 => "1 function is commented bytecode below".to_owned(),
+                    held => format!("{held} functions are commented bytecode below"),
                 })
                 .weak()
                 .small(),
@@ -109,6 +111,15 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
         }
     });
     ui.data_mut(|data| data.insert_temp(slot, source));
+
+    // A chunk compiled from a file holding only comments has nothing to show, which is worth saying
+    // rather than leaving the page blank.
+    if source && file.statements == 0 {
+        ui.centered_and_justified(|ui| {
+            ui.label(RichText::new("This chunk holds no statements.").weak());
+        });
+        return;
+    }
 
     listing(
         ui,
