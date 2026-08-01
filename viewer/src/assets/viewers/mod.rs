@@ -606,10 +606,10 @@ impl Viewer {
             Self::Shpk => "Shader package",
             Self::Shcd => "Shader code",
             Self::Imc => "Image change",
-            Self::Stm => "Staining templates",
+            Self::Stm => "Staining template",
             Self::Atch => "Attach points",
             Self::Eid => "Bind points",
-            Self::Est => "Skeleton templates",
+            Self::Est => "Skeleton template",
             Self::Skp => "Skeleton parameters",
             Self::Tera => "Terrain",
             Self::Text => "Text",
@@ -617,27 +617,30 @@ impl Viewer {
         }
     }
 
+    /// The extensions this viewer reads.
+    pub fn extensions(self) -> impl Iterator<Item = &'static str> {
+        super::EXTENSIONS
+            .iter()
+            .filter(move |(_, _, viewer)| *viewer == self)
+            .map(|(extension, ..)| *extension)
+    }
+
+    /// The label with the extensions it reads, for the dropdown.
+    pub fn described(self) -> String {
+        let extensions = self.extensions().collect::<Vec<_>>();
+        match extensions.is_empty() {
+            true => self.label().to_owned(),
+            false => format!("{} ({})", self.label(), extensions.join(", ")),
+        }
+    }
+
     /// What a path's name says it holds. An unnamed file has nothing here to go on.
     pub fn from_extension(path: &str) -> Self {
-        match path.rsplit('.').next().unwrap_or_default() {
-            "tex" | "atex" => Self::Texture,
-            "png" => Self::Image,
-            "mtrl" => Self::Material,
-            "uld" => Self::Uld,
-            "fdt" => Self::Font,
-            "gfd" => Self::Icons,
-            "shpk" => Self::Shpk,
-            "shcd" => Self::Shcd,
-            "imc" => Self::Imc,
-            "stm" => Self::Stm,
-            "atch" => Self::Atch,
-            "eid" => Self::Eid,
-            "est" => Self::Est,
-            "skp" => Self::Skp,
-            "tera" => Self::Tera,
-            "txt" | "csv" => Self::Text,
-            _ => Self::Raw,
-        }
+        let extension = path.rsplit('.').next().unwrap_or_default();
+        super::EXTENSIONS
+            .iter()
+            .find(|(name, ..)| *name == extension)
+            .map_or(Self::Raw, |(.., viewer)| *viewer)
     }
 }
 

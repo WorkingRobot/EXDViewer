@@ -1,5 +1,7 @@
 # Paths the game ships that ResLogger has not learned the names of yet.
 
+chara/base_material/stainingtemplate_gud.stm
+
 # https://github.com/0ceal0t/Dalamud-VFXEditor/blob/main/NOTES.md?plain=1
 chara/xls/charadb/equipmentdeformerparameter/c0101.eqdp
 

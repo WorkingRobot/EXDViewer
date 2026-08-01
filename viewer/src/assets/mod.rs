@@ -35,6 +35,8 @@ const SCAN_BATCH: usize = 600;
 const MAX_RESULTS: usize = 500;
 /// How long a typed path has to stand still before the install is asked whether it holds it.\
 const EXISTS_DELAY: Duration = Duration::from_millis(250);
+/// Width the extension menu is held to.
+const EXTENSION_MENU_WIDTH: f32 = 50.0;
 
 /// One entry in the flattened view of the tree that is currently on screen.
 enum Row {
@@ -633,6 +635,20 @@ fn parse_query(search: &str) -> Query {
     }
 }
 
+/// Put `ext:extension` in the query, replacing whatever extension filter it already carried. It
+/// leads so the rest of the query stays where the user left it.
+fn set_extension(search: &str, extension: &str) -> String {
+    let rest = search
+        .split_whitespace()
+        .filter(|term| !term.starts_with("ext:"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    match rest.is_empty() {
+        true => format!("ext:{extension}"),
+        false => format!("ext:{extension} {rest}"),
+    }
+}
+
 /// `haystack.contains(needle)` without folding a copy of either. Game paths are ASCII, and folding
 /// one per name would allocate more over a sweep than the matching itself costs.
 ///
@@ -800,7 +816,7 @@ impl Default for AssetBrowser {
             hex_page: 0,
             goto: None,
             search: String::new(),
-            grouped: false,
+            grouped: true,
             scan: None,
             matcher: FuzzyMatcher::new(),
             expanded: HashMap::new(),
@@ -999,8 +1015,30 @@ impl AssetBrowser {
                         self.search.clear();
                         restart = true;
                     }
-                    ui.toggle_value(&mut self.grouped, "📂")
+                    ui.toggle_value(&mut self.grouped, "🌳")
                         .on_hover_text("View as Tree");
+                    let picked = parse_query(&self.search).suffix;
+                    ui.menu_button("📄", |ui| {
+                        ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                            // Three-letter names leave a menu too narrow to aim at, and too narrow
+                            // for the scroll bar to sit clear of them.
+                            ui.set_min_width(EXTENSION_MENU_WIDTH);
+                            for (extension, what, _) in EXTENSIONS {
+                                let on = picked.trim_start_matches('.') == *extension;
+                                if ui
+                                    .selectable_label(on, *extension)
+                                    .on_hover_text(*what)
+                                    .clicked()
+                                {
+                                    self.search = set_extension(&self.search, extension);
+                                    restart = true;
+                                    ui.close();
+                                }
+                            }
+                        });
+                    })
+                    .response
+                    .on_hover_text("Filter by extension");
                     restart |= ui
                         .add_sized(
                             Vec2::new(ui.available_width(), 0.0),
@@ -1500,7 +1538,7 @@ impl AssetBrowser {
                                         self.goto = Some("/sheet".to_string());
                                     }
                                 }
-                                Kind::Other(_) => {}
+                                Kind::Other => {}
                             }
                         })
                         .response
@@ -1674,9 +1712,9 @@ impl AssetBrowser {
                     // The recommended one is already the entry at the top. It stays in the list,
                     // disabled, so every viewer keeps the same place.
                     if viewer == recommended {
-                        ui.add_enabled(false, Button::selectable(false, viewer.label()));
+                        ui.add_enabled(false, Button::selectable(false, viewer.described()));
                     } else {
-                        pick(ui, Some(viewer), viewer.label().to_owned());
+                        pick(ui, Some(viewer), viewer.described());
                     }
                 }
             });
@@ -1770,71 +1808,80 @@ impl AssetBrowser {
     }
 }
 
+/// Whether a file is reachable from the Sheets tab, which is the only thing its extension decides
+/// here. What it holds is [`EXTENSIONS`].
 enum Kind {
     Sheet,
     SheetList,
-    Other(&'static str),
+    Other,
 }
 
 impl Kind {
-    fn describe(&self) -> &'static str {
-        match self {
-            Kind::Sheet => "Excel sheet data.",
-            Kind::SheetList => "The list of every sheet in the game.",
-            Kind::Other(what) => what,
-        }
-    }
-
-    /// Covers every extension present in the path list, so nothing shows up as merely unknown.
     fn of(path: &str) -> Self {
         match path.rsplit('.').next().unwrap_or_default() {
             "exd" | "exh" => Kind::Sheet,
             "exl" => Kind::SheetList,
-            "tex" => Kind::Other("Texture."),
-            "atex" => Kind::Other("Texture, animated."),
-            "mdl" => Kind::Other("Model."),
-            "mtrl" => Kind::Other("Material."),
-            "shpk" => Kind::Other("Shader package."),
-            "shcd" => Kind::Other("Shader code."),
-            "scd" => Kind::Other("Sound container."),
-            "ggd" => Kind::Other("Collision mesh group."),
-            "pcb" => Kind::Other("Collision mesh."),
-            "nvm" => Kind::Other("Navigation mesh."),
-            "sklb" => Kind::Other("Skeleton."),
-            "skp" => Kind::Other("Skeleton parameters."),
-            "pap" => Kind::Other("Animation."),
-            "tmb" => Kind::Other("Animation timeline."),
-            "phyb" => Kind::Other("Physics bones."),
-            "eid" => Kind::Other("Bone bindings."),
-            "atch" => Kind::Other("Attachment points."),
-            "avfx" => Kind::Other("Visual effect."),
-            "uld" => Kind::Other("UI layout."),
-            "lgb" => Kind::Other("Layer group, a zone's placed objects."),
-            "sgb" => Kind::Other("Shared group, a reusable set of objects."),
-            "lvb" => Kind::Other("Level, the top of a zone's layer tree."),
-            "svb" | "uwb" | "envb" | "lcb" | "obsb" | "essb" => {
-                Kind::Other("Zone bounds or environment volume.")
-            }
-            "luab" => Kind::Other("Compiled Lua."),
-            "cutb" => Kind::Other("Cutscene."),
-            "imc" => Kind::Other("Item variants."),
-            "eqdp" | "eqp" | "gmp" | "est" | "evp" => Kind::Other("Equipment parameters."),
-            "pbd" => Kind::Other("Bone deformers."),
-            "amb" => Kind::Other("Ambient sound placement."),
-            "tera" => Kind::Other("Terrain."),
-            "hwc" => Kind::Other("Handwriting sample."),
-            "fdt" => Kind::Other("Bitmap font."),
-            "gfd" => Kind::Other("Gaiji, the in-text icon glyphs."),
-            "stm" => Kind::Other("Stain map."),
-            "cmp" => Kind::Other("Color map."),
-            "plt" => Kind::Other("Palette."),
-            "png" => Kind::Other("PNG image."),
-            "csv" | "txt" => Kind::Other("Plain text."),
-            "" => Kind::Other("No extension."),
-            _ => Kind::Other("Unrecognized file type."),
+            _ => Kind::Other,
         }
     }
 }
+
+/// Every extension the path list carries, with what it holds. Also the menu the search box offers,
+/// so the order is the order they are listed in.
+const EXTENSIONS: &[(&str, &str, Viewer)] = &[
+    ("exd", "Excel sheet data", Viewer::Raw),
+    ("exh", "Excel sheet header", Viewer::Raw),
+    ("exl", "Excel sheet list", Viewer::Raw),
+    ("tex", "Texture", Viewer::Texture),
+    ("atex", "Animated texture", Viewer::Texture),
+    ("png", "PNG image", Viewer::Image),
+    ("mdl", "Model", Viewer::Raw),
+    ("mtrl", "Material", Viewer::Material),
+    ("shpk", "Shader package", Viewer::Shpk),
+    ("shcd", "Shader code", Viewer::Shcd),
+    ("scd", "Sound container", Viewer::Raw),
+    ("ggd", "Grass grid data", Viewer::Raw),
+    ("pcb", "Player collision binary", Viewer::Raw),
+    ("sklb", "Skeleton", Viewer::Raw),
+    ("skp", "Skeleton parameters", Viewer::Skp),
+    ("pap", "Animation", Viewer::Raw),
+    ("tmb", "Animation timeline", Viewer::Raw),
+    ("phyb", "Physics bones", Viewer::Raw),
+    ("eid", "Bone bindings", Viewer::Eid),
+    ("atch", "Attachment points", Viewer::Atch),
+    ("avfx", "Animated VFX", Viewer::Raw),
+    ("uld", "UI layout", Viewer::Uld),
+    ("lgb", "Layer group, a zone's placed objects", Viewer::Raw),
+    (
+        "sgb",
+        "Shared group, a reusable set of objects",
+        Viewer::Raw,
+    ),
+    ("lvb", "Level variable binary", Viewer::Raw),
+    ("svb", "Sky visibility binary", Viewer::Raw),
+    ("uwb", "Zone bounds or environment volume", Viewer::Raw),
+    ("envb", "Environment binary", Viewer::Raw),
+    ("lcb", "Light culling binary", Viewer::Raw),
+    ("obsb", "Object behavior set binary", Viewer::Raw),
+    ("essb", "Environment sound scrape binary", Viewer::Raw),
+    ("luab", "Lua bytecode", Viewer::Raw),
+    ("cutb", "Cutscene", Viewer::Raw),
+    ("imc", "Image change data", Viewer::Imc),
+    ("eqdp", "Equipment deformer parameters", Viewer::Raw),
+    ("eqp", "Equipment parameters", Viewer::Raw),
+    ("gmp", "Gimmick parameters", Viewer::Raw),
+    ("est", "Equipment skeleton template", Viewer::Est),
+    ("evp", "Equipment VFX parameters", Viewer::Raw),
+    ("pbd", "Bone deformers", Viewer::Raw),
+    ("amb", "Ambient set placement", Viewer::Raw),
+    ("tera", "Terrain", Viewer::Tera),
+    ("hwc", "Handware cursor", Viewer::Raw),
+    ("fdt", "Font data table", Viewer::Font),
+    ("gfd", "Graphics font data", Viewer::Icons),
+    ("stm", "Stain map", Viewer::Stm),
+    ("cmp", "Character make parameters", Viewer::Raw),
+    ("plt", "PAP load table", Viewer::Raw),
+];
 
 /// `exd/item_0_en.exd` -> `Item`, `exd/content/foo_0_en.exd` -> `content/Foo`.
 ///
@@ -2053,6 +2100,43 @@ mod tests {
             "the filter term is not left to match on"
         );
         assert!(!query.literal);
+    }
+
+    /// Picking from the menu is a replacement rather than another term, so picking twice does not
+    /// leave a query no file can satisfy.
+    #[test]
+    fn picking_an_extension_replaces_the_one_already_there() {
+        assert_eq!(set_extension("", "tex"), "ext:tex");
+        assert_eq!(set_extension("chara", "tex"), "ext:tex chara");
+        assert_eq!(set_extension("ext:stm chara", "tex"), "ext:tex chara");
+        assert_eq!(set_extension("chara ext:stm", "tex"), "ext:tex chara");
+        assert_eq!(parse_query(&set_extension("ext:stm", "tex")).suffix, ".tex");
+    }
+
+    /// [`EXTENSIONS`] is the one place an extension is named, so a viewer offering one the table
+    /// does not list would be unreachable, and a name listed twice would shadow itself.
+    #[test]
+    fn every_viewer_is_reachable_from_the_extension_table() {
+        let mut seen = HashSet::new();
+        for (extension, ..) in EXTENSIONS {
+            assert!(seen.insert(extension), "{extension} is listed twice");
+        }
+        for viewer in Viewer::RENDERED {
+            let mut extensions = viewer.extensions().peekable();
+            // Text is reached by reading a file rather than by its name: nothing the game still
+            // ships carries a text extension.
+            assert!(
+                extensions.peek().is_some() || matches!(viewer, Viewer::Text),
+                "{} reads nothing the table lists",
+                viewer.label()
+            );
+            for extension in extensions {
+                assert!(
+                    Viewer::from_extension(&format!("a/b.{extension}")) == viewer,
+                    "{extension} does not come back to the viewer that claims it"
+                );
+            }
+        }
     }
 
     #[test]
