@@ -488,6 +488,56 @@ mod tests {
         assert_eq!(source(held), "f()");
     }
 
+    /// A jump the compiler collapsed into another lands where that one goes, which is how the exit
+    /// of a loop reaches back past its own jump home.
+    #[test]
+    fn a_loop_whose_arms_jump_home_reads_as_one() {
+        let held = Proto {
+            code: vec![
+                abc(LOADBOOL, 0, 1, 0),
+                abc(TEST, 0, 0, 0),
+                asbx(JMP, 0, 7),
+                abx(GETGLOBAL, 1, 0),
+                abc(CALL, 1, 1, 2),
+                abc(TEST, 1, 0, 0),
+                asbx(JMP, 0, -6),
+                abx(GETGLOBAL, 2, 1),
+                abc(CALL, 2, 1, 1),
+                asbx(JMP, 0, -9),
+                abc(RETURN, 0, 1, 0),
+            ],
+            constants: vec![Value::Text("f"), Value::Text("g")],
+            stack: 3,
+            ..Proto::default()
+        };
+        assert_eq!(
+            source(held),
+            "local v0 = true\nwhile v0 do\n\tlocal v1 = f()\n\tif v1 then\n\t\tg()\n\tend\nend"
+        );
+    }
+
+    /// A method lookup reserves its two registers before it works the key out, so a function holding
+    /// more constants than an operand can name puts the key two registers above the lookup.
+    #[test]
+    fn a_method_named_from_a_register_still_reads_as_one() {
+        let mut constants = vec![Value::Text("t")];
+        constants.extend((1..256).map(|held| Value::Number(f64::from(held))));
+        constants.push(Value::Text("m"));
+        let held = Proto {
+            code: vec![
+                abx(GETGLOBAL, 3, 0),
+                abx(LOADK, 5, 256),
+                abc(SELF, 3, 3, 5),
+                abc(CALL, 3, 2, 1),
+                abc(RETURN, 0, 1, 0),
+            ],
+            constants,
+            stack: 6,
+            ..Proto::default()
+        };
+        assert_eq!(source(held), "t:m()");
+    }
+
     /// A function the reading cannot resolve is kept as its own disassembly rather than dropped.
     #[test]
     fn a_function_that_does_not_resolve_is_kept_as_disassembly() {
