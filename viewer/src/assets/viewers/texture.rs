@@ -70,7 +70,7 @@ pub fn decode(
         ctx,
         path,
         image,
-        texture.layers(),
+        texture.layers(mip),
         texture.format().components(),
         facts,
         mips,
