@@ -1075,7 +1075,11 @@ impl<'a> Reader<'a> {
         if let Some(next) = self.joined(&tests, count, pc, body_at, false_target)? {
             return Ok(next);
         }
-        if let Some(next) = self.shortcut(&tests, pc, hi)? {
+        // Only where the chain is one conditional: a longer one the condition already explains is a
+        // condition, and reading it as a value would swallow the arms it decides between.
+        if count == 1
+            && let Some(next) = self.shortcut(&tests, pc, hi)?
+        {
             return Ok(next);
         }
 
