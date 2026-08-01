@@ -1864,7 +1864,7 @@ const EXTENSIONS: &[(&str, &str, Viewer)] = &[
     ("lcb", "Light culling binary", Viewer::Raw),
     ("obsb", "Object behavior set binary", Viewer::Raw),
     ("essb", "Environment sound scrape binary", Viewer::Raw),
-    ("luab", "Lua bytecode", Viewer::Raw),
+    ("luab", "Lua bytecode", Viewer::Luab),
     ("cutb", "Cutscene", Viewer::Raw),
     ("imc", "Image change data", Viewer::Imc),
     ("eqdp", "Equipment deformer parameters", Viewer::Raw),
