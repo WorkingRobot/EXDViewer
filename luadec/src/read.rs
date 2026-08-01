@@ -1072,6 +1072,9 @@ impl<'a> Reader<'a> {
         if let Some(next) = self.boolean(&tests, count, pc, body_at, false_target)? {
             return Ok(next);
         }
+        if let Some(next) = self.joined(&tests, count, pc, body_at, false_target)? {
+            return Ok(next);
+        }
         if let Some(next) = self.shortcut(&tests, pc, hi)? {
             return Ok(next);
         }
@@ -1263,6 +1266,94 @@ impl<'a> Reader<'a> {
         // The load reached by falling through is the false one, so the value is the other way up.
         self.set(register, condition.negate())?;
         Ok(Some(false_target + 1))
+    }
+
+    /// A comparison joined by `and` to a value: failing it lands on the pair of loads, and passing
+    /// it works the value out and jumps over them.
+    fn joined(
+        &mut self,
+        tests: &[Test],
+        count: usize,
+        pc: usize,
+        body_at: usize,
+        false_target: usize,
+    ) -> Reading<Option<usize>> {
+        let pair = false_target;
+        let is_load = |held: Reading<Instruction>, b: u16| matches!(held, Ok(held) if held.opcode() == Opcode::LoadBool && held.b() == b);
+        if pair <= body_at
+            || !is_load(self.at(pair), 0)
+            || !is_load(self.at(pair.saturating_add(1)), 1)
+            || self.at(pair)?.a() != self.at(pair + 1)?.a()
+            || self.at(pair)?.c() == 0
+        {
+            return Ok(None);
+        }
+        // What the passing side works out has to end by jumping over both loads.
+        let over = pair - 1;
+        if over < body_at
+            || self.at(over)?.opcode() != Opcode::Jmp
+            || self.target(over)? != pair + 2
+        {
+            return Ok(None);
+        }
+        let register = usize::from(self.at(pair)?.a());
+        if !self.settles_into(body_at, over, register)? {
+            return Ok(None);
+        }
+
+        let condition = self.condition(tests, count, pc)?;
+        let held = self.out.len();
+        let mut at = body_at;
+        while at < over {
+            let next = self.statement(at, over, None, None)?;
+            if next <= at {
+                return Err("a statement did not move the reading forward");
+            }
+            at = next;
+        }
+        if self.out.len() != held {
+            return Err("a short circuit ran a statement");
+        }
+        let right = self.take(register)?;
+        self.set(
+            register,
+            Expr::Binary(Binary::And, Box::new(condition), Box::new(right)),
+        )?;
+        Ok(Some(pair + 2))
+    }
+
+    /// Whether `lo..hi` only works a value out, and leaves it in `register`.
+    fn settles_into(&self, lo: usize, hi: usize, register: usize) -> Reading<bool> {
+        let mut at = lo;
+        let mut last = None;
+        let mut reads = Vec::new();
+        while at < hi {
+            let held = self.at(at)?;
+            let settles = matches!(
+                held.opcode(),
+                Opcode::SetGlobal
+                    | Opcode::SetTable
+                    | Opcode::SetUpval
+                    | Opcode::Return
+                    | Opcode::TailCall
+                    | Opcode::ForPrep
+                    | Opcode::ForLoop
+                    | Opcode::TForLoop
+                    | Opcode::SetList
+            ) || (held.opcode() == Opcode::Call && held.c() == 1);
+            if settles {
+                return Ok(false);
+            }
+            reads.clear();
+            if let Some(top) = touches(held, &mut reads) {
+                if top < register {
+                    return Ok(false);
+                }
+                last = Some(top);
+            }
+            at = self.after(at);
+        }
+        Ok(last == Some(register))
     }
 
     // -- straight-line code ------------------------------------------------------------------
