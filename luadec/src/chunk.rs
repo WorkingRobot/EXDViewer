@@ -62,8 +62,8 @@ impl Chunk {
         &self.main
     }
 
-    /// Every function the chunk holds, the outermost first.
-    pub fn functions(&self) -> usize {
+    /// How many functions the chunk holds, counting the outermost one.
+    pub fn function_count(&self) -> usize {
         fn count(held: &Function) -> usize {
             1 + held.functions.iter().map(count).sum::<usize>()
         }

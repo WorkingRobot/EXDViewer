@@ -47,7 +47,7 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
             ),
         ),
         ("Units", units.to_string()),
-        ("Functions", chunk.functions().to_string()),
+        ("Functions", chunk.function_count().to_string()),
         (
             "Read as source",
             format!(

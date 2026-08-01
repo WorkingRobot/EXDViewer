@@ -131,12 +131,6 @@ impl Expr {
         )
     }
 
-    /// Whether the expression can stand in for several values, which is what a call in the last
-    /// place of a list does unless it is bracketed.
-    pub fn is_multiple(&self) -> bool {
-        matches!(self, Self::Call(..) | Self::Method(..) | Self::Vararg)
-    }
-
     /// The expression with its truth reversed, folded into the operator where one exists so a reading
     /// says `a ~= b` rather than `not (a == b)`.
     pub fn negate(self) -> Self {

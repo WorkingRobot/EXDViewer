@@ -95,6 +95,9 @@ struct Tally {
     matched: usize,
     /// Of those, the ones that compiled but came back as something else.
     differed: usize,
+    /// Of those, the ones holding the same instructions in the same order, which is a reading that
+    /// said the same thing with the registers or the constant pool laid out another way.
+    shaped: usize,
 }
 
 impl Tally {
@@ -103,6 +106,7 @@ impl Tally {
         self.rejected += other.rejected;
         self.matched += other.matched;
         self.differed += other.differed;
+        self.shaped += other.shaped;
     }
 }
 
@@ -148,6 +152,16 @@ fn check(luac: &str, work: &Path, held: &Function, main: bool, tally: &mut Tally
         // Where a function came back as something else, what is inside it is tried on its own, so
         // one disagreement is charged to the function it is in rather than to everything under it.
         tally.differed += 1;
+        if read.is_some_and(|read| {
+            read.code().len() == held.code().len()
+                && read
+                    .code()
+                    .iter()
+                    .zip(held.code())
+                    .all(|(read, held)| read.opcode() == held.opcode())
+        }) {
+            tally.shaped += 1;
+        }
     }
     for nested in held.functions() {
         check(luac, work, nested, false, tally);
@@ -200,6 +214,9 @@ fn main() {
     println!("  every function offered came back the same: {whole}");
     println!("functions offered  {}", total.offered);
     println!("  matched          {}", total.matched);
-    println!("  differed         {}", total.differed);
+    println!(
+        "  differed         {} ({} the same instructions in the same order)",
+        total.differed, total.shaped
+    );
     println!("  did not compile  {}", total.rejected);
 }
