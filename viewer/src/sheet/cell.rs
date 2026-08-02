@@ -442,7 +442,7 @@ fn read_string(
     }
 }
 
-fn read_integer<T: num_traits::NumCast>(
+pub(crate) fn read_integer<T: num_traits::NumCast>(
     row: ExcelRow<'_>,
     offset: u32,
     kind: ColumnKind,

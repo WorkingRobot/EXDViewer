@@ -13,7 +13,7 @@ use std::{cell::RefCell, fmt::Write, sync::Arc};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 pub use cell::{CellResponse, MatchOptions};
-pub(crate) use cell::draw_color;
+pub(crate) use cell::{draw_color, read_integer};
 use compact_str::ToCompactString;
 pub use csv::export_csv;
 use egui::{
@@ -24,6 +24,8 @@ pub use filter::{ComplexFilter, FilterInput, FilterInputType, draw_guide as draw
 pub use global_context::GlobalContext;
 use intmap::IntMap;
 use ironworks::sestring::SeStr;
+pub(crate) use schema_column::{SchemaColumn, SchemaColumnMeta};
+pub(crate) use sheet_column::SheetColumnDefinition;
 pub use sheet_table::SheetTable;
 pub use table_context::TableContext;
 

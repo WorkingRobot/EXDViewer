@@ -25,7 +25,7 @@ use crate::{
         provider::{ExcelHeader, ExcelProvider},
     },
     github::CALLBACK_PATH,
-    goto, music,
+    goto, icons, music,
     pr_window::{self, PrAction, PrWindow},
     router::{
         Router,
@@ -153,6 +153,7 @@ impl CjkFont {
 enum Tab {
     Sheets,
     Assets,
+    Icons,
     Music,
 }
 
@@ -160,6 +161,8 @@ impl Tab {
     fn of(path: &str) -> Self {
         if path.starts_with("/assets") {
             Tab::Assets
+        } else if path.starts_with("/icons") {
+            Tab::Icons
         } else if path.starts_with("/music") {
             Tab::Music
         } else {
@@ -171,6 +174,7 @@ impl Tab {
         match self {
             Tab::Sheets => "Sheets",
             Tab::Assets => "Assets",
+            Tab::Icons => "Icons",
             Tab::Music => "Music",
         }
     }
@@ -194,6 +198,7 @@ pub struct App {
     about_open: bool,
     music: music::MusicPlayer,
     assets: assets::AssetBrowser,
+    icons: icons::IconBrowser,
     last_system_theme: Option<egui::Theme>,
     /// `None` = Latin only
     loaded_cjk: Option<CjkFont>,
@@ -229,6 +234,13 @@ fn create_router(ctx: egui::Context) -> Result<Router<App>> {
         App::draw_assets,
         App::title_assets,
     )?;
+    builder.add_route("/icons", App::on_icons, App::draw_icons, App::title_icons)?;
+    builder.add_route(
+        "/icons/{id}",
+        App::on_icon,
+        App::draw_icons,
+        App::title_icons,
+    )?;
     builder.add_route("/music", App::on_music, App::draw_music, App::title_music)?;
     builder.add_route(
         "/music/{id}",
@@ -255,6 +267,11 @@ impl App {
             return Some("Assets".to_string());
         };
         Some(crate::utils::file_name(asset).to_string())
+    }
+
+    fn title_icons(&self, _path: &Path, params: &Params<'_, '_>) -> Option<String> {
+        let id = params.get("id")?.parse::<u32>().ok()?;
+        Some(format!("Icon {id:06}"))
     }
 
     fn title_music(&self, _path: &Path, params: &Params<'_, '_>) -> Option<String> {
@@ -607,7 +624,7 @@ impl App {
                     });
 
                     let seg = egui::vec2(72.0, ui.spacing().interact_size.y);
-                    let switcher_w = 3.0 * seg.x + 2.0 * ui.spacing().item_spacing.x;
+                    let switcher_w = 4.0 * seg.x + 3.0 * ui.spacing().item_spacing.x;
                     let target_left = bar_left + bar_width / 2.0 - switcher_w / 2.0;
                     let space = target_left - ui.cursor().left();
                     if space > 0.0 {
@@ -616,6 +633,7 @@ impl App {
                     for (target, route) in [
                         (Tab::Sheets, "/sheet"),
                         (Tab::Assets, "/assets"),
+                        (Tab::Icons, "/icons"),
                         (Tab::Music, "/music"),
                     ] {
                         if ui
@@ -1245,6 +1263,7 @@ impl App {
             self.sheet_filter_data.clear();
             self.icon_manager.clear();
             self.assets.reset();
+            self.icons.reset();
             self.music.reset();
             CURRENT_SHEET_LANGUAGES.remove(ui.ctx());
 
@@ -1386,6 +1405,39 @@ impl App {
                 assets::Action::Redirect(asset) => {
                     self.navigate_replace(format!("/assets/{asset}"))
                 }
+            }
+        }
+    }
+
+    fn on_icons(&mut self, _ui: &mut egui::Ui, path: &Path, _params: &Params<'_, '_>) -> Redirect {
+        if let Some(redirect) = self.ensure_backend(path) {
+            return Some(redirect);
+        }
+        self.icons
+            .selected()
+            .map(|icon_id| format!("/icons/{icon_id}").into())
+    }
+
+    fn on_icon(&mut self, _ui: &mut egui::Ui, path: &Path, params: &Params<'_, '_>) -> Redirect {
+        if let Some(redirect) = self.ensure_backend(path) {
+            return Some(redirect);
+        }
+        match params.get("id").and_then(|id| id.parse::<u32>().ok()) {
+            Some(icon_id) => {
+                self.icons.request(icon_id);
+                None
+            }
+            None => Some("/icons".into()),
+        }
+    }
+
+    fn draw_icons(&mut self, ui: &mut egui::Ui, _path: &Path, _params: &Params<'_, '_>) {
+        if let Some(backend) = self.backend.clone()
+            && let Some(action) = self.icons.ui(ui, &backend, &self.icon_manager)
+        {
+            match action {
+                icons::Action::Select(icon_id) => self.navigate(format!("/icons/{icon_id}")),
+                icons::Action::Navigate(route) => self.navigate(route),
             }
         }
     }
@@ -1571,6 +1623,7 @@ impl App {
             about_open: false,
             music: music::MusicPlayer::default(),
             assets: assets::AssetBrowser::default(),
+            icons: icons::IconBrowser::default(),
             last_system_theme: None,
             loaded_cjk: None,
             #[cfg(target_arch = "wasm32")]
