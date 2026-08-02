@@ -19,11 +19,6 @@ pub enum ManagedIcon {
     NotLoaded,
 }
 
-type IconEntry = (
-    u32,  // icon_id
-    bool, // hires
-);
-
 type IconPromise = TrackedPromise<anyhow::Result<Either<Url, RgbaImage>>>;
 
 type ConvertibleIconPromise =
@@ -34,7 +29,9 @@ pub struct IconManager(Arc<Mutex<IconManagerImpl>>);
 
 #[derive(Default)]
 struct IconManagerImpl {
-    cache: HashMap<IconEntry, ConvertibleIconPromise>,
+    /// Keyed by the resolved path, so an icon that resolves elsewhere once the locale or the path
+    /// index changes is a miss rather than a stale hit.
+    cache: HashMap<String, ConvertibleIconPromise>,
     loaded_handles: Vec<TextureHandle>,
 }
 
@@ -47,21 +44,15 @@ impl IconManager {
         self.0.lock().clear();
     }
 
-    // None = not loaded, Some(None) = loaded but failed/doesn't exist, Some(Some) = loaded successfully
-    // pub fn get_icon(&self, icon_id: u32, hires: bool, context: &egui::Context) -> ManagedIcon {
-    //     self.0.lock().get_icon(icon_id, hires, context)
-    // }
-
     pub fn get_or_insert_icon(
         &self,
-        icon_id: u32,
-        hires: bool,
+        path: &str,
         context: &egui::Context,
         promise_creator: impl FnOnce() -> IconPromise,
     ) -> ManagedIcon {
         self.0
             .lock()
-            .get_or_insert_icon_promise(icon_id, hires, context, promise_creator)
+            .get_or_insert_icon_promise(path, context, promise_creator)
     }
 }
 
@@ -73,8 +64,7 @@ impl IconManagerImpl {
 
     fn convert_promise(
         handles: &mut Vec<TextureHandle>,
-        icon_id: u32,
-        hires: bool,
+        path: &str,
         ctx: &egui::Context,
         result: <IconPromise as PromiseKind>::Output,
     ) -> CloneableResult<ImageSource<'static>> {
@@ -82,7 +72,7 @@ impl IconManagerImpl {
             Ok(Either::Left(url)) => Ok(ImageSource::Uri(url.to_string().into())),
             Ok(Either::Right(data)) => {
                 let handle = ctx.load_texture(
-                    format!("Icon {icon_id}{}", if hires { " (hr1)" } else { "" }),
+                    path,
                     ColorImage::from_rgba_unmultiplied(
                         [data.width() as _, data.height() as _],
                         data.as_flat_samples().as_slice(),
@@ -100,35 +90,17 @@ impl IconManagerImpl {
         }
     }
 
-    // pub fn get_icon(&mut self, icon_id: u32, hires: bool, context: &egui::Context) -> ManagedIcon {
-    //     let entry = match self.cache.get_mut(&(icon_id, hires)) {
-    //         Some(entry) => entry,
-    //         None => return ManagedIcon::NotLoaded,
-    //     };
-    //     let ret = entry
-    //         .get(|r| Self::convert_promise(&mut self.loaded_handles, icon_id, hires, context, r))
-    //         .cloned();
-    //     match ret {
-    //         Some(Ok(image)) => ManagedIcon::Loaded(image),
-    //         Some(Err(e)) => ManagedIcon::Failed(e),
-    //         None => ManagedIcon::Loading,
-    //     }
-    // }
-
     pub fn get_or_insert_icon_promise(
         &mut self,
-        icon_id: u32,
-        hires: bool,
+        path: &str,
         context: &egui::Context,
         promise_creator: impl FnOnce() -> IconPromise,
     ) -> ManagedIcon {
         let ret = self
             .cache
-            .entry((icon_id, hires))
+            .entry(path.to_owned())
             .or_insert_with(|| ConvertiblePromise::new_promise(promise_creator()))
-            .get_mut(|r| {
-                Self::convert_promise(&mut self.loaded_handles, icon_id, hires, context, r)
-            })
+            .get_mut(|r| Self::convert_promise(&mut self.loaded_handles, path, context, r))
             .cloned();
         match ret {
             Some(Ok(image)) => ManagedIcon::Loaded(image),

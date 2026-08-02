@@ -16,6 +16,7 @@ use egui::{
 use nucleo_matcher::pattern::Pattern;
 
 use crate::backend::Backend;
+use crate::data::IconIndex;
 use crate::excel::provider::ExcelProvider;
 use crate::settings::api_base;
 use crate::utils::{CollapsibleSidePanel, FuzzyMatcher, Side, TrackedPromise};
@@ -935,7 +936,11 @@ impl AssetBrowser {
         {
             self.state = match result.as_ref().map_err(|e| e.to_string()) {
                 Ok((paths, presence)) => match build_index(paths, presence) {
-                    Ok(loaded) => Load::Ready(Box::new(loaded)),
+                    Ok(loaded) => {
+                        // Nowhere else holds the decoded list, so the icon subset is cut here.
+                        backend.set_icons(IconIndex::build(&loaded.paths, &loaded.presence));
+                        Load::Ready(Box::new(loaded))
+                    }
                     Err(e) => Load::Failed(e),
                 },
                 Err(e) => Load::Failed(e),

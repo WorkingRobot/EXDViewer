@@ -1,8 +1,6 @@
 use crate::utils::tex_loader;
 
-use super::{
-    FileProvider, build_local_presence, get_icon_path, index_hash, list_url, stream, with_list_id,
-};
+use super::{FileProvider, build_local_presence, index_hash, list_url, stream, with_list_id};
 use crate::utils::fetch_url;
 use async_trait::async_trait;
 use either::Either;
@@ -60,9 +58,8 @@ impl FileProvider for SqpackFileProvider {
         Ok((paths, presence))
     }
 
-    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
-        let path = get_icon_path(icon_id, hires);
-        let data = tex_loader::read(&self.ironworks, &path)?;
+    async fn get_icon(&self, path: &str) -> anyhow::Result<Either<Url, RgbaImage>> {
+        let data = tex_loader::read(&self.ironworks, path)?;
         Ok(Either::Right(data.into_rgba8()))
     }
 

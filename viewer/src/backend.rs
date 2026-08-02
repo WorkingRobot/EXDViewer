@@ -1,8 +1,8 @@
 use anyhow::Result;
-use std::{num::NonZeroUsize, rc::Rc};
+use std::{cell::OnceCell, num::NonZeroUsize, rc::Rc};
 
 use crate::{
-    data::{FileProvider, web::WebFileProvider},
+    data::{FileProvider, IconIndex, web::WebFileProvider},
     excel::base::CachedProvider,
     schema::{boxed::BoxedSchemaProvider, web::WebProvider},
     settings::{BackendConfig, InstallLocation, SchemaLocation},
@@ -15,6 +15,7 @@ struct BackendImpl {
     files: Rc<dyn FileProvider>,
     excel_provider: CachedProvider,
     schema_provider: BoxedSchemaProvider,
+    icons: OnceCell<IconIndex>,
 }
 
 impl Backend {
@@ -84,6 +85,7 @@ impl Backend {
             files,
             excel_provider,
             schema_provider: schema,
+            icons: OnceCell::new(),
         })))
     }
 
@@ -100,6 +102,15 @@ impl Backend {
 
     pub fn schema(&self) -> &BoxedSchemaProvider {
         &self.0.schema_provider
+    }
+
+    /// Which `ui/icon` files this install ships, once the asset browser has decoded the path list.
+    pub fn icons(&self) -> Option<&IconIndex> {
+        self.0.icons.get()
+    }
+
+    pub fn set_icons(&self, icons: IconIndex) {
+        let _ = self.0.icons.set(icons);
     }
 }
 

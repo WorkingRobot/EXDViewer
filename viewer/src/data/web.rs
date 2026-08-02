@@ -1,6 +1,6 @@
 use crate::utils::{GameVersion, HttpResponse, fetch, fetch_url};
 
-use super::{FileProvider, get_icon_path, get_xivapi_asset_url, list_url, with_list_id};
+use super::{FileProvider, get_xivapi_asset_url, list_url, with_list_id};
 use async_trait::async_trait;
 use either::Either;
 use image::RgbaImage;
@@ -211,10 +211,8 @@ impl FileProvider for WebFileProvider {
         Ok(stream(fetch(url).await?))
     }
 
-    async fn get_icon(&self, icon_id: u32, hires: bool) -> anyhow::Result<Either<Url, RgbaImage>> {
-        let path = get_icon_path(icon_id, hires);
-        let url = get_xivapi_asset_url(&path, Some("png"));
-        Ok(Either::Left(url))
+    async fn get_icon(&self, path: &str) -> anyhow::Result<Either<Url, RgbaImage>> {
+        Ok(Either::Left(get_xivapi_asset_url(path, Some("png"))))
     }
 
     async fn exists_many(&self, paths: &[String]) -> anyhow::Result<Vec<bool>> {

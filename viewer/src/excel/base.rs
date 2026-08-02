@@ -122,8 +122,8 @@ impl ExcelProvider for CachedProvider {
         &self.0.entries
     }
 
-    async fn get_icon(&self, icon_id: u32, hires: bool) -> Result<Either<Url, RgbaImage>> {
-        self.0.files.get_icon(icon_id, hires).await
+    async fn get_icon(&self, path: &str) -> Result<Either<Url, RgbaImage>> {
+        self.0.files.get_icon(path).await
     }
 
     async fn get_header(&self, name: &str) -> Result<BaseHeader> {

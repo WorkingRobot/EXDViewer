@@ -533,9 +533,11 @@ impl CellValue {
 fn draw_icon(ctx: &GlobalContext, ui: &mut egui::Ui, icon_id: u32) -> egui::Response {
     let (excel, icon_mgr) = (ctx.backend().excel().clone(), &ctx.icon_manager());
     let hires = ALWAYS_HIRES.get(ui.ctx());
-    let image_source = icon_mgr.get_or_insert_icon(icon_id, hires, ui.ctx(), move || {
+    let path = get_icon_path(ctx.backend().icons(), icon_id, hires, ctx.language());
+    let image_source = icon_mgr.get_or_insert_icon(&path, ui.ctx(), || {
         log::debug!("Icon not found in cache: {icon_id}");
-        TrackedPromise::spawn_local(async move { excel.get_icon(icon_id, hires).await })
+        let path = path.clone();
+        TrackedPromise::spawn_local(async move { excel.get_icon(&path).await })
     });
     let resp = match image_source {
         ManagedIcon::Loaded(source) => {
@@ -563,10 +565,7 @@ fn draw_icon(ctx: &GlobalContext, ui: &mut egui::Ui, icon_id: u32) -> egui::Resp
             unreachable!()
         }
     };
-    let resp = resp.on_hover_text(format!(
-        "Id: {icon_id}\nPath: {}",
-        get_icon_path(icon_id, hires)
-    ));
+    let resp = resp.on_hover_text(format!("Id: {icon_id}\nPath: {path}"));
     resp.context_menu(|ui| {
         if ui.button("Copy").clicked() {
             ui.ctx().copy_text(icon_id.to_string());

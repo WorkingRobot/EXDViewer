@@ -16,6 +16,7 @@ use std::{
 use web_time::{Duration, Instant};
 
 use crate::{
+    data::get_icon_path,
     excel::provider::{ExcelHeader, ExcelProvider, ExcelRow, ExcelSheet},
     settings::{SHEET_FILTER_OPTIONS, SHEET_FILTERS, SORTED_BY_OFFSET, TEMP_HIGHLIGHTED_ROW},
     sheet::{
@@ -166,15 +167,15 @@ impl SheetTable {
                     "icon-modal-{icon_id}"
                 ))))
                 .show(ui.ctx(), |ui| {
-                    let (excel, icon_mgr) = (
-                        self.context.global().backend().excel().clone(),
-                        &self.context.global().icon_manager(),
-                    );
-                    let resp = icon_mgr.get_or_insert_icon(icon_id, true, ui.ctx(), move || {
+                    let global = self.context.global();
+                    let (excel, icon_mgr) =
+                        (global.backend().excel().clone(), global.icon_manager());
+                    let path =
+                        get_icon_path(global.backend().icons(), icon_id, true, global.language());
+                    let resp = icon_mgr.get_or_insert_icon(&path, ui.ctx(), || {
                         log::debug!("Hires icon not found in cache: {icon_id}");
-                        TrackedPromise::spawn_local(
-                            async move { excel.get_icon(icon_id, true).await },
-                        )
+                        let path = path.clone();
+                        TrackedPromise::spawn_local(async move { excel.get_icon(&path).await })
                     });
                     match resp {
                         ManagedIcon::Loaded(icon) => {
