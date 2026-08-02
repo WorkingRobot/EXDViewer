@@ -1840,7 +1840,7 @@ const EXTENSIONS: &[(&str, &str, Viewer)] = &[
     ("tex", "Texture", Viewer::Texture),
     ("atex", "Animated texture", Viewer::Texture),
     ("png", "PNG image", Viewer::Image),
-    ("mdl", "Model", Viewer::Raw),
+    ("mdl", "Model", Viewer::Model),
     ("mtrl", "Material", Viewer::Material),
     ("shpk", "Shader package", Viewer::Shpk),
     ("shcd", "Shader code", Viewer::Shcd),

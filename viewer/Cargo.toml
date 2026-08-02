@@ -25,6 +25,10 @@ eframe = { version = "0.35", default-features = false, features = [
 catppuccin-egui = { version = "5", default-features = false, features = [
     "egui35",
 ] }
+egui_glow = { version = "0.35", default-features = false }
+glow = "0.17"
+glam = "0.31"
+bytemuck = { version = "1", features = ["derive"] }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 ironworks = { version = "0.4.1", features = [
@@ -39,6 +43,7 @@ ironworks = { version = "0.4.1", features = [
     "shpk",
     "shcd",
     "imc",
+    "mdl",
     "stm",
     "atch",
     "eid",

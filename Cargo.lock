@@ -2769,6 +2769,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "556f6b2ea90b8d15a74e0e7bb41671c9bdf38cd9f78c284d750b9ce58a2b5be7"
+
+[[package]]
 name = "glifo"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7214,6 +7220,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.0",
  "binrw",
+ "bytemuck",
  "catppuccin-egui",
  "compact_str",
  "crc",
@@ -7223,6 +7230,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
+ "egui_glow",
  "egui_logger",
  "egui_table",
  "ehttp",
@@ -7230,7 +7238,9 @@ dependencies = [
  "env_logger",
  "futures-util",
  "getrandom 0.4.3",
+ "glam",
  "gloo-worker",
+ "glow",
  "glyphnames",
  "half",
  "hlsl",

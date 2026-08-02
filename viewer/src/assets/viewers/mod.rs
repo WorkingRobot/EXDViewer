@@ -17,6 +17,7 @@ pub mod icons;
 pub mod imc;
 pub mod luab;
 pub mod material;
+pub mod mdl;
 pub mod png;
 mod shader;
 pub mod shcd;
@@ -238,6 +239,8 @@ pub enum Preview {
     },
     /// A parsed material, rendered as its own layout rather than a flat table.
     Material(Box<material::Rendered>),
+    /// A model, drawn.
+    Model(Box<mdl::Rendered>),
     /// A parsed UI layout.
     Uld(Box<uld::Rendered>),
     /// A parsed font.
@@ -284,6 +287,7 @@ impl Preview {
             Viewer::Image => png::decode(ctx, path, bytes, channels),
             Viewer::Texture => texture::decode(ctx, path, bytes, mip, channels),
             Viewer::Material => material::decode(path, bytes),
+            Viewer::Model => mdl::decode(path, bytes),
             Viewer::Uld => uld::decode(path, bytes),
             Viewer::Font => font::decode(path, bytes),
             Viewer::Icons => icons::decode(path, bytes),
@@ -319,6 +323,7 @@ impl Preview {
             Self::Material(material) => {
                 follow = material::ui(ui, material, deps, backend);
             }
+            Self::Model(model) => mdl::ui(ui, model, backend),
             Self::Uld(layout) => {
                 follow = uld::ui(ui, layout, deps, backend);
             }
@@ -395,6 +400,7 @@ impl Preview {
         match self {
             Self::Image { .. } => true,
             Self::Material(material) => material.has_params(),
+            Self::Model(_) => true,
             Self::Uld(layout) => layout.has_details(),
             Self::Font(_)
             | Self::Icons(_)
@@ -424,6 +430,10 @@ impl Preview {
     ) -> Option<(u8, u16, Channels)> {
         if let Self::Material(material) = self {
             material::details_ui(ui, material, follow);
+            return None;
+        }
+        if let Self::Model(model) = self {
+            model.details_ui(ui, follow);
             return None;
         }
         if let Self::Uld(layout) = self {
@@ -567,6 +577,7 @@ pub enum Viewer {
     Texture,
     Image,
     Material,
+    Model,
     Uld,
     Font,
     Icons,
@@ -587,10 +598,11 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 17] = [
+    pub const RENDERED: [Self; 18] = [
         Self::Texture,
         Self::Image,
         Self::Material,
+        Self::Model,
         Self::Uld,
         Self::Font,
         Self::Icons,
@@ -612,6 +624,7 @@ impl Viewer {
             Self::Texture => "Texture",
             Self::Image => "Image",
             Self::Material => "Material",
+            Self::Model => "Model",
             Self::Uld => "Layout",
             Self::Font => "Font",
             Self::Icons => "Icons",
