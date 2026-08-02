@@ -6,7 +6,7 @@
 //! is read by where it lands rather than by what precedes it, so one conditional shape serves an
 //! `if`, a `while` and the tail of a `repeat`.
 
-use crate::chunk::{Constant, Function, Instruction, Opcode, Operand};
+use crate::chunk::{Constant, Function, Instruction, Local, Opcode, Operand};
 
 use crate::expr::{Binary, Closure, Expr, Stat, Target, Unary, is_name};
 
@@ -131,12 +131,44 @@ fn disassembled(
     }
 
     Closure {
-        parameters: (0..usize::from(held.parameters()))
-            .map(|at| format!("a{at}"))
-            .collect(),
+        parameters: parameter_names(held),
         vararg: held.is_vararg(),
         body,
     }
+}
+
+/// What a function's parameters go by.
+///
+/// A chunk that kept its debug information says outright. Otherwise the game scripts all take the
+/// same first three: the script table, which is the only one a body reads fields from, then the
+/// actor the event runs for and the one it runs on.
+fn parameter_names(held: &Function) -> Vec<String> {
+    let mut receiver = [false; 3];
+    let mut fields = false;
+    for at in held.code() {
+        match at.opcode() {
+            Opcode::Self_ => {
+                if let Some(held) = receiver.get_mut(usize::from(at.b())) {
+                    *held = true;
+                }
+            }
+            Opcode::GetTable => fields |= at.b() == 0,
+            Opcode::SetTable => fields |= at.a() == 0,
+            _ => (),
+        }
+    }
+    let script = receiver[0] || fields;
+    (0..usize::from(held.parameters()))
+        .map(|at| match held.locals().get(at).map(Local::name) {
+            Some(name) if is_name(name) => String::from_utf8_lossy(name).into_owned(),
+            _ => match at {
+                0 if script => "self".to_owned(),
+                1 if script && receiver[1] => "player".to_owned(),
+                2 if script && receiver[2] => "target".to_owned(),
+                _ => format!("a{at}"),
+            },
+        })
+        .collect()
 }
 
 /// Read a function into a closure, naming its upvalues from where the enclosing function bound them.
@@ -158,7 +190,7 @@ fn function(
         sticky: sticky(held, &marks, &labels),
         pseudo: marks,
         slots: vec![Slot::Empty; usize::from(held.max_stack()).max(parameters) + 3],
-        names: (0..parameters).map(|at| format!("a{at}")).collect(),
+        names: parameter_names(held),
         upvalues,
         active: parameters,
         declared: 0,
@@ -316,6 +348,36 @@ fn touches(held: Instruction, reads: &mut Vec<usize>) -> Option<usize> {
 }
 
 /// Where a jump lands, which is where a walk of the words stops knowing what the registers hold.
+/// Words making up a comparison that stands as a value, which the compiler writes as the test, a
+/// jump over the load that fails it, and the two loads themselves.
+///
+/// The four are one expression, so the jump inside them does not put what follows on the far side
+/// of a jump from what came before.
+fn valued(held: &Function, pseudo: &[bool]) -> Vec<bool> {
+    let code = held.code();
+    let mut valued = vec![false; code.len()];
+    for pc in 0..code.len() {
+        if pseudo.get(pc).copied().unwrap_or(false) || !conditional(code[pc].opcode()) {
+            continue;
+        }
+        let Some([jump, first, second]) = code.get(pc + 1..pc + 4) else {
+            continue;
+        };
+        if jump.opcode() == Opcode::Jmp
+            && jump.sbx() == 1
+            && first.opcode() == Opcode::LoadBool
+            && first.b() == 0
+            && first.c() != 0
+            && second.opcode() == Opcode::LoadBool
+            && second.b() != 0
+            && second.a() == first.a()
+        {
+            valued[pc..pc + 4].fill(true);
+        }
+    }
+    valued
+}
+
 fn labels(held: &Function, pseudo: &[bool]) -> Vec<bool> {
     let code = held.code();
     let mut labels = vec![false; code.len() + 1];
@@ -367,11 +429,13 @@ fn sticky(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<Option<usize
     let mut start = true;
     let mut seen = vec![0usize; 256];
     let mut reads = Vec::new();
+    let valued = valued(held, pseudo);
     for (pc, instruction) in code.iter().enumerate() {
         if pseudo.get(pc).copied().unwrap_or(false) {
             continue;
         }
-        if labels.get(pc).copied().unwrap_or(false) {
+        let inside = valued.get(pc).copied().unwrap_or(false);
+        if labels.get(pc).copied().unwrap_or(false) && !inside {
             era += 1;
         }
         // A method lookup reserves its two registers before it works out the key, so a key that
@@ -406,6 +470,7 @@ fn sticky(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<Option<usize
         // values in between were locals all along.
         if start
             && !keying
+            && !inside
             && let Some(top) = writes
         {
             let first = usize::from(instruction.a());
@@ -439,7 +504,7 @@ fn sticky(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<Option<usize
             _ => (),
         }
 
-        if branches(instruction.opcode()) {
+        if branches(instruction.opcode()) && !inside {
             era += 1;
         }
         if let Some(top) = writes {
@@ -969,6 +1034,26 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// How much of a chain is one condition. Evaluating an operand declares no locals, so a run
+    /// that leaves one behind ends the chain, and the conditional after it starts a statement of
+    /// its own nested inside the one before.
+    fn unbroken(&self, tests: &[Test]) -> usize {
+        let declares = |pc: usize| {
+            self.sticky
+                .get(pc)
+                .copied()
+                .flatten()
+                .is_some_and(|top| top >= self.active)
+        };
+        match tests
+            .windows(2)
+            .position(|pair| (pair[0].after..pair[1].test).any(declares))
+        {
+            Some(at) => at + 1,
+            None => tests.len(),
+        }
+    }
+
     /// Where a jump would land if it went to the end of the block instead. The compiler collapses a
     /// jump to a jump, so one landing where the block's own last jump goes is that jump.
     fn threaded(&self, target: usize, hi: usize) -> usize {
@@ -1058,27 +1143,28 @@ impl<'a> Reader<'a> {
         escape: Option<usize>,
         until: Option<usize>,
     ) -> Reading<usize> {
-        let tests = self.tests(pc, hi);
-        let Some((count, false_target)) = choose(&tests) else {
+        let held = self.tests(pc, hi);
+        let tests = &held[..self.unbroken(&held)];
+        let Some((count, false_target)) = choose(tests) else {
             // The chain runs backwards, which is how a `repeat` says where its body began.
             return match until {
-                Some(head) => self.until_condition(&tests, pc, head),
+                Some(head) => self.until_condition(&held, pc, head),
                 None => Err("a conditional goes somewhere no statement explains"),
             };
         };
         let body_at = tests[count - 1].after;
 
         // A pair of loads on the far side of the chain is a comparison standing as a value.
-        if let Some(next) = self.boolean(&tests, count, pc, body_at, false_target)? {
+        if let Some(next) = self.boolean(tests, count, pc, body_at, false_target)? {
             return Ok(next);
         }
-        if let Some(next) = self.joined(&tests, count, pc, body_at, false_target)? {
+        if let Some(next) = self.joined(tests, count, pc, body_at, false_target)? {
             return Ok(next);
         }
         // Only where the chain is one conditional: a longer one the condition already explains is a
         // condition, and reading it as a value would swallow the arms it decides between.
         if count == 1
-            && let Some(next) = self.shortcut(&tests, pc, hi)?
+            && let Some(next) = self.shortcut(tests, pc, hi)?
         {
             return Ok(next);
         }
@@ -1089,14 +1175,14 @@ impl<'a> Reader<'a> {
             if !self.escapes(false_target, escape) {
                 return Err("a conditional leaves the block it is in");
             }
-            let condition = self.condition(&tests, count, pc)?;
+            let condition = self.condition(tests, count, pc)?;
             self.flush()?;
             let body = self.block(body_at, hi, escape, None)?;
             self.out
                 .push(Stat::If(vec![(condition, body)], Some(vec![Stat::Break])));
             return Ok(hi);
         }
-        let condition = self.condition(&tests, count, pc)?;
+        let condition = self.condition(tests, count, pc)?;
         self.flush()?;
 
         // A jump over what follows the body is the `else`, unless it is a `break` out of a loop.
@@ -1381,6 +1467,9 @@ impl<'a> Reader<'a> {
 
         match instruction.opcode() {
             Opcode::Move => {
+                if matches!(self.slots.get(usize::from(b)), Some(Slot::Rest)) {
+                    return self.spread(pc, usize::from(b));
+                }
                 let held = self.take(usize::from(b))?;
                 self.set(a, held)?;
             }
@@ -1639,6 +1728,46 @@ impl<'a> Reader<'a> {
         Ok(values)
     }
 
+    /// One call's results stored into the variables the source listed. The compiler works the call
+    /// out once and stores from the last variable back, so the run walks the registers down to it.
+    fn spread(&mut self, pc: usize, from: usize) -> Reading<usize> {
+        let mut base = from;
+        while matches!(self.slots.get(base), Some(Slot::Rest)) {
+            base = base.checked_sub(1).ok_or("a result belongs to no call")?;
+        }
+        let mut stores = Vec::with_capacity(from - base + 1);
+        let mut at = pc;
+        for source in (base..=from).rev() {
+            let instruction = self.at(at)?;
+            let register = usize::from(instruction.a());
+            if instruction.opcode() != Opcode::Move
+                || usize::from(instruction.b()) != source
+                || register >= base
+            {
+                return Err("a call's results are stored where source cannot name them");
+            }
+            stores.push(register);
+            at = self.after(at);
+        }
+        // A variable the call is the first thing to put anything in was declared holding nothing.
+        if let Some(top) = stores.iter().copied().max()
+            && top >= self.active
+        {
+            self.declare(top + 1)?;
+        }
+        let targets = stores
+            .into_iter()
+            .rev()
+            .map(|register| Target::Name(self.names.get(register).cloned().unwrap_or_default()))
+            .collect();
+        for register in base + 1..=from {
+            self.slots[register] = Slot::Empty;
+        }
+        let call = self.take(base)?;
+        self.out.push(Stat::Assign(targets, vec![call]));
+        Ok(at)
+    }
+
     fn call(&mut self, pc: usize, next: usize) -> Reading<usize> {
         let instruction = self.at(pc)?;
         let a = usize::from(instruction.a());
@@ -1778,7 +1907,13 @@ fn combine(
         .position(|later| later.after == test.target)
         .map(|found| at + 1 + found)
         .ok_or("a condition jumps somewhere it cannot")?;
-    let group = combine(tests, held, at, split + 1, tests[split].after, false_target)?;
+    // The operand the group settles is joined to the rest by where the group goes when it fails,
+    // which is the whole condition's own end wherever a chain reads the other way up.
+    let escape = tests[split].target;
+    let group = combine(tests, held, at, split + 1, tests[split].after, escape)?;
     let rest = combine(tests, held, split + 1, count, true_target, false_target)?;
-    Ok(join(Binary::And, group, rest))
+    Ok(match escape == true_target {
+        true => join(Binary::Or, group.negate(), rest),
+        false => join(Binary::And, group, rest),
+    })
 }

@@ -72,6 +72,11 @@ impl Binary {
     fn right(self) -> bool {
         matches!(self, Self::Concat | Self::Pow)
     }
+
+    /// Whether either side may share the operator's level, because both groupings read the same.
+    fn flat(self) -> bool {
+        matches!(self, Self::And | Self::Or)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -137,6 +142,12 @@ impl Expr {
         match self {
             Self::Binary(Binary::Eq, left, right) => Self::Binary(Binary::Ne, left, right),
             Self::Binary(Binary::Ne, left, right) => Self::Binary(Binary::Eq, left, right),
+            Self::Binary(Binary::And, left, right) => {
+                Self::Binary(Binary::Or, Box::new(left.negate()), Box::new(right.negate()))
+            }
+            Self::Binary(Binary::Or, left, right) => {
+                Self::Binary(Binary::And, Box::new(left.negate()), Box::new(right.negate()))
+            }
             Self::Unary(Unary::Not, held) => *held,
             Self::Bool(held) => Self::Bool(!held),
             held => Self::Unary(Unary::Not, Box::new(held)),
@@ -207,9 +218,10 @@ impl Expr {
                 let level = op.level();
                 // The side the operator groups towards may share its level; the other side may not,
                 // or `a - (b - c)` reads back as `a - b - c`.
-                let (left_at, right_at) = match op.right() {
-                    true => (next(level), level),
-                    false => (level, next(level)),
+                let (left_at, right_at) = match (op.flat(), op.right()) {
+                    (true, _) => (level, level),
+                    (_, true) => (next(level), level),
+                    (_, false) => (level, next(level)),
                 };
                 left.write(out, left_at, indent, lines);
                 let _ = write!(out, " {} ", op.text());

@@ -116,7 +116,7 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
     // rather than leaving the page blank.
     if source && file.statements == 0 {
         ui.centered_and_justified(|ui| {
-            ui.label(RichText::new("This chunk holds no statements.").weak());
+            ui.label(RichText::new("Compiled from a file with no statements.").weak());
         });
         return;
     }
