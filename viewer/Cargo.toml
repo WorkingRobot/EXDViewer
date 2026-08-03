@@ -103,6 +103,7 @@ csv = "1"
 
 [build-dependencies]
 shadow-rs = { version = "2", default-features = false, features = ["build"] }
+winresource = "0.1"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
