@@ -223,11 +223,12 @@ pub fn ui(
     let picked = file.selected(ui);
     let mut selected = picked;
     let mut toggled = None;
+    // A selectable label pads itself, so the height the scroll area is told has to leave room for
+    // that. `show_rows` adds the spacing between rows on top of it.
     let height = ui
         .text_style_height(&egui::TextStyle::Monospace)
         .max(TRIANGLE)
-        + 2.0 * ui.spacing().button_padding.y
-        + ui.spacing().item_spacing.y;
+        + 2.0 * ui.spacing().button_padding.y;
     ScrollArea::vertical()
         .auto_shrink(false)
         .show_rows(ui, height, shown.len(), |ui, range| {
