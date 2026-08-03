@@ -65,9 +65,16 @@ const MAGIC: &[(&[u8], Format)] = &[
     (b"EXHF", Format::Named("Sheet header")),
     (b"EXDF", Format::Named("Sheet page")),
     (b"EXLT", Format::Named("Sheet list")),
-    (b"LGB1", Format::Named("Layer group")),
-    (b"SGB1", Format::Named("Shared group")),
-    (b"LVB1", Format::Named("Level")),
+    (b"LGB1", Format::Shown(Viewer::Lgb)),
+    (b"SGB1", Format::Shown(Viewer::Sgb)),
+    (b"LVB1", Format::Shown(Viewer::Lvb)),
+    (b"SVB1", Format::Shown(Viewer::Svb)),
+    (b"LCB1", Format::Shown(Viewer::Lcb)),
+    (b"UWB1", Format::Shown(Viewer::Uwb)),
+    (b"ENVB", Format::Shown(Viewer::Envb)),
+    (b"OBSB", Format::Shown(Viewer::Obsb)),
+    (b"ESSB", Format::Shown(Viewer::Essb)),
+    (b"AMB\0", Format::Shown(Viewer::Amb)),
     (b" dgg", Format::Named("Grass grid")),
     (b"dzg\0", Format::Named("Grass zone")),
     (b"pap ", Format::Named("Animation")),
@@ -172,6 +179,13 @@ mod tests {
         assert_eq!(label(b"LGB1\0\0\0\0"), Some("Layer group"));
         assert_eq!(label(b"SGB1\0\0\0\0"), Some("Shared group"));
         assert_eq!(label(b"LVB1\0\0\0\0"), Some("Level"));
+        assert_eq!(label(b"SVB1\0\0\0\0"), Some("Sky visibility"));
+        assert_eq!(label(b"LCB1\0\0\0\0"), Some("Light culling"));
+        assert_eq!(label(b"UWB1\0\0\0\0"), Some("Underwater"));
+        assert_eq!(label(b"ENVB\0\0\0\0"), Some("Environment"));
+        assert_eq!(label(b"OBSB\0\0\0\0"), Some("Object behavior"));
+        assert_eq!(label(b"ESSB\0\0\0\0"), Some("Environment sound"));
+        assert_eq!(label(b"AMB\0\x01\0\0\0"), Some("Ambient light"));
         assert_eq!(label(b" dgg\0\0\0\0"), Some("Grass grid"));
         assert_eq!(label(b"dzg\0\0\0\0\0"), Some("Grass zone"));
         assert_eq!(label(b"pap \0\0\0\0"), Some("Animation"));

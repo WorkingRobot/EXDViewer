@@ -50,6 +50,16 @@ ironworks = { version = "0.4.1", features = [
     "est",
     "skp",
     "tera",
+    "lgb",
+    "sgb",
+    "lvb",
+    "svb",
+    "lcb",
+    "uwb",
+    "envb",
+    "obsb",
+    "essb",
+    "amb",
 ] }
 dxbc = "0.1"
 hlsl = "0.1"
