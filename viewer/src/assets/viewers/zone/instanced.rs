@@ -5,6 +5,7 @@
 //! shares their container and nothing else: one group holds the whole of how a zone looks under
 //! water.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::io::Cursor;
 
@@ -12,7 +13,7 @@ use anyhow::Result;
 use egui::{RichText, ScrollArea};
 use ironworks::file::{File, lcb, svb, uwb};
 
-use super::super::{Preview, facts, line, link, section, table};
+use super::super::{Preview, facts, line, link, placed, section, table};
 use super::axes;
 use crate::utils::file_name;
 
@@ -203,6 +204,10 @@ fn member(members: [u8; 4]) -> String {
 
 pub struct Rendered {
     identity: Vec<(&'static str, String)>,
+    /// The clip boxes in space, built on the first switch to the scene.
+    scene: RefCell<Option<placed::View>>,
+    /// Whether the table or the scene is showing, for the file that has one.
+    placed: Cell<bool>,
     /// The zone's scene, which names the layer groups the instances were placed in.
     level: String,
     section: &'static str,
@@ -250,6 +255,8 @@ fn rendered(
 
     Preview::Zone(Box::new(Rendered {
         identity,
+        scene: RefCell::new(None),
+        placed: Cell::new(false),
         level: format!(
             "{}.lvb",
             path.rsplit_once('.').map_or(path, |(stem, _)| stem)
@@ -288,8 +295,25 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) -> Option<String> {
         if link(ui, file_name(&file.level), &file.level) {
             follow = Some(file.level.clone());
         }
+        if matches!(file.source, Source::Clip(_)) {
+            ui.separator();
+            for (scene, label) in [(false, "Table"), (true, "Scene")] {
+                if ui
+                    .selectable_label(file.placed.get() == scene, label)
+                    .clicked()
+                {
+                    file.placed.set(scene);
+                }
+            }
+        }
     });
     ui.add_space(4.0);
+
+    if file.placed.get() {
+        let mut held = file.scene.borrow_mut();
+        held.get_or_insert_with(|| file.build()).ui(ui);
+        return follow;
+    }
 
     section(ui, file.section);
     let grouped = file.columns.first() == Some(&GROUP);
@@ -305,6 +329,33 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) -> Option<String> {
 }
 
 impl Rendered {
+    /// Every clip box as the volume it bounds, drawn as edges since they overlap and a solid one
+    /// would hide the rest.
+    fn build(&self) -> placed::View {
+        let Source::Clip(file) = &self.source else {
+            return placed::View::new(Vec::new());
+        };
+        let instances = file
+            .groups()
+            .iter()
+            .flat_map(|group| group.entries())
+            .enumerate()
+            .map(|(index, entry)| {
+                let (min, max) = (entry.min(), entry.max());
+                placed::Instance {
+                    center: std::array::from_fn(|axis| (min[axis] + max[axis]) * 0.5),
+                    scale: std::array::from_fn(|axis| (max[axis] - min[axis]) * 0.5),
+                    turn: [0.0, 0.0, 0.0, 1.0],
+                    color: placed::tint(index),
+                }
+            })
+            .collect();
+        placed::View::new(vec![placed::Batch {
+            shape: placed::Shape::Wire,
+            instances,
+        }])
+    }
+
     pub fn details_ui(&self, ui: &mut egui::Ui) {
         ScrollArea::vertical()
             .auto_shrink(false)

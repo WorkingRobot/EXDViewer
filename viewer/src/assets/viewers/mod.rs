@@ -24,6 +24,7 @@ pub mod luab;
 pub mod material;
 pub mod mdl;
 pub mod pbd;
+pub mod placed;
 pub mod png;
 mod shader;
 pub mod shcd;

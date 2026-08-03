@@ -4,19 +4,25 @@
 //! Only the `.gzd` names anything: a `.ggd` is filed under its cell and level of detail, so the
 //! links out of the zone file are the only way to reach one by name.
 
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use anyhow::Result;
 use egui::{Color32, RichText, ScrollArea, Vec2, load::SizedTexture};
 use ironworks::file::{File, ggd, gzd};
 
-use super::{Preview, facts, heading, line, link, section, table};
+use super::{Preview, facts, heading, line, link, placed, section, table};
 use crate::assets::deps::{Dep, Deps};
 use crate::backend::Backend;
 use crate::utils::file_name;
 
-/// Longest edge a colour map is drawn at beside its name.
+/// Longest edge a color map is drawn at beside its name.
 const THUMBNAIL: f32 = 64.0;
+
+/// Placements one grid draws. The whole instance buffer is written every frame, so a grid past
+/// this many is shown thinned rather than in full.
+const DRAWN: usize = 60_000;
 
 const GRIDS: [(&str, usize); 4] = [("Detail", 7), ("Cell", 12), ("Center", 26), ("Radius", 10)];
 
@@ -62,6 +68,12 @@ pub struct Grid {
     /// Chunk, index within it, and the count slot it was stored under, for every placement.
     rows: Vec<(usize, usize, usize)>,
     file: ggd::GrassGrid,
+    /// Every placement in space, built on the first switch to the scene.
+    scene: RefCell<Option<placed::View>>,
+    /// Whether the table or the scene is showing.
+    placed: Cell<bool>,
+    /// How many placements the scene left out, where it thinned them.
+    dropped: usize,
 }
 
 pub fn zone(path: &str, bytes: &[u8]) -> Result<Preview> {
@@ -144,10 +156,14 @@ pub fn grid(path: &str, bytes: &[u8]) -> Result<Preview> {
 
     log::info!("assets/grass: {path} {} placements", rows.len());
 
+    let step = rows.len().div_ceil(DRAWN).max(1);
     Ok(Preview::GrassGrid(Box::new(Grid {
         identity,
+        dropped: rows.len() - rows.len().div_ceil(step),
         rows,
         file,
+        scene: RefCell::new(None),
+        placed: Cell::new(false),
     })))
 }
 
@@ -235,6 +251,27 @@ pub fn zone_ui(
 }
 
 pub fn grid_ui(ui: &mut egui::Ui, file: &Grid) {
+    ui.horizontal(|ui| {
+        for (scene, label) in [(false, "Table"), (true, "Scene")] {
+            if ui
+                .selectable_label(file.placed.get() == scene, label)
+                .clicked()
+            {
+                file.placed.set(scene);
+            }
+        }
+        if file.placed.get() && file.dropped > 0 {
+            ui.label(RichText::new(format!("{} thinned out", file.dropped)).weak());
+        }
+    });
+    ui.add_space(4.0);
+
+    if file.placed.get() {
+        let mut held = file.scene.borrow_mut();
+        held.get_or_insert_with(|| file.build()).ui(ui);
+        return;
+    }
+
     section(ui, "Placements");
     table(ui, &PLACEMENTS, file.rows.len(), |ui, index| {
         let (chunk, at, slot) = file.rows[index];
@@ -262,6 +299,34 @@ impl Zone {
 }
 
 impl Grid {
+    /// Every placement as a box at the size and turn it was stored with, colored by the layer it
+    /// came from, and moved out to the world origin its grid is measured from.
+    fn build(&self) -> placed::View {
+        let origin = glam::Vec3::from_array(self.file.world_origin());
+        let step = self.rows.len().div_ceil(DRAWN).max(1);
+        let mut batches: BTreeMap<usize, Vec<placed::Instance>> = BTreeMap::new();
+        for &(chunk, at, slot) in self.rows.iter().step_by(step) {
+            let placement = self.file.chunks()[chunk].placements()[at];
+            let position = origin + glam::Vec3::from_array(placement.position());
+            let [x, z] = [placement.scale_xz(), placement.scale_xz()];
+            batches.entry(slot).or_default().push(placed::Instance {
+                center: position.to_array(),
+                scale: [x * 0.5, placement.scale_y() * 0.5, z * 0.5],
+                turn: placement.rotation(),
+                color: placed::tint(slot),
+            });
+        }
+        placed::View::new(
+            batches
+                .into_values()
+                .map(|instances| placed::Batch {
+                    shape: placed::Shape::Box,
+                    instances,
+                })
+                .collect(),
+        )
+    }
+
     pub fn details_ui(&self, ui: &mut egui::Ui) {
         ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             facts(ui, "ggd_identity", &self.identity);
