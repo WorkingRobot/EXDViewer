@@ -43,7 +43,8 @@ impl Camera {
 
 /// Everything one file placed, ready to draw.
 pub struct View {
-    batches: Vec<Batch>,
+    /// How many things it holds, kept once the batches themselves are on the card.
+    count: usize,
     renderer: Arc<Mutex<gpu::Placements>>,
     camera: Cell<Camera>,
     home: Camera,
@@ -77,8 +78,8 @@ impl View {
             target,
         };
         Self {
-            batches,
-            renderer: gpu::Placements::new(),
+            count: batches.iter().map(|batch| batch.instances.len()).sum(),
+            renderer: gpu::Placements::new(batches),
             camera: Cell::new(home),
             home,
             reach,
@@ -87,7 +88,7 @@ impl View {
 
     /// How many things the view holds, for the caller to say so.
     pub fn count(&self) -> usize {
-        self.batches.iter().map(|batch| batch.instances.len()).sum()
+        self.count
     }
 
     pub fn ui(&self, ui: &mut egui::Ui) {
@@ -97,7 +98,7 @@ impl View {
             });
             return;
         }
-        if self.batches.iter().all(|batch| batch.instances.is_empty()) {
+        if self.count == 0 {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("This file places nothing").weak());
             });
@@ -166,17 +167,7 @@ impl View {
         let projection =
             Mat4::perspective_rh_gl(FOV, rect.width() / rect.height(), near, span + self.reach);
 
-        let frame = gpu::Frame {
-            view_projection: (projection * view).to_cols_array(),
-            batches: self
-                .batches
-                .iter()
-                .map(|batch| Batch {
-                    shape: batch.shape,
-                    instances: batch.instances.clone(),
-                })
-                .collect(),
-        };
+        let view_projection = (projection * view).to_cols_array();
 
         // The context is taken from the painter rather than captured: `glow::Context` is neither
         // `Send` nor `Sync` on wasm, and a callback has to be both.
@@ -184,7 +175,10 @@ impl View {
         ui.painter().add(egui::PaintCallback {
             rect,
             callback: Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
-                renderer.lock().unwrap().draw(painter.gl(), painter, &frame);
+                renderer
+                    .lock()
+                    .unwrap()
+                    .draw(painter.gl(), painter, &view_projection);
             })),
         });
     }

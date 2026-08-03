@@ -42,11 +42,6 @@ pub struct Batch {
     pub instances: Vec<Instance>,
 }
 
-pub struct Frame {
-    pub view_projection: [f32; 16],
-    pub batches: Vec<Batch>,
-}
-
 /// One shape on the card.
 struct Mesh {
     layout: glow::VertexArray,
@@ -60,16 +55,33 @@ pub struct Placements {
     solid: Option<Mesh>,
     wire: Option<Mesh>,
     instances: Option<glow::Buffer>,
+    /// Shape, first instance and count, one per batch.
+    runs: Vec<(Shape, i32, i32)>,
+    /// Every batch's instances end to end, held only until they are on the card. Nothing here
+    /// moves once it is placed, so the buffer is written once rather than per frame.
+    pending: Vec<Instance>,
     failure: Option<String>,
 }
 
 impl Placements {
-    pub fn new() -> Arc<Mutex<Self>> {
+    pub fn new(batches: Vec<Batch>) -> Arc<Mutex<Self>> {
+        let mut runs = Vec::new();
+        let mut pending: Vec<Instance> = Vec::new();
+        for batch in batches {
+            runs.push((
+                batch.shape,
+                pending.len() as i32,
+                batch.instances.len() as i32,
+            ));
+            pending.extend(batch.instances);
+        }
         Arc::new(Mutex::new(Self {
             program: None,
             solid: None,
             wire: None,
             instances: None,
+            runs,
+            pending,
             failure: None,
         }))
     }
@@ -78,7 +90,12 @@ impl Placements {
         self.failure.as_deref()
     }
 
-    pub fn draw(&mut self, gl: &glow::Context, painter: &egui_glow::Painter, frame: &Frame) {
+    pub fn draw(
+        &mut self,
+        gl: &glow::Context,
+        painter: &egui_glow::Painter,
+        view_projection: &[f32; 16],
+    ) {
         bury(gl);
         if self.failure.is_some() {
             return;
@@ -102,21 +119,19 @@ impl Placements {
 
             gl.use_program(Some(program));
             let view = gl.get_uniform_location(program, "u_view_projection");
-            gl.uniform_matrix_4_f32_slice(view.as_ref(), false, &frame.view_projection);
+            gl.uniform_matrix_4_f32_slice(view.as_ref(), false, view_projection);
             let lit = gl.get_uniform_location(program, "u_lit");
 
-            // Every batch reads out of one buffer, each from its own offset.
-            let all: Vec<Instance> = frame
-                .batches
-                .iter()
-                .flat_map(|batch| batch.instances.iter().copied())
-                .collect();
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(instances));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, cast(&all), glow::DYNAMIC_DRAW);
+            // Every batch reads out of the one buffer, each from its own offset.
+            if !self.pending.is_empty() {
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(instances));
+                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, cast(&self.pending), glow::STATIC_DRAW);
+                self.pending = Vec::new();
+            }
 
-            let mut at = 0;
-            for batch in &frame.batches {
-                let (mesh, mode, light) = match batch.shape {
+            let stride = size_of::<Instance>() as i32;
+            for &(shape, first, count) in &self.runs {
+                let (mesh, mode, light) = match shape {
                     Shape::Box => (self.solid.as_ref(), glow::TRIANGLES, 1.0),
                     Shape::Wire => (self.wire.as_ref(), glow::LINES, 0.0),
                 };
@@ -124,8 +139,6 @@ impl Placements {
                 gl.uniform_1_f32(lit.as_ref(), light);
                 gl.bind_vertex_array(Some(mesh.layout));
                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(instances));
-                let stride = size_of::<Instance>() as i32;
-                let base = at * stride;
                 for (location, size, offset) in INSTANCE {
                     gl.enable_vertex_attrib_array(location);
                     gl.vertex_attrib_pointer_f32(
@@ -134,18 +147,11 @@ impl Placements {
                         glow::FLOAT,
                         false,
                         stride,
-                        base + offset,
+                        first * stride + offset,
                     );
                     gl.vertex_attrib_divisor(location, 1);
                 }
-                gl.draw_elements_instanced(
-                    mode,
-                    mesh.count,
-                    glow::UNSIGNED_SHORT,
-                    0,
-                    batch.instances.len() as i32,
-                );
-                at += batch.instances.len() as i32;
+                gl.draw_elements_instanced(mode, mesh.count, glow::UNSIGNED_SHORT, 0, count);
             }
 
             gl.bind_vertex_array(None);
