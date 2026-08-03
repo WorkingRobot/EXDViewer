@@ -11,6 +11,7 @@ use super::{Bytes, Channels, MAX_TEXT_PREVIEW};
 
 pub mod atch;
 pub mod avfx;
+pub mod chara;
 pub mod cmp;
 pub mod eid;
 pub mod est;
@@ -162,8 +163,15 @@ fn line<'a>(columns: &[(&str, usize)], cells: impl IntoIterator<Item = &'a str>)
         .collect()
 }
 
-/// Names the table's scroll area, so the header can be drawn at the offset it was left at.
+/// Names the table's scroll area, so the header can be drawn at the offset it was left at. It is
+/// the same for every table, so two of them may not share one `Ui`.
 const TABLE: &str = "table_rows";
+
+/// Where [`table`] keeps its scroll offset. `ScrollArea` hashes the salt it was handed rather than
+/// the string behind it, so asking for the same id means salting it the same way first.
+fn table_id(ui: &egui::Ui) -> egui::Id {
+    ui.make_persistent_id(egui::IdSalt::new(TABLE))
+}
 
 /// A monospace table, virtualised by row for the formats whose row count is whatever the file
 /// holds. The rows scroll both ways, since a wide one runs past a narrow window, and the columns
@@ -179,8 +187,8 @@ fn table(
 ) {
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
-    let offset = egui::scroll_area::State::load(ui.ctx(), ui.make_persistent_id(TABLE))
-        .map_or(0.0, |state| state.offset.x);
+    let offset =
+        egui::scroll_area::State::load(ui.ctx(), table_id(ui)).map_or(0.0, |state| state.offset.x);
     let color = ui.visuals().weak_text_color();
     let header = ui.painter().layout_no_wrap(
         line(columns, columns.iter().map(|(name, _)| *name)),
@@ -886,5 +894,31 @@ pub(super) fn upload(
         components,
         facts,
         mips,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TABLE, table, table_id};
+
+    /// The header is painted at the offset the rows were left at, which only works while the id it
+    /// reads is the one the scroll area wrote.
+    #[test]
+    fn the_header_reads_the_offset_the_rows_kept() {
+        let mut id = None;
+        egui::__run_test_ui(|ui| {
+            id = Some(table_id(ui));
+            table(ui, &[("Column", 8)], 4, |ui, index| {
+                ui.label(index.to_string());
+            });
+            assert!(
+                egui::scroll_area::State::load(ui.ctx(), id.unwrap()).is_some(),
+                "the table's scroll area is somewhere else"
+            );
+        });
+        // And the bare string is not it, which is what the salting is for.
+        egui::__run_test_ui(|ui| {
+            assert_ne!(ui.make_persistent_id(TABLE), id.unwrap());
+        });
     }
 }

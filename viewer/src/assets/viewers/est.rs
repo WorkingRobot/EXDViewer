@@ -5,17 +5,12 @@ use egui::{RichText, ScrollArea};
 use ironworks::file::{File, est};
 use std::io::Cursor;
 
-use super::{Preview, facts, line, link, section, table};
+use super::{Preview, chara, facts, line, link, section, table};
 use crate::utils::file_name;
 
 /// The entry table's columns, each with the width its cells are padded to. The skeleton file is a
 /// link rather than a padded cell, so it sits at the end.
-const COLUMNS: [(&str, usize); 4] = [
-    ("Gender/race", 11),
-    ("Set", 5),
-    ("Skeleton", 8),
-    ("File", 8),
-];
+const COLUMNS: [(&str, usize); 4] = [("Body", 28), ("Set", 5), ("Skeleton", 8), ("File", 8)];
 
 /// The four templates that ship: what a set ID names in each, and the directory and letter its
 /// skeletons are filed under.
@@ -80,7 +75,7 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) -> Option<String> {
     table(ui, &COLUMNS, file.rows.len(), |ui, index| {
         let (gender_race, set, id) = file.rows[index];
         let cells = [
-            format!("c{gender_race:04}"),
+            chara::described(gender_race),
             set.to_string(),
             id.to_string(),
         ];
