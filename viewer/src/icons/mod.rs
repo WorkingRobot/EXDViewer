@@ -18,7 +18,7 @@ use crate::{
     settings::{ALWAYS_HIRES, LANGUAGE, api_base},
     utils::{
         CollapsibleSidePanel, IconManager, ManagedIcon, PromiseKind, Side, TrackedPromise,
-        yield_to_ui,
+        icon_modal, yield_to_ui,
     },
 };
 
@@ -71,6 +71,9 @@ pub struct IconBrowser {
     lookup: String,
     selected: Option<u32>,
     pending: Option<u32>,
+    /// An icon the grid has yet to bring into view.
+    scroll_to: Option<u32>,
+    modal_icon: Option<u32>,
     pages: usize,
     zoom: usize,
     order_by_count: bool,
@@ -93,6 +96,8 @@ impl Default for IconBrowser {
             lookup: String::new(),
             selected: None,
             pending: None,
+            scroll_to: None,
+            modal_icon: None,
             pages: 1,
             zoom: 1,
             order_by_count: true,
@@ -136,11 +141,20 @@ impl IconBrowser {
         self.poll(ui.ctx(), backend);
         if let Some(pending) = self.pending.take() {
             self.selected = Some(pending);
+            self.scroll_to = Some(pending);
         }
 
         self.side_panel(ui, backend);
         let followed = self.detail_panel(ui, backend, icons);
         let opened = self.grid_panel(ui, backend, icons);
+
+        if let Some(icon_id) = self.modal_icon {
+            let path = get_icon_path(backend.icons(), icon_id, true, LANGUAGE.get(ui.ctx()));
+            let source = icon_source(icons, backend, ui.ctx(), &path);
+            if icon_modal(ui.ctx(), icon_id, source) {
+                self.modal_icon = None;
+            }
+        }
 
         followed
             .map(Action::Navigate)
@@ -412,28 +426,12 @@ impl IconBrowser {
         self.rebuild_shown(backend);
         let mut opened = None;
         CentralPanel::default().show(ui, |ui| {
-            let tree_collapsed = CollapsibleSidePanel::is_collapsed(ui.ctx(), "icon_tree");
-            let info_collapsed = CollapsibleSidePanel::is_collapsed(ui.ctx(), "icon_info");
-            if tree_collapsed || info_collapsed {
-                Panel::top("icon_reexpand").show(ui, |ui| {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if tree_collapsed {
-                            CollapsibleSidePanel::draw_arrow(ui, "icon_tree", Side::Left);
-                        }
-                        if info_collapsed {
-                            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                                CollapsibleSidePanel::draw_arrow(ui, "icon_info", Side::Right);
-                            });
-                        }
-                    });
-                    ui.add_space(4.0);
-                });
-            }
-
             Panel::top("icon_grid_header").show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
+                    if CollapsibleSidePanel::is_collapsed(ui.ctx(), "icon_tree") {
+                        CollapsibleSidePanel::draw_arrow(ui, "icon_tree", Side::Left);
+                    }
                     let capped = self.shown.len().min(self.pages * PAGE);
                     ui.label(if capped < self.shown.len() {
                         format!("{} icons, scroll for more", thousands(capped))
@@ -441,6 +439,9 @@ impl IconBrowser {
                         format!("{} icons", thousands(self.shown.len()))
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if CollapsibleSidePanel::is_collapsed(ui.ctx(), "icon_info") {
+                            CollapsibleSidePanel::draw_arrow(ui, "icon_info", Side::Right);
+                        }
                         if ui
                             .add_enabled(self.zoom + 1 < ZOOM_STEPS.len(), Button::new("+"))
                             .on_hover_text("Zoom in")
@@ -495,36 +496,58 @@ impl IconBrowser {
         let step = cell + spacing.y + label_height;
         let columns = (((ui.available_width() + spacing.x) / (cell + spacing.x)) as usize).max(1);
 
+        let scroll_row = self.scroll_to.take().and_then(|icon_id| {
+            let slot = self.shown.binary_search(&icon_id).ok()?;
+            self.pages = self.pages.max((slot + 1).div_ceil(PAGE));
+            Some(slot / columns)
+        });
+
         let capped = self.shown.len().min(self.pages * PAGE);
         let rows = capped.div_ceil(columns);
         let hires = ALWAYS_HIRES.get(ui.ctx());
         let language = LANGUAGE.get(ui.ctx());
 
+        let mut area = ScrollArea::vertical().auto_shrink(false);
+        if let Some(row) = scroll_row {
+            // A row off the drawn window has no widget to scroll to, so place the offset by hand.
+            // `show_rows` pitches rows by the height it is given plus one item spacing.
+            let pitch = step + spacing.y;
+            let height = ui.available_height();
+            let last = (rows as f32 * pitch - spacing.y - height).max(0.0);
+            area = area.vertical_scroll_offset(
+                (row as f32 * pitch + (step - height) / 2.0).clamp(0.0, last),
+            );
+        }
+
         let mut opened = None;
         let mut at_end = false;
         let mut on_screen = 0..0;
         let mut drawn = Vec::new();
-        ScrollArea::vertical()
-            .auto_shrink(false)
-            .show_rows(ui, step, rows, |ui, range| {
-                at_end = range.end >= rows;
-                on_screen = (range.start * columns)..(range.end * columns).min(capped);
-                for row in range {
-                    ui.horizontal(|ui| {
-                        for slot in row * columns..((row + 1) * columns).min(capped) {
-                            let icon_id = self.shown[slot];
-                            let (clicked, uri) =
-                                self.draw_cell(ui, backend, icons, icon_id, cell, hires, language);
-                            if clicked {
-                                opened = Some(icon_id);
-                            }
-                            if let Some(uri) = uri {
-                                drawn.push((icon_id, uri));
-                            }
+        area.show_rows(ui, step, rows, |ui, range| {
+            at_end = range.end >= rows;
+            on_screen = (range.start * columns)..(range.end * columns).min(capped);
+            for row in range {
+                ui.horizontal(|ui| {
+                    for slot in row * columns..((row + 1) * columns).min(capped) {
+                        let icon_id = self.shown[slot];
+                        let (clicked, uri) =
+                            self.draw_cell(ui, backend, icons, icon_id, cell, hires, language);
+                        if clicked {
+                            opened = Some(icon_id);
                         }
-                    });
-                }
-            });
+                        if let Some(uri) = uri {
+                            drawn.push((icon_id, uri));
+                        }
+                    }
+                });
+            }
+        });
+
+        // A click settles the selection here so that the trip back through the URL does not read as
+        // a fresh request and scroll the grid out from under it.
+        if let Some(icon_id) = opened {
+            self.selected = Some(icon_id);
+        }
 
         for (icon_id, uri) in drawn {
             if self.loaded_ids.insert(icon_id) {
@@ -583,11 +606,7 @@ impl IconBrowser {
         language: Language,
     ) -> (bool, Option<String>) {
         let path = get_icon_path(backend.icons(), icon_id, hires, language);
-        let excel = backend.excel().clone();
-        let source = icons.get_or_insert_icon(&path, ui.ctx(), || {
-            let path = path.clone();
-            TrackedPromise::spawn_local(async move { excel.get_icon(&path).await })
-        });
+        let source = icon_source(icons, backend, ui.ctx(), &path);
 
         let uri = match &source {
             ManagedIcon::Loaded(egui::ImageSource::Uri(uri))
@@ -597,8 +616,7 @@ impl IconBrowser {
             }
             _ => None,
         };
-        let mut clicked = false;
-        ui.vertical(|ui| {
+        let cell_ui = ui.vertical(|ui| {
             ui.set_width(cell);
             let response = match source {
                 ManagedIcon::Loaded(image) => {
@@ -627,21 +645,25 @@ impl IconBrowser {
                     response
                 }
             };
-            if self.selected == Some(icon_id) {
-                ui.painter().rect_stroke(
-                    response.rect.expand(2.0),
-                    2.0,
-                    ui.visuals().selection.stroke,
-                    egui::StrokeKind::Outside,
-                );
-            }
-            clicked = response
+            let clicked = response
                 .on_hover_text(format!("Id: {icon_id}\nPath: {path}"))
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked();
-            ui.label(RichText::new(format!("{icon_id:06}")).small());
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new(format!("{icon_id:06}")).small());
+            });
+            clicked
         });
-        (clicked, uri)
+        if self.selected == Some(icon_id) {
+            // Rows sit one item spacing apart, so the stroke only has room to grow by half of it.
+            ui.painter().rect_stroke(
+                cell_ui.response.rect.expand2(Vec2::new(2.0, 1.0)),
+                2.0,
+                ui.visuals().selection.stroke,
+                egui::StrokeKind::Outside,
+            );
+        }
+        (cell_ui.inner, uri)
     }
 
     fn detail_panel(
@@ -668,7 +690,14 @@ impl IconBrowser {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         CollapsibleSidePanel::draw_arrow(ui, "icon_info", Side::Right);
-                        ui.heading(format!("Icon {icon_id:06}"));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            // Balances the arrow, so the heading centers on the panel rather than
+                            // on the space left over beside it.
+                            ui.add_space(ui.spacing().indent);
+                            ui.vertical_centered_justified(|ui| {
+                                ui.heading(format!("Icon {icon_id:06}"));
+                            });
+                        });
                     });
                     ui.add_space(4.0);
                 });
@@ -681,7 +710,7 @@ impl IconBrowser {
     }
 
     fn draw_detail(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         backend: &Backend,
         icons: &IconManager,
@@ -691,27 +720,35 @@ impl IconBrowser {
         let language = LANGUAGE.get(ui.ctx());
         let path = get_icon_path(backend.icons(), icon_id, hires, language);
 
-        let excel = backend.excel().clone();
-        let source = icons.get_or_insert_icon(&path, ui.ctx(), || {
-            let path = path.clone();
-            TrackedPromise::spawn_local(async move { excel.get_icon(&path).await })
-        });
-        let side = ui.available_width().min(192.0);
+        let source = icon_source(icons, backend, ui.ctx(), &path);
+        let bounds = Vec2::splat(ui.available_width().min(192.0));
         let mut size = None;
-        ui.vertical_centered(|ui| match source {
-            ManagedIcon::Loaded(image) => {
-                size = pixel_size(ui.ctx(), &image);
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
-                checkerboard(ui, rect);
-                fit_into(ui, image, rect);
-            }
-            ManagedIcon::Failed(_) => {
-                ui.colored_label(Color32::RED, "Failed to load icon");
-            }
-            ManagedIcon::Loading | ManagedIcon::NotLoaded => {
-                ui.spinner();
-            }
-        });
+        let zoomed = ui
+            .vertical_centered(|ui| match source {
+                ManagedIcon::Loaded(image) => {
+                    size = pixel_size(ui.ctx(), &image);
+                    let image = egui::Image::new(image).maintain_aspect_ratio(true);
+                    let fitted = image.load_and_calc_size(ui, bounds).unwrap_or(bounds);
+                    let (rect, response) = ui.allocate_exact_size(fitted, Sense::click());
+                    checkerboard(ui, rect);
+                    image.paint_at(ui, rect);
+                    response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                }
+                ManagedIcon::Failed(_) => {
+                    ui.colored_label(Color32::RED, "Failed to load icon");
+                    false
+                }
+                ManagedIcon::Loading | ManagedIcon::NotLoaded => {
+                    ui.spinner();
+                    false
+                }
+            })
+            .inner;
+        if zoomed {
+            self.modal_icon = Some(icon_id);
+        }
 
         ui.add_space(4.0);
         ui.label(
@@ -781,6 +818,19 @@ fn route_of(sheet: &str, use_: &Use) -> String {
     } else {
         format!("/sheet/{sheet}#R{}", use_.row)
     }
+}
+
+fn icon_source(
+    icons: &IconManager,
+    backend: &Backend,
+    ctx: &egui::Context,
+    path: &str,
+) -> ManagedIcon {
+    let excel = backend.excel().clone();
+    icons.get_or_insert_icon(path, ctx, || {
+        let path = path.to_owned();
+        TrackedPromise::spawn_local(async move { excel.get_icon(&path).await })
+    })
 }
 
 /// The icon's own dimensions, not the size it is drawn at.

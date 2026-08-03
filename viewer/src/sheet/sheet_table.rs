@@ -1,6 +1,4 @@
-use egui::{
-    Align, Color32, Id, InnerResponse, Layout, Margin, Modal, RichText, Spinner, UiBuilder,
-};
+use egui::{Align, Color32, Id, InnerResponse, Layout, Margin, RichText, UiBuilder};
 use egui_table::TableDelegate;
 use itertools::Itertools;
 use lru::LruCache;
@@ -32,7 +30,7 @@ use crate::{
             MULTILINE2_STOPWATCH, MULTILINE3_STOPWATCH, MULTILINE4_STOPWATCH,
         },
     },
-    utils::{ManagedIcon, PromiseKind, TrackedPromise, yield_to_ui},
+    utils::{PromiseKind, TrackedPromise, icon_modal, yield_to_ui},
 };
 
 use super::{cell::CellResponse, table_context::TableContext};
@@ -160,49 +158,16 @@ impl SheetTable {
             table.show(ui, self);
         });
 
-        if let Some(icon_id) = &self.modal_image {
-            let icon_id = *icon_id;
-            let resp = Modal::new(Id::new("icon-modal"))
-                .area(Modal::default_area(Id::new(format!(
-                    "icon-modal-{icon_id}"
-                ))))
-                .show(ui.ctx(), |ui| {
-                    let global = self.context.global();
-                    let (excel, icon_mgr) =
-                        (global.backend().excel().clone(), global.icon_manager());
-                    let path =
-                        get_icon_path(global.backend().icons(), icon_id, true, global.language());
-                    let resp = icon_mgr.get_or_insert_icon(&path, ui.ctx(), || {
-                        log::debug!("Hires icon not found in cache: {icon_id}");
-                        let path = path.clone();
-                        TrackedPromise::spawn_local(async move { excel.get_icon(&path).await })
-                    });
-                    match resp {
-                        ManagedIcon::Loaded(icon) => {
-                            ui.add(egui::Image::new(icon).fit_to_exact_size(ui.available_size()))
-                        }
-                        ManagedIcon::Failed(e) => {
-                            ui.label("Failed to load icon").on_hover_text(e.to_string())
-                        }
-                        ManagedIcon::Loading => {
-                            let (rect, _) =
-                                ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-                            ui.scope_builder(
-                                UiBuilder::new()
-                                    .max_rect(rect)
-                                    .layout(Layout::centered_and_justified(ui.layout().main_dir())),
-                                |ui| {
-                                    ui.add(Spinner::new().size(
-                                        ui.text_style_height(&egui::TextStyle::Heading) * 3.0,
-                                    ))
-                                },
-                            )
-                            .inner
-                        }
-                        ManagedIcon::NotLoaded => ui.label("Icon not loaded"),
-                    }
-                });
-            if resp.should_close() {
+        if let Some(icon_id) = self.modal_image {
+            let global = self.context.global();
+            let (excel, icon_mgr) = (global.backend().excel().clone(), global.icon_manager());
+            let path = get_icon_path(global.backend().icons(), icon_id, true, global.language());
+            let icon = icon_mgr.get_or_insert_icon(&path, ui.ctx(), || {
+                log::debug!("Hires icon not found in cache: {icon_id}");
+                let path = path.clone();
+                TrackedPromise::spawn_local(async move { excel.get_icon(&path).await })
+            });
+            if icon_modal(ui.ctx(), icon_id, icon) {
                 self.modal_image = None;
             }
         }
