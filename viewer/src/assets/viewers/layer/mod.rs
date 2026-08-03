@@ -747,7 +747,8 @@ pub fn ui(
                     let named = deps.text(ui.ctx(), backend, TERRITORY, u32::from(territory));
                     ui.label(RichText::new(named.unwrap_or_default()).monospace());
                     if duty > 0 {
-                        let named = deps.text(ui.ctx(), backend, DUTY, u32::from(duty));
+                        // The duty's leading text is an internal code; its name follows.
+                        let named = deps.text_at(ui.ctx(), backend, DUTY, 1, u32::from(duty));
                         ui.label(
                             RichText::new(named.map_or_else(
                                 || format!("duty {duty}"),

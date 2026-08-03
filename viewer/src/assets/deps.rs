@@ -88,7 +88,8 @@ pub struct Deps {
     textures: LruCache<String, Load<DecodedTexture, Option<TextureHandle>>>,
     atlases: LruCache<String, Load<DecodedTexture, Option<Atlas>>>,
     sheets: LruCache<String, Load<DecodedTexture, Option<TextureHandle>>>,
-    strings: HashMap<(String, Language), Load<Strings>>,
+    /// Keyed by sheet, language and which of a row's strings was asked for.
+    strings: HashMap<(String, Language, usize), Load<Strings>>,
 }
 
 impl Default for Deps {
@@ -172,15 +173,28 @@ impl Deps {
         sheet: &str,
         row: u32,
     ) -> Option<&str> {
+        self.text_at(ctx, backend, sheet, 0, row)
+    }
+
+    /// The same, preferring the `nth` string a row writes. A sheet whose leading text is an
+    /// internal code carries the name it is known by further along.
+    pub fn text_at(
+        &mut self,
+        ctx: &egui::Context,
+        backend: &Backend,
+        sheet: &str,
+        nth: usize,
+        row: u32,
+    ) -> Option<&str> {
         let language = LANGUAGE.get(ctx);
         let entry = self
             .strings
-            .entry((sheet.to_owned(), language))
+            .entry((sheet.to_owned(), language, nth))
             .or_insert_with(|| {
                 let excel = backend.excel().clone();
                 let name = sheet.to_owned();
                 Load::Loading(TrackedPromise::spawn_local(async move {
-                    read_strings(excel, name, language).await
+                    read_strings(excel, name, language, nth).await
                 }))
             });
         if let Load::Loading(promise) = entry
@@ -204,23 +218,39 @@ impl Deps {
 
 /// Read a sheet's text into a map from row id, dropping the rows holding nothing.
 ///
-/// The text is the first string written into a row, which is not always the first column.
-async fn read_strings(excel: CachedProvider, name: String, language: Language) -> Result<Strings> {
+/// A row is read at the `nth` of the sheet's string columns, falling back to whichever of the rest
+/// it did write where that one is blank.
+async fn read_strings(
+    excel: CachedProvider,
+    name: String,
+    language: Language,
+    nth: usize,
+) -> Result<Strings> {
     let sheet = excel.get_sheet(&name, language).await?;
-    let offset = sheet
+    let mut offsets = sheet
         .columns()
         .iter()
         .filter(|column| column.kind() == ColumnKind::String)
         .map(|column| u32::from(column.offset()))
-        .min()
-        .ok_or_else(|| anyhow!("sheet {name} holds no text"))?;
+        .collect::<Vec<_>>();
+    offsets.sort_unstable();
+    if offsets.is_empty() {
+        return Err(anyhow!("sheet {name} holds no text"));
+    }
 
     let strings = sheet
         .get_row_ids()
         .filter_map(|row_id| {
             let row = sheet.get_row(row_id).ok()?;
-            let text = row.read_string(offset).ok()?.format().to_string();
-            (!text.is_empty()).then_some((row_id, text))
+            let text = offsets
+                .iter()
+                .skip(nth)
+                .chain(offsets.iter().take(nth))
+                .find_map(|offset| {
+                    let text = row.read_string(*offset).ok()?.format().to_string();
+                    (!text.is_empty()).then_some(text)
+                })?;
+            Some((row_id, text))
         })
         .collect();
     Ok(Arc::new(strings))
