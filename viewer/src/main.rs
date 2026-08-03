@@ -97,7 +97,7 @@ fn main() {
                     };
                     let key = egui::Key::from_name(&event.key());
                     if let Some(key) = key {
-                        for shortcut in &[GOTO_ROW, GOTO_SHEET] {
+                        for shortcut in &[GOTO_ROW, GOTO_SHEET, PALETTE] {
                             if modifiers.matches_logically(shortcut.modifiers)
                                 && key == shortcut.logical_key
                             {

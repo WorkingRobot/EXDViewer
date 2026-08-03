@@ -14,10 +14,12 @@ use egui::{
     containers::panel::Panel, pos2, vec2,
 };
 use nucleo_matcher::pattern::Pattern;
+use regex_lite::{Regex, RegexBuilder};
 
 use crate::backend::Backend;
 use crate::data::IconIndex;
 use crate::excel::provider::ExcelProvider;
+use crate::goto::{ListNav, Palette, SUGGESTIONS};
 use crate::settings::api_base;
 use crate::utils::{CollapsibleSidePanel, FuzzyMatcher, Side, TrackedPromise};
 
@@ -38,6 +40,7 @@ const MAX_RESULTS: usize = 500;
 const EXISTS_DELAY: Duration = Duration::from_millis(250);
 /// Width the extension menu is held to.
 const EXTENSION_MENU_WIDTH: f32 = 50.0;
+const SEARCH_ID: &str = "asset_search";
 
 /// One entry in the flattened view of the tree that is currently on screen.
 enum Row {
@@ -561,13 +564,75 @@ enum Load<T: Send + 'static, R = T> {
     Failed(String),
 }
 
+/// How the text of a query is matched against a path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchMode {
+    Fuzzy,
+    Strict,
+    Regex,
+}
+
+impl SearchMode {
+    const ALL: [Self; 3] = [Self::Fuzzy, Self::Strict, Self::Regex];
+
+    fn emoji(self) -> &'static str {
+        match self {
+            Self::Fuzzy => "🔍",
+            Self::Strict => "≈",
+            Self::Regex => "\u{ff0a}",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Fuzzy => "Fuzzy",
+            Self::Strict => "Contains",
+            Self::Regex => "Regex",
+        }
+    }
+}
+
+/// What a query matches with, compiled once when the scan starts.
+enum Match {
+    /// Every name the filters left, which is what `ext:stm` on its own has to mean. The fuzzy
+    /// matcher scores nothing against an empty pattern, so it cannot answer that itself.
+    All,
+    Fuzzy(Pattern),
+    Contains(String),
+    Regex(Regex),
+    /// A pattern that would not compile, as the reason it did not.
+    Invalid(String),
+}
+
+/// Compile the query text, which is what the sweep then holds rather than the text itself.
+///
+/// Only a fuzzy query takes a `/` to mean the path: the other two modes are already spelled against
+/// whole paths, and a regex is full of separators that mean nothing of the sort.
+fn matching(mode: SearchMode, query: &Query) -> Match {
+    if query.text.is_empty() {
+        return Match::All;
+    }
+    match mode {
+        SearchMode::Fuzzy if !query.literal => {
+            Match::Fuzzy(FuzzyMatcher::parse_pattern(&query.text))
+        }
+        SearchMode::Fuzzy | SearchMode::Strict => Match::Contains(query.text.clone()),
+        // Compiled from the query as typed: the sweep is case-insensitive throughout, and lowercasing
+        // a pattern would turn `\S` into `\s` and flatten every class along with it.
+        SearchMode::Regex => match RegexBuilder::new(&query.text)
+            .case_insensitive(true)
+            .build()
+        {
+            Ok(regex) => Match::Regex(regex),
+            Err(e) => Match::Invalid(e.to_string()),
+        },
+    }
+}
+
 struct Scan {
-    pattern: Pattern,
-    /// The query as typed, lowercased. Empty when nothing but filter terms were given.
-    query: String,
+    matching: Match,
     /// The suffix a name has to end with, `.` included, or empty for no extension filter.
     suffix: String,
-    literal: bool,
     cursor: usize,
     hits: Vec<(u32, String)>,
     /// Everything that matched, which outruns `hits` once the cap is reached.
@@ -787,10 +852,14 @@ pub struct AssetBrowser {
     hex_page: usize,
     goto: Option<String>,
     search: String,
+    mode: SearchMode,
     /// Show matches in the folders they sit in rather than as one flat list.
     grouped: bool,
     scan: Option<Scan>,
     matcher: FuzzyMatcher,
+    palette: Option<Palette>,
+    /// Keyboard cursor over the flat search results.
+    nav: ListNav,
     expanded: HashMap<usize, bool>,
     /// Folders the user collapsed in the results, keyed by path: the result tree is rebuilt from
     /// whatever matched, so it has no stable node indices to key on the way the full tree does.
@@ -817,9 +886,12 @@ impl Default for AssetBrowser {
             hex_page: 0,
             goto: None,
             search: String::new(),
+            mode: SearchMode::Fuzzy,
             grouped: true,
             scan: None,
             matcher: FuzzyMatcher::new(),
+            palette: None,
+            nav: ListNav::default(),
             expanded: HashMap::new(),
             collapsed: HashSet::new(),
             selected: None,
@@ -895,20 +967,65 @@ impl AssetBrowser {
         }
     }
 
+    pub fn open_palette(&mut self) {
+        self.palette = Some(Palette::new(
+            "Find Asset…",
+            "Search paths",
+            self.search.clone(),
+        ));
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<Action> {
         self.poll(ui.ctx(), backend);
         self.apply_pending();
+
+        let picked = self.draw_palette(ui.ctx(), backend);
+        let listed = !self.grouped
+            && !self.search.is_empty()
+            && !CollapsibleSidePanel::is_collapsed(ui.ctx(), "asset_tree");
+        self.nav
+            .claim(ui.ctx(), listed, Some(egui::Id::new(SEARCH_ID)));
+
         let clicked = self.side_panel(ui, backend);
         let followed = self.detail_panel(ui, backend);
         let moved = self
             .goto
             .take()
             .map(Action::Navigate)
-            .or_else(|| clicked.or(followed).map(Action::Select));
+            .or_else(|| picked.or(clicked).or(followed).map(Action::Select));
         // A redirect only restores a URL the app is already showing the right file for, so anything
         // the user did this frame supersedes it rather than firing over the top a frame later.
         let redirect = self.redirect.take().map(Action::Redirect);
         moved.or(redirect)
+    }
+
+    /// Writes the side panel's query and reads its sweep, so the corpus is walked once however the
+    /// search was started.
+    fn draw_palette(&mut self, ctx: &egui::Context, backend: &Backend) -> Option<String> {
+        let palette = self.palette.take()?;
+        match palette.draw(ctx, |query| {
+            if self.search != query {
+                query.clone_into(&mut self.search);
+                self.scan = None;
+            }
+            if self.search.is_empty() {
+                self.scan = None;
+                return Vec::new();
+            }
+            self.advance_scan(ctx, backend);
+            self.scan
+                .iter()
+                .flat_map(|scan| &scan.hits)
+                .take(SUGGESTIONS)
+                .map(|(_, path)| (path.clone(), path.clone()))
+                .collect()
+        }) {
+            Ok(picked) => picked,
+            Err(palette) => {
+                self.palette = Some(palette);
+                None
+            }
+        }
     }
 
     fn poll(&mut self, ctx: &egui::Context, backend: &Backend) {
@@ -997,6 +1114,7 @@ impl AssetBrowser {
 
     fn side_panel(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<String> {
         let mut clicked = None;
+        let mut nav = std::mem::take(&mut self.nav);
         CollapsibleSidePanel::new("asset_tree", Side::Left).show(ui, |ui, is_open| {
             if !is_open {
                 return;
@@ -1022,6 +1140,22 @@ impl AssetBrowser {
                     }
                     ui.toggle_value(&mut self.grouped, "🌳")
                         .on_hover_text("View as Tree");
+                    let mode = self.mode;
+                    ui.menu_button(mode.emoji(), |ui| {
+                        for option in SearchMode::ALL {
+                            if ui
+                                .selectable_label(mode == option, option.emoji())
+                                .on_hover_text(option.label())
+                                .clicked()
+                            {
+                                self.mode = option;
+                                restart = true;
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(format!("Search mode: {}", mode.label()));
                     let picked = parse_query(&self.search).suffix;
                     ui.menu_button("📄", |ui| {
                         ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
@@ -1047,10 +1181,13 @@ impl AssetBrowser {
                     restart |= ui
                         .add_sized(
                             Vec2::new(ui.available_width(), 0.0),
-                            TextEdit::singleline(&mut self.search).hint_text("Search paths"),
+                            TextEdit::singleline(&mut self.search)
+                                .id(egui::Id::new(SEARCH_ID))
+                                .hint_text("Search paths"),
                         )
                         .on_hover_text(
-                            "ext:stm for one extension, or include a / to match the path itself",
+                            "ext:stm for one extension, or include a / to match a fuzzy query \
+                             against the path itself",
                         )
                         .changed();
                 });
@@ -1075,11 +1212,12 @@ impl AssetBrowser {
                         self.scan = None;
                         self.draw_tree(ui)
                     } else {
-                        self.draw_search(ui, backend)
+                        self.draw_search(ui, backend, &mut nav)
                     };
                 }
             });
         });
+        self.nav = nav;
         clicked
     }
 
@@ -1186,7 +1324,12 @@ impl AssetBrowser {
         clicked
     }
 
-    fn draw_search(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<String> {
+    fn draw_search(
+        &mut self,
+        ui: &mut egui::Ui,
+        backend: &Backend,
+        nav: &mut ListNav,
+    ) -> Option<String> {
         self.advance_scan(ui.ctx(), backend);
         let Some(scan) = &self.scan else {
             return None;
@@ -1240,7 +1383,9 @@ impl AssetBrowser {
         }
 
         let scanning = scan.cursor < total;
-        if scanning {
+        if let Match::Invalid(error) = &scan.matching {
+            ui.label(RichText::new(error).weak());
+        } else if scanning {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(format!(
@@ -1268,27 +1413,28 @@ impl AssetBrowser {
 
         let row_height = ui.text_style_height(&egui::TextStyle::Button);
         if !self.grouped {
-            ScrollArea::vertical().auto_shrink(false).show_rows(
-                ui,
-                row_height,
-                scan.hits.len(),
-                |ui, range| {
-                    ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
-                        for (_, path) in &scan.hits[range] {
-                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                            let selected = self.selected.as_deref() == Some(path.as_str());
-                            if Button::selectable(selected, path.as_str())
-                                .ui(ui)
-                                .on_hover_text(path)
-                                .clicked()
-                            {
-                                clicked = Some(path.clone());
-                            }
+            let picked = nav.apply(scan.hits.len()).map(|at| scan.hits[at].1.clone());
+            let mut area = ScrollArea::vertical().auto_shrink(false);
+            if let Some(offset) = nav.scroll(ui, row_height, scan.hits.len()) {
+                area = area.vertical_scroll_offset(offset);
+            }
+            let output = area.show_rows(ui, row_height, scan.hits.len(), |ui, range| {
+                ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
+                    for (at, (_, path)) in scan.hits[range.clone()].iter().enumerate() {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                        let selected = self.selected.as_deref() == Some(path.as_str());
+                        let response = Button::selectable(selected, path.as_str())
+                            .ui(ui)
+                            .on_hover_text(path);
+                        nav.mark(ui, range.start + at, response.rect);
+                        if response.clicked() {
+                            clicked = Some(path.clone());
                         }
-                    });
-                },
-            );
-            return clicked;
+                    }
+                });
+            });
+            nav.seen(&output);
+            return clicked.or(picked);
         }
 
         // Score order is what ranks a flat list, but a tree only reads as one in path order.
@@ -1370,12 +1516,11 @@ impl AssetBrowser {
         let Load::Ready(loaded) = &mut self.state else {
             return;
         };
+        let mode = self.mode;
         let scan = self.scan.get_or_insert_with(|| {
             let query = parse_query(&self.search);
             Scan {
-                pattern: FuzzyMatcher::parse_pattern(&query.text),
-                literal: query.literal,
-                query: query.text.to_lowercase(),
+                matching: matching(mode, &query),
                 suffix: query.suffix,
                 cursor: 0,
                 hits: Vec::new(),
@@ -1423,6 +1568,12 @@ impl AssetBrowser {
         }
 
         let total = loaded.paths.dirs().len();
+        // A pattern that will not compile matches nothing, and sweeping the corpus to find that out
+        // would stall on every keystroke of one still being typed.
+        if matches!(scan.matching, Match::Invalid(_)) {
+            scan.cursor = total;
+            return;
+        }
         if scan.cursor >= total {
             return;
         }
@@ -1442,17 +1593,17 @@ impl AssetBrowser {
                     continue;
                 }
                 let path = format!("{dir_path}/{name}");
-                // An empty query is every file the filters left, which is what `ext:stm` on its own
-                // has to mean. The fuzzy matcher scores nothing against an empty pattern, so asking
-                // it here would answer that with no matches at all.
-                let score = if scan.query.is_empty() {
-                    Some(0)
-                } else if scan.literal {
-                    contains_ignore_ascii_case(&path, &scan.query).then_some(0)
-                } else {
-                    self.matcher
-                        .score_one(&scan.pattern, &path)
-                        .map(|score| score.get())
+                let score = match &scan.matching {
+                    Match::All => Some(0),
+                    Match::Fuzzy(pattern) => self
+                        .matcher
+                        .score_one(pattern, &path)
+                        .map(|score| score.get()),
+                    Match::Contains(needle) => {
+                        contains_ignore_ascii_case(&path, needle).then_some(0)
+                    }
+                    Match::Regex(regex) => regex.is_match(&path).then_some(0),
+                    Match::Invalid(_) => None,
                 };
                 if let Some(score) = score {
                     scan.matched += 1;
@@ -1856,19 +2007,19 @@ const EXTENSIONS: &[(&str, &str, Viewer)] = &[
     ("atch", "Attachment points", Viewer::Atch),
     ("avfx", "Animated VFX", Viewer::Raw),
     ("uld", "UI layout", Viewer::Uld),
-    ("lgb", "Layer group, a zone's placed objects", Viewer::Raw),
+    ("lgb", "Layer group, a zone's placed objects", Viewer::Lgb),
     (
         "sgb",
         "Shared group, a reusable set of objects",
-        Viewer::Raw,
+        Viewer::Sgb,
     ),
-    ("lvb", "Level variable binary", Viewer::Raw),
-    ("svb", "Sky visibility binary", Viewer::Raw),
-    ("uwb", "Zone bounds or environment volume", Viewer::Raw),
-    ("envb", "Environment binary", Viewer::Raw),
-    ("lcb", "Light culling binary", Viewer::Raw),
-    ("obsb", "Object behavior set binary", Viewer::Raw),
-    ("essb", "Environment sound scrape binary", Viewer::Raw),
+    ("lvb", "Level variable binary", Viewer::Lvb),
+    ("svb", "Sky visibility binary", Viewer::Svb),
+    ("uwb", "Underwater settings", Viewer::Uwb),
+    ("envb", "Environment binary", Viewer::Envb),
+    ("lcb", "Light culling binary", Viewer::Lcb),
+    ("obsb", "Object behavior set binary", Viewer::Obsb),
+    ("essb", "Environment sound binary", Viewer::Essb),
     ("luab", "Lua bytecode", Viewer::Luab),
     ("cutb", "Cutscene", Viewer::Raw),
     ("imc", "Image change data", Viewer::Imc),
@@ -1878,7 +2029,7 @@ const EXTENSIONS: &[(&str, &str, Viewer)] = &[
     ("est", "Equipment skeleton template", Viewer::Est),
     ("evp", "Equipment VFX parameters", Viewer::Raw),
     ("pbd", "Bone deformers", Viewer::Raw),
-    ("amb", "Ambient set placement", Viewer::Raw),
+    ("amb", "Ambient light", Viewer::Amb),
     ("tera", "Terrain", Viewer::Tera),
     ("hwc", "Handware cursor", Viewer::Raw),
     ("fdt", "Font data table", Viewer::Font),
@@ -2105,6 +2256,52 @@ mod tests {
             "the filter term is not left to match on"
         );
         assert!(!query.literal);
+    }
+
+    /// A `/` means the path only where a query is scored fuzzily. The other two modes are spelled
+    /// against whole paths already, and a regex is full of separators that mean nothing of the sort.
+    #[test]
+    fn only_a_fuzzy_query_reads_a_slash_as_the_path() {
+        let query = parse_query("bg/ffxiv/.*");
+        assert!(matches!(
+            matching(SearchMode::Fuzzy, &query),
+            Match::Contains(_)
+        ));
+        assert!(matches!(
+            matching(SearchMode::Strict, &query),
+            Match::Contains(_)
+        ));
+        assert!(matches!(
+            matching(SearchMode::Regex, &query),
+            Match::Regex(_)
+        ));
+    }
+
+    /// A pattern still being typed must leave the browser usable rather than throwing.
+    #[test]
+    fn an_uncompilable_pattern_is_kept_as_the_reason_it_did_not_compile() {
+        let Match::Invalid(reason) = matching(SearchMode::Regex, &parse_query("bg/(")) else {
+            panic!("expected an invalid pattern")
+        };
+        assert!(!reason.is_empty());
+    }
+
+    /// The extension filter has to answer with everything it left, whatever mode is on.
+    #[test]
+    fn a_query_of_nothing_but_filters_matches_everything() {
+        let query = parse_query("ext:stm");
+        for mode in SearchMode::ALL {
+            assert!(matches!(matching(mode, &query), Match::All));
+        }
+    }
+
+    /// Case is folded for every mode, so the same file is found however it was typed.
+    #[test]
+    fn a_regex_ignores_case() {
+        let Match::Regex(regex) = matching(SearchMode::Regex, &parse_query("SEA_S1")) else {
+            panic!("expected a regex")
+        };
+        assert!(regex.is_match("bg/ffxiv/sea_s1/twn/s1t1/level/bg.lgb"));
     }
 
     /// Picking from the menu is a replacement rather than another term, so picking twice does not

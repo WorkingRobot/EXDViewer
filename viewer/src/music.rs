@@ -18,10 +18,13 @@ use crate::backend::Backend;
 use crate::data::{FileProvider, FileProviderExt};
 use crate::excel::base::CachedProvider;
 use crate::excel::provider::{ExcelHeader, ExcelProvider, ExcelSheet};
+use crate::goto::{ListNav, Palette, SUGGESTIONS};
 use crate::settings::{LANGUAGE, api_base};
 use crate::utils::{
     CollapsibleSidePanel, FuzzyMatcher, PromiseKind, Side, TrackedPromise, fetch_url_str,
 };
+
+const FILTER_ID: &str = "music_filter";
 
 #[derive(Deserialize, Default)]
 struct SongInfo {
@@ -126,6 +129,8 @@ pub struct MusicPlayer {
     rows: Vec<TrackRow>,
     rows_stale: bool,
     matcher: FuzzyMatcher,
+    palette: Option<Palette>,
+    nav: ListNav,
     scrub: Option<f64>,
     viz: Vec<f32>,
 }
@@ -149,6 +154,8 @@ impl Default for MusicPlayer {
             rows: Vec::new(),
             rows_stale: true,
             matcher: FuzzyMatcher::new(),
+            palette: None,
+            nav: ListNav::default(),
             scrub: None,
             viz: Vec::new(),
         }
@@ -206,10 +213,17 @@ impl MusicPlayer {
             .or(self.pending);
     }
 
+    pub fn open_palette(&mut self) {
+        self.palette = Some(Palette::new("Find Track…", "Filter", self.search.clone()));
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, backend: &Backend) -> Option<u32> {
         self.poll(backend, &api_base(ui.ctx()), LANGUAGE.get(ui.ctx()));
         if let Some(player) = &mut self.player {
             player.take_media_action();
+        }
+        if self.rows_stale {
+            self.rebuild_rows();
         }
 
         let playing = self.player.as_ref().is_some_and(Player::is_playing);
@@ -219,9 +233,33 @@ impl MusicPlayer {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
 
+        let picked = self.draw_palette(ui.ctx());
+        let listed = matches!(self.index, Index::Loaded(_))
+            && !CollapsibleSidePanel::is_collapsed(ui.ctx(), "music_list");
+        self.nav
+            .claim(ui.ctx(), listed, Some(egui::Id::new(FILTER_ID)));
+
         let clicked = self.side_panel(ui);
         self.now_playing_panel(ui);
-        clicked
+        picked.or(clicked)
+    }
+
+    fn draw_palette(&mut self, ctx: &egui::Context) -> Option<u32> {
+        let palette = self.palette.take()?;
+        match palette.draw(ctx, |query| {
+            self.search = query.to_owned();
+            self.matches()
+                .into_iter()
+                .take(SUGGESTIONS)
+                .map(|row| (row.row_id, row.name.clone()))
+                .collect()
+        }) {
+            Ok(picked) => picked,
+            Err(palette) => {
+                self.palette = Some(palette);
+                None
+            }
+        }
     }
 
     fn poll(&mut self, backend: &Backend, api_url: &str, lang: Language) {
@@ -461,10 +499,8 @@ impl MusicPlayer {
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui) -> Option<u32> {
-        if self.rows_stale {
-            self.rebuild_rows();
-        }
         let mut clicked = None;
+        let mut nav = std::mem::take(&mut self.nav);
         CollapsibleSidePanel::new("music_list", Side::Left).show(ui, |ui, is_open| {
             if !is_open {
                 return;
@@ -493,7 +529,9 @@ impl MusicPlayer {
                     }
                     ui.add_sized(
                         Vec2::new(ui.available_width(), 0.0),
-                        TextEdit::singleline(&mut self.search).hint_text("Filter"),
+                        TextEdit::singleline(&mut self.search)
+                            .id(egui::Id::new(FILTER_ID))
+                            .hint_text("Filter"),
                     );
                 });
                 ui.add_space(4.0);
@@ -509,51 +547,61 @@ impl MusicPlayer {
                 Index::Failed(error) => {
                     ui.colored_label(Color32::RED, format!("Failed to load BGM list: {error}"));
                 }
-                Index::Loaded(_) => clicked = self.draw_rows(ui),
+                Index::Loaded(_) => clicked = self.draw_rows(ui, &mut nav),
             });
         });
+        self.nav = nav;
         clicked
     }
 
-    fn draw_rows(&self, ui: &mut egui::Ui) -> Option<u32> {
-        let selected = self
-            .now_playing
-            .as_ref()
-            .map(|n| n.row_id)
-            .or_else(|| self.loading.as_ref().map(|l| l.row_id));
+    /// The tracks the filter leaves, best match first.
+    fn matches(&self) -> Vec<&TrackRow> {
         let query = (!self.search.is_empty()).then_some(self.search.as_str());
-        let filtered: Vec<&TrackRow> = self.matcher.match_list_indirect(
+        self.matcher.match_list_indirect(
             query,
             self.rows
                 .iter()
                 .filter(|row| self.show_unavailable || row.available),
             |row| row.name.as_str(),
-        );
+        )
+    }
 
-        let mut clicked = None;
+    fn draw_rows(&self, ui: &mut egui::Ui, nav: &mut ListNav) -> Option<u32> {
+        let selected = self
+            .now_playing
+            .as_ref()
+            .map(|n| n.row_id)
+            .or_else(|| self.loading.as_ref().map(|l| l.row_id));
+        let filtered = self.matches();
+
+        let mut clicked = nav
+            .apply(filtered.len())
+            .filter(|at| filtered[*at].available)
+            .map(|at| filtered[at].row_id);
         let row_height = ui.text_style_height(&egui::TextStyle::Button);
-        ScrollArea::vertical().auto_shrink(false).show_rows(
-            ui,
-            row_height,
-            filtered.len(),
-            |ui, range| {
-                ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
-                    for row in &filtered[range] {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                        let response = ui
-                            .add_enabled_ui(row.available, |ui| {
-                                Button::selectable(selected == Some(row.row_id), row.name.as_str())
-                                    .ui(ui)
-                            })
-                            .inner
-                            .on_hover_ui(|ui| self.row_hover(ui, row));
-                        if response.clicked() {
-                            clicked = Some(row.row_id);
-                        }
+        let mut area = ScrollArea::vertical().auto_shrink(false);
+        if let Some(offset) = nav.scroll(ui, row_height, filtered.len()) {
+            area = area.vertical_scroll_offset(offset);
+        }
+        let output = area.show_rows(ui, row_height, filtered.len(), |ui, range| {
+            ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
+                for (at, row) in filtered[range.clone()].iter().enumerate() {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                    let response = ui
+                        .add_enabled_ui(row.available, |ui| {
+                            Button::selectable(selected == Some(row.row_id), row.name.as_str())
+                                .ui(ui)
+                        })
+                        .inner
+                        .on_hover_ui(|ui| self.row_hover(ui, row));
+                    nav.mark(ui, range.start + at, response.rect);
+                    if response.clicked() {
+                        clicked = Some(row.row_id);
                     }
-                });
-            },
-        );
+                }
+            });
+        });
+        nav.seen(&output);
         clicked
     }
 

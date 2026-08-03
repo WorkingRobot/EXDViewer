@@ -15,6 +15,7 @@ use crate::{
     backend::Backend,
     data::{IconIndex, get_icon_path},
     excel::provider::ExcelProvider,
+    goto::{ListNav, Palette, SUGGESTIONS},
     settings::{ALWAYS_HIRES, LANGUAGE, api_base},
     utils::{
         CollapsibleSidePanel, IconManager, ManagedIcon, PromiseKind, Side, TrackedPromise,
@@ -77,6 +78,9 @@ pub struct IconBrowser {
     pages: usize,
     zoom: usize,
     order_by_count: bool,
+    palette: Option<Palette>,
+    /// Keyboard cursor over the backreference list in the detail panel.
+    nav: ListNav,
 }
 
 impl Default for IconBrowser {
@@ -101,6 +105,8 @@ impl Default for IconBrowser {
             pages: 1,
             zoom: 1,
             order_by_count: true,
+            palette: None,
+            nav: ListNav::default(),
         }
     }
 }
@@ -132,6 +138,10 @@ impl IconBrowser {
         self.pending = self.pending.take().or(self.selected.take());
     }
 
+    pub fn open_palette(&mut self) {
+        self.palette = Some(Palette::new("Find Icon…", "Id", self.lookup.clone()));
+    }
+
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -143,6 +153,12 @@ impl IconBrowser {
             self.selected = Some(pending);
             self.scroll_to = Some(pending);
         }
+
+        let picked = self.draw_palette(ui.ctx(), backend);
+        let backreferences = self.selected.is_some()
+            && matches!(self.refs, Load::Ready(_))
+            && !CollapsibleSidePanel::is_collapsed(ui.ctx(), "icon_info");
+        self.nav.claim(ui.ctx(), backreferences, None);
 
         self.side_panel(ui, backend);
         let followed = self.detail_panel(ui, backend, icons);
@@ -156,9 +172,29 @@ impl IconBrowser {
             }
         }
 
-        followed
-            .map(Action::Navigate)
+        picked
+            .map(Action::Select)
+            .or_else(|| followed.map(Action::Navigate))
             .or_else(|| opened.map(Action::Select))
+    }
+
+    fn draw_palette(&mut self, ctx: &egui::Context, backend: &Backend) -> Option<u32> {
+        let palette = self.palette.take()?;
+        match palette.draw(ctx, |query| {
+            self.lookup = query.to_owned();
+            self.rebuild_shown(backend);
+            self.shown
+                .iter()
+                .take(SUGGESTIONS)
+                .map(|id| (*id, format!("{id:06}")))
+                .collect()
+        }) {
+            Ok(picked) => picked,
+            Err(palette) => {
+                self.palette = Some(palette);
+                None
+            }
+        }
     }
 
     fn poll(&mut self, ctx: &egui::Context, backend: &Backend) {
@@ -673,6 +709,7 @@ impl IconBrowser {
         icons: &IconManager,
     ) -> Option<String> {
         let mut followed = None;
+        let mut nav = std::mem::take(&mut self.nav);
         CollapsibleSidePanel::new("icon_info", Side::Right)
             .collapsed_width(0.0)
             .show(ui, |ui, is_open| {
@@ -703,9 +740,10 @@ impl IconBrowser {
                 });
 
                 CentralPanel::default().show(ui, |ui| {
-                    followed = self.draw_detail(ui, backend, icons, icon_id);
+                    followed = self.draw_detail(ui, backend, icons, icon_id, &mut nav);
                 });
             });
+        self.nav = nav;
         followed
     }
 
@@ -715,6 +753,7 @@ impl IconBrowser {
         backend: &Backend,
         icons: &IconManager,
         icon_id: u32,
+        nav: &mut ListNav,
     ) -> Option<String> {
         let hires = ALWAYS_HIRES.get(ui.ctx());
         let language = LANGUAGE.get(ui.ctx());
@@ -780,26 +819,32 @@ impl IconBrowser {
                 ui.label(format!("Used by {} row(s)", thousands(uses.len())));
                 ui.separator();
                 let row_height = ui.text_style_height(&egui::TextStyle::Button);
-                ScrollArea::vertical().auto_shrink(false).show_rows(
-                    ui,
-                    row_height,
-                    uses.len(),
-                    |ui, range| {
-                        for use_ in &uses[range] {
-                            let sheet = refs.sheet_name(use_.sheet);
-                            if use_row(ui, sheet, use_).clicked() {
-                                followed = Some(route_of(sheet, use_));
-                            }
+                if let Some(at) = nav.apply(uses.len()) {
+                    let use_ = &uses[at];
+                    followed = Some(route_of(refs.sheet_name(use_.sheet), use_));
+                }
+                let mut area = ScrollArea::vertical().auto_shrink(false);
+                if let Some(offset) = nav.scroll(ui, row_height, uses.len()) {
+                    area = area.vertical_scroll_offset(offset);
+                }
+                let output = area.show_rows(ui, row_height, uses.len(), |ui, range| {
+                    for (at, use_) in uses[range.clone()].iter().enumerate() {
+                        let sheet = refs.sheet_name(use_.sheet);
+                        let row = use_row(ui, sheet, use_);
+                        nav.mark(ui, range.start + at, row.response.rect);
+                        if row.inner.clicked() {
+                            followed = Some(route_of(sheet, use_));
                         }
-                    },
-                );
+                    }
+                });
+                nav.seen(&output);
             }
         }
         followed
     }
 }
 
-fn use_row(ui: &mut egui::Ui, sheet: &str, use_: &Use) -> egui::Response {
+fn use_row(ui: &mut egui::Ui, sheet: &str, use_: &Use) -> egui::InnerResponse<egui::Response> {
     ui.horizontal(|ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         let response = ui.add(
@@ -809,7 +854,6 @@ fn use_row(ui: &mut egui::Ui, sheet: &str, use_: &Use) -> egui::Response {
         ui.label(RichText::new(use_.row.to_string()).weak());
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     })
-    .inner
 }
 
 fn route_of(sheet: &str, use_: &Use) -> String {

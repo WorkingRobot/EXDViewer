@@ -11,3 +11,4 @@ pub const NAV_FORWARD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::ALT, 
 
 pub const GOTO_ROW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::G);
 pub const GOTO_SHEET: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::P);
+pub const PALETTE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::K);

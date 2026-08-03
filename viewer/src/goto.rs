@@ -1,7 +1,9 @@
 use std::cell::LazyCell;
 
 use egui::{
-    Frame, Key, Layout, Modal, Modifiers, Popup, PopupCloseBehavior, RectAlign, RichText, TextEdit,
+    Frame, Id, Key, Layout, Modal, Modifiers, Popup, PopupCloseBehavior, Rect, RectAlign, RichText,
+    StrokeKind, TextEdit,
+    containers::scroll_area::ScrollAreaOutput,
     text::{CCursor, CCursorRange},
     text_edit::TextEditOutput,
 };
@@ -11,6 +13,222 @@ use crate::utils::FuzzyMatcher;
 
 type PatternMatch<'a> = EitherOrBoth<Vec<&'a str>, (u32, Option<u16>)>;
 type GoToMatch = EitherOrBoth<String, (u32, Option<u16>)>;
+
+/// How many suggestions a palette offers.
+pub const SUGGESTIONS: usize = 10;
+
+const PALETTE_WIDTH: f32 = 460.0;
+
+/// A Ctrl+K modal over one tab's own filter. What the query matches and what picking a row does are
+/// the tab's business; this holds the text and the cursor.
+pub struct Palette {
+    title: &'static str,
+    hint: &'static str,
+    query: String,
+    focused: bool,
+    index: usize,
+}
+
+impl Palette {
+    pub fn new(title: &'static str, hint: &'static str, query: String) -> Self {
+        Self {
+            title,
+            hint,
+            query,
+            focused: false,
+            index: 0,
+        }
+    }
+
+    /// `suggestions` is handed the query as it now reads and answers with the rows to offer, each
+    /// paired with what picking it should yield. `Err` means the palette is still open.
+    pub fn draw<T>(
+        mut self,
+        ctx: &egui::Context,
+        mut suggestions: impl FnMut(&str) -> Vec<(T, String)>,
+    ) -> Result<Option<T>, Self> {
+        let mut ret = None;
+        Modal::default_area("palette-modal".into())
+            .order(egui::Order::Middle)
+            .show(ctx, |ui| {
+                Frame::window(ui.style()).show(ui, |ui| {
+                    ui.heading(self.title);
+                    ui.separator();
+
+                    let up_pressed =
+                        ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::ArrowUp));
+                    let down_pressed =
+                        ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::ArrowDown));
+                    let enter_pressed =
+                        ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+                    let esc_pressed =
+                        ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+
+                    let output = TextEdit::singleline(&mut self.query)
+                        .hint_text(self.hint)
+                        .desired_width(PALETTE_WIDTH)
+                        .return_key(None)
+                        .show(ui);
+
+                    if !self.focused {
+                        output.response.request_focus();
+                        set_cursor_position(ctx, &output, self.query.chars().count());
+                        self.focused = true;
+                    }
+
+                    if esc_pressed {
+                        ret = Some(None);
+                    }
+
+                    let items = suggestions(&self.query);
+                    self.index = self.index.min(items.len().saturating_sub(1));
+                    if !items.is_empty() {
+                        if down_pressed {
+                            self.index = (self.index + 1) % items.len();
+                        } else if up_pressed {
+                            self.index = (self.index + items.len() - 1) % items.len();
+                        }
+                    }
+
+                    let mut suggestion_clicked = false;
+                    Popup::from_response(&output.response)
+                        .layout(Layout::top_down_justified(egui::Align::LEFT))
+                        .close_behavior(PopupCloseBehavior::IgnoreClicks)
+                        .align(RectAlign::BOTTOM_START)
+                        .width(output.response.rect.width())
+                        .open(true)
+                        .show(|ui| {
+                            ui.set_min_width(ui.available_width());
+                            if items.is_empty() {
+                                ui.label(RichText::new("No matches").weak());
+                            }
+                            for (i, (_, label)) in items.iter().enumerate() {
+                                let mut selected = self.index == i;
+                                let toggle = ui.toggle_value(&mut selected, label);
+                                if toggle.hovered() {
+                                    self.index = i;
+                                }
+                                if toggle.clicked() {
+                                    self.index = i;
+                                    suggestion_clicked = true;
+                                }
+                            }
+                        });
+
+                    if enter_pressed || suggestion_clicked {
+                        ret = Some(items.into_iter().nth(self.index).map(|(item, _)| item));
+                    }
+                })
+            });
+
+        ret.ok_or(self)
+    }
+}
+
+/// Which arrow presses a list took for itself this frame.
+#[derive(Default, Clone, Copy)]
+struct Keys {
+    up: bool,
+    down: bool,
+    enter: bool,
+}
+
+/// A keyboard cursor over a virtualised list: the row it sits on, and enough of where the list last
+/// scrolled to that moving it can bring the new row into view without jumping any further.
+#[derive(Default)]
+pub struct ListNav {
+    cursor: Option<usize>,
+    keys: Keys,
+    reveal: bool,
+    offset: f32,
+    viewport: f32,
+}
+
+impl ListNav {
+    /// Take the arrow keys for this list, which has to happen before any text field is drawn: a
+    /// focused `TextEdit` moves its caret on an arrow it never consumes.
+    ///
+    /// Only while the list is on screen, and only while nothing but its own `filter` box is being
+    /// typed into.
+    pub fn claim(&mut self, ctx: &egui::Context, shown: bool, filter: Option<Id>) {
+        self.keys = Keys::default();
+        let focus = ctx.memory(|memory| memory.focused());
+        if !shown || !(focus.is_none() || focus == filter) {
+            return;
+        }
+        ctx.input_mut(|input| {
+            self.keys = Keys {
+                up: input.consume_key(Modifiers::NONE, Key::ArrowUp),
+                down: input.consume_key(Modifiers::NONE, Key::ArrowDown),
+                enter: self.cursor.is_some() && input.consume_key(Modifiers::NONE, Key::Enter),
+            };
+        });
+    }
+
+    /// Move the cursor over a list of `len` rows, and report the row Enter picked.
+    pub fn apply(&mut self, len: usize) -> Option<usize> {
+        if len == 0 {
+            self.cursor = None;
+            return None;
+        }
+        let at = self.cursor.map(|at| at.min(len - 1));
+        self.cursor = match (at, self.keys.down, self.keys.up) {
+            (_, false, false) => at,
+            (None, true, _) => Some(0),
+            (None, _, true) => Some(len - 1),
+            (Some(at), true, _) => Some((at + 1) % len),
+            (Some(at), _, true) => Some((at + len - 1) % len),
+        };
+        self.reveal |= self.keys.up || self.keys.down;
+        self.keys.enter.then_some(self.cursor).flatten()
+    }
+
+    /// What the list has to scroll to for the cursor to be on screen, or `None` if it already is.
+    pub fn scroll(&mut self, ui: &egui::Ui, row_height: f32, len: usize) -> Option<f32> {
+        if !std::mem::take(&mut self.reveal) {
+            return None;
+        }
+        let at = self.cursor?;
+        let spacing = ui.spacing().item_spacing.y;
+        let pitch = row_height + spacing;
+        let viewport = if self.viewport > 0.0 {
+            self.viewport
+        } else {
+            ui.available_height()
+        };
+        let last = (len as f32 * pitch - spacing - viewport).max(0.0);
+        // A row of slack below: the rows are drawn a little taller than the height the list reserves
+        // for them, so one that ends exactly at the fold by this arithmetic is really past it.
+        let offset = self
+            .offset
+            .min(at as f32 * pitch)
+            .max((at + 2) as f32 * pitch - viewport)
+            .clamp(0.0, last);
+        (offset != self.offset).then_some(offset)
+    }
+
+    /// Record where the list ended up, so the next move scrolls as little as it can.
+    pub fn seen<R>(&mut self, output: &ScrollAreaOutput<R>) {
+        self.offset = output.state.offset.y;
+        self.viewport = output.inner_rect.height();
+    }
+
+    /// Outline the row the keyboard is on.
+    pub fn mark(&self, ui: &egui::Ui, index: usize, rect: Rect) {
+        if self.cursor == Some(index) {
+            ui.painter()
+                .rect_stroke(rect, 2.0, ui.visuals().selection.stroke, StrokeKind::Inside);
+        }
+    }
+}
+
+fn set_cursor_position(ctx: &egui::Context, output: &TextEditOutput, position: usize) {
+    let mut state = output.state.clone();
+    state
+        .cursor
+        .set_char_range(Some(CCursorRange::one(CCursor::new(position))));
+    state.store(ctx, output.response.id);
+}
 
 #[derive(Default)]
 pub struct GoToWindow {
@@ -241,15 +459,7 @@ impl GoToWindow {
                 |row_part| format!("{sheet_name}:{row_part}"),
             );
         self.selected_index = None;
-        Self::set_cursor_position(ctx, output, sheet_name.len());
-    }
-
-    fn set_cursor_position(ctx: &egui::Context, output: &TextEditOutput, position: usize) {
-        let mut state = output.state.clone();
-        state
-            .cursor
-            .set_char_range(Some(CCursorRange::one(CCursor::new(position))));
-        state.store(ctx, output.response.id);
+        set_cursor_position(ctx, output, sheet_name.len());
     }
 
     /// Parses a string that may represent either a autocompleted sheet list or a row/subrow.

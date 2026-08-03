@@ -25,7 +25,8 @@ use crate::{
         provider::{ExcelHeader, ExcelProvider},
     },
     github::CALLBACK_PATH,
-    goto, icons, music,
+    goto::{self, ListNav},
+    icons, music,
     pr_window::{self, PrAction, PrWindow},
     router::{
         Router,
@@ -46,12 +47,14 @@ use crate::{
         CellResponse, FilterInputType, GlobalContext, MatchOptions, SheetTable, TableContext,
         draw_filter_guide, export_csv,
     },
-    shortcuts::{GOTO_ROW, GOTO_SHEET},
+    shortcuts::{GOTO_ROW, GOTO_SHEET, PALETTE},
     utils::{
         CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, FuzzyMatcher, IconManager,
         Side, TrackedPromise, opt_slider, shortcut, tick_promises,
     },
 };
+
+const SHEETS_FILTER_ID: &str = "sheets_filter";
 
 type CachedSheetEntry = (
     Language, // language
@@ -195,6 +198,7 @@ pub struct App {
     export_promise: Option<TrackedPromise<()>>,
     pr_window: PrWindow,
     goto_window: Option<goto::GoToWindow>,
+    sheet_nav: ListNav,
     about_open: bool,
     music: music::MusicPlayer,
     assets: assets::AssetBrowser,
@@ -291,6 +295,9 @@ impl App {
         }
         if tab == Tab::Sheets && shortcut::consume(&ctx, GOTO_SHEET) {
             self.goto_window = Some(goto::GoToWindow::to_sheet());
+        }
+        if shortcut::consume(&ctx, PALETTE) {
+            self.open_palette(tab);
         }
 
         self.update_fonts(&ctx);
@@ -392,6 +399,15 @@ impl App {
         }
     }
 
+    fn open_palette(&mut self, tab: Tab) {
+        match tab {
+            Tab::Sheets => {}
+            Tab::Assets => self.assets.open_palette(),
+            Tab::Icons => self.icons.open_palette(),
+            Tab::Music => self.music.open_palette(),
+        }
+    }
+
     fn draw_menubar(&mut self, ui: &mut egui::Ui, tab: Tab) {
         let ctx = &ui.ctx().clone();
         Panel::top("top_panel")
@@ -415,18 +431,28 @@ impl App {
                         }
                     });
 
-                    if tab == Tab::Sheets {
-                        ui.menu_button("Go", |ui| {
-                            if shortcut::button(ui, "Go to Row…", GOTO_ROW).clicked() {
-                                self.goto_window = Some(goto::GoToWindow::to_row());
-                                ui.close();
+                    ui.menu_button("Go", |ui| {
+                        let palette = match tab {
+                            Tab::Sheets => {
+                                if shortcut::button(ui, "Go to Row…", GOTO_ROW).clicked() {
+                                    self.goto_window = Some(goto::GoToWindow::to_row());
+                                    ui.close();
+                                }
+                                if shortcut::button(ui, "Go to Sheet…", GOTO_SHEET).clicked() {
+                                    self.goto_window = Some(goto::GoToWindow::to_sheet());
+                                    ui.close();
+                                }
+                                return;
                             }
-                            if shortcut::button(ui, "Go to Sheet…", GOTO_SHEET).clicked() {
-                                self.goto_window = Some(goto::GoToWindow::to_sheet());
-                                ui.close();
-                            }
-                        });
-                    }
+                            Tab::Assets => "Find Asset…",
+                            Tab::Icons => "Find Icon…",
+                            Tab::Music => "Find Track…",
+                        };
+                        if shortcut::button(ui, palette, PALETTE).clicked() {
+                            self.open_palette(tab);
+                            ui.close();
+                        }
+                    });
 
                     ui.menu_button("Language", |ui| {
                         let saved_lang = LANGUAGE.get(ctx);
@@ -709,6 +735,12 @@ impl App {
     fn draw_sheet_list(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
         let pr_changed = self.poll_changed_schemas(ctx);
+        self.sheet_nav.claim(
+            ctx,
+            !CollapsibleSidePanel::is_collapsed(ctx, "sheet_list"),
+            Some(egui::Id::new(SHEETS_FILTER_ID)),
+        );
+        let mut nav = std::mem::take(&mut self.sheet_nav);
         CollapsibleSidePanel::new("sheet_list", Side::Left).show(ui, |ui, is_open| {
             if !is_open {
                 return;
@@ -762,7 +794,9 @@ impl App {
                     if ui
                         .add_sized(
                             Vec2::new(ui.available_width(), 0.0),
-                            TextEdit::singleline(&mut sheets_filter).hint_text("Filter"),
+                            TextEdit::singleline(&mut sheets_filter)
+                                .id(egui::Id::new(SHEETS_FILTER_ID))
+                                .hint_text("Filter"),
                         )
                         .changed()
                     {
@@ -855,36 +889,37 @@ impl App {
 
             egui::CentralPanel::default().show(ui, |ui| {
                 let row_height = ui.text_style_height(&egui::TextStyle::Button);
-                ScrollArea::both().auto_shrink(false).show_rows(
-                    ui,
-                    row_height,
-                    sheets.len(),
-                    |ui, range| {
-                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                            let mut current_sheet = SELECTED_SHEET.get(ctx);
-                            for (sheet, id) in sheets
-                                .iter()
-                                .skip(range.start)
-                                .take(range.end - range.start)
-                            {
-                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                                let resp = Button::selectable(
-                                    current_sheet.as_ref() == Some(sheet),
-                                    sheet.as_str(),
-                                )
-                                .ui(ui)
-                                .on_hover_text(format!("{sheet}\nId: {id}"));
-                                if resp.clicked() {
-                                    current_sheet = Some(sheet.clone());
-                                    SELECTED_SHEET.set(ctx, current_sheet.clone());
-                                    self.navigate(format!("/sheet/{}", sheet.clone()));
-                                }
+                let mut opened = nav.apply(sheets.len()).map(|at| sheets[at].0.clone());
+                let mut area = ScrollArea::both().auto_shrink(false);
+                if let Some(offset) = nav.scroll(ui, row_height, sheets.len()) {
+                    area = area.vertical_scroll_offset(offset);
+                }
+                let output = area.show_rows(ui, row_height, sheets.len(), |ui, range| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                        let current_sheet = SELECTED_SHEET.get(ctx);
+                        for (at, (sheet, id)) in sheets[range.clone()].iter().enumerate() {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                            let resp = Button::selectable(
+                                current_sheet.as_ref() == Some(sheet),
+                                sheet.as_str(),
+                            )
+                            .ui(ui)
+                            .on_hover_text(format!("{sheet}\nId: {id}"));
+                            nav.mark(ui, range.start + at, resp.rect);
+                            if resp.clicked() {
+                                opened = Some(sheet.clone());
                             }
-                        });
-                    },
-                );
+                        }
+                    });
+                });
+                nav.seen(&output);
+                if let Some(sheet) = opened {
+                    SELECTED_SHEET.set(ctx, Some(sheet.clone()));
+                    self.navigate(format!("/sheet/{sheet}"));
+                }
             });
         });
+        self.sheet_nav = nav;
     }
 
     fn draw_sheet_data(&mut self, ui: &mut egui::Ui) {
@@ -1620,6 +1655,7 @@ impl App {
             export_promise: None,
             pr_window: PrWindow::default(),
             goto_window: None,
+            sheet_nav: ListNav::default(),
             about_open: false,
             music: music::MusicPlayer::default(),
             assets: assets::AssetBrowser::default(),

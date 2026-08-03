@@ -3,10 +3,13 @@ use egui::{Button, Hyperlink, Layout, Margin, RichText, ScrollArea, TextEdit};
 use itertools::Itertools;
 
 use crate::{
-    about::centered_inline, github::{
+    about::centered_inline,
+    github::{
         GithubAuth, GithubClient, PrDraft, PrResult, RelayResult, build_auth_start, exchange_code,
         fetch_client_id, relay_and_close, take_relayed_result,
-    }, settings::{BACKEND_CONFIG, BackendConfig, GithubSchemaLocation, SchemaLocation}, utils::{PromiseKind, TrackedPromise},
+    },
+    settings::{BACKEND_CONFIG, BackendConfig, GithubSchemaLocation, SchemaLocation},
+    utils::{PromiseKind, TrackedPromise},
 };
 
 pub type PrOutcome = std::result::Result<PrResult, String>;
@@ -232,7 +235,7 @@ impl PrWindow {
             .default_width(460.0)
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
-                
+
                 let dest = format!(
                     "{}/{} @ {}",
                     location.owner,

@@ -23,8 +23,8 @@
 
 mod about;
 mod app;
-pub mod audio;
 mod assets;
+pub mod audio;
 mod backend;
 mod data;
 mod editable_schema;
