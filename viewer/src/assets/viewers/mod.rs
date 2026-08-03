@@ -427,7 +427,7 @@ impl Preview {
             Self::Spm(parameters) => spm::ui(ui, parameters),
             Self::Pbd(deformers) => pbd::ui(ui, deformers),
             Self::Cmp(parameters) => cmp::ui(ui, parameters, deps, backend),
-            Self::GrassZone(zone) => follow = grass::zone_ui(ui, zone),
+            Self::GrassZone(zone) => follow = grass::zone_ui(ui, zone, deps, backend),
             Self::GrassGrid(grid) => grass::grid_ui(ui, grid),
             Self::Stm(templates) => stm::ui(ui, templates, deps, backend),
             Self::Failed(e) if e.is_empty() => {

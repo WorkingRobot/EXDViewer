@@ -7,11 +7,16 @@
 use std::io::Cursor;
 
 use anyhow::Result;
-use egui::{RichText, ScrollArea};
+use egui::{Color32, RichText, ScrollArea, Vec2, load::SizedTexture};
 use ironworks::file::{File, ggd, gzd};
 
 use super::{Preview, facts, heading, line, link, section, table};
+use crate::assets::deps::{Dep, Deps};
+use crate::backend::Backend;
 use crate::utils::file_name;
+
+/// Longest edge a colour map is drawn at beside its name.
+const THUMBNAIL: f32 = 64.0;
 
 const GRIDS: [(&str, usize); 4] = [("Detail", 7), ("Cell", 12), ("Center", 26), ("Radius", 10)];
 
@@ -146,16 +151,53 @@ pub fn grid(path: &str, bytes: &[u8]) -> Result<Preview> {
     })))
 }
 
-pub fn zone_ui(ui: &mut egui::Ui, file: &Zone) -> Option<String> {
+/// A texture drawn at thumbnail size, or the room it will take once it arrives.
+fn thumbnail(ui: &mut egui::Ui, deps: &mut Deps, backend: &Backend, path: &str) {
+    match deps.texture(ui.ctx(), backend, path) {
+        Dep::Ready(handle) => {
+            let size = handle.size_vec2();
+            let scale = THUMBNAIL / size.x.max(size.y).max(1.0);
+            ui.add(
+                egui::Image::new(SizedTexture::new(handle, size * scale))
+                    .maintain_aspect_ratio(true),
+            );
+        }
+        Dep::Pending => {
+            ui.add_sized(
+                Vec2::splat(THUMBNAIL),
+                egui::Spinner::new().size(THUMBNAIL / 2.0),
+            );
+        }
+        Dep::Failed => {
+            ui.add_sized(
+                Vec2::splat(THUMBNAIL),
+                egui::Label::new(RichText::new("⚠").color(Color32::LIGHT_RED)),
+            )
+            .on_hover_text("Failed to load");
+        }
+    }
+}
+
+pub fn zone_ui(
+    ui: &mut egui::Ui,
+    file: &Zone,
+    deps: &mut Deps,
+    backend: &Backend,
+) -> Option<String> {
     let mut follow = None;
 
     if !file.color_maps.is_empty() {
         section(ui, "Color maps");
-        for path in &file.color_maps {
-            if link(ui, file_name(path), path) {
-                follow = Some(path.clone());
+        ui.horizontal_wrapped(|ui| {
+            for path in &file.color_maps {
+                ui.vertical(|ui| {
+                    thumbnail(ui, deps, backend, path);
+                    if link(ui, file_name(path), path) {
+                        follow = Some(path.clone());
+                    }
+                });
             }
-        }
+        });
         ui.add_space(4.0);
     }
 
