@@ -162,9 +162,15 @@ fn line<'a>(columns: &[(&str, usize)], cells: impl IntoIterator<Item = &'a str>)
         .collect()
 }
 
+/// Names the table's scroll area, so the header can be drawn at the offset it was left at.
+const TABLE: &str = "table_rows";
+
 /// A monospace table, virtualised by row for the formats whose row count is whatever the file
-/// holds. The header stays above the scroll area rather than moving with the rows, and the columns
-/// line up because both are padded by [`line`].
+/// holds. The rows scroll both ways, since a wide one runs past a narrow window, and the columns
+/// line up because the header and the rows are padded alike by [`line`].
+///
+/// The header stays above the scroll area rather than moving with the rows, so it is painted at
+/// the rows' own horizontal offset rather than laid out beside them.
 fn table(
     ui: &mut egui::Ui,
     columns: &[(&str, usize)],
@@ -172,14 +178,27 @@ fn table(
     mut row: impl FnMut(&mut egui::Ui, usize),
 ) {
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-    ui.label(
-        RichText::new(line(columns, columns.iter().map(|(name, _)| *name)))
-            .monospace()
-            .weak(),
+
+    let offset = egui::scroll_area::State::load(ui.ctx(), ui.make_persistent_id(TABLE))
+        .map_or(0.0, |state| state.offset.x);
+    let color = ui.visuals().weak_text_color();
+    let header = ui.painter().layout_no_wrap(
+        line(columns, columns.iter().map(|(name, _)| *name)),
+        egui::TextStyle::Monospace.resolve(ui.style()),
+        color,
     );
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), header.size().y),
+        Sense::hover(),
+    );
+    ui.painter()
+        .with_clip_rect(rect)
+        .galley(rect.min - egui::vec2(offset, 0.0), header, color);
+
     // `show_rows` adds the spacing between rows itself, so what it wants is one row's own height.
     let height = ui.text_style_height(&egui::TextStyle::Monospace);
-    ScrollArea::vertical()
+    ScrollArea::both()
+        .id_salt(TABLE)
         .auto_shrink(false)
         .show_rows(ui, height, count, |ui, shown| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);

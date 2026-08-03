@@ -7,7 +7,7 @@
 use std::io::Cursor;
 
 use anyhow::Result;
-use egui::{RichText, ScrollArea};
+use egui::RichText;
 use ironworks::file::{File, pbd};
 
 use super::{Preview, facts, heading, line, section, table};
@@ -115,37 +115,35 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
 
 impl Rendered {
     pub fn details_ui(&self, ui: &mut egui::Ui) {
-        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            let picked = ui
-                .data(|data| data.get_temp::<usize>(self.picked))
-                .unwrap_or(0);
-            if let Some(deformer) = self.deformers.get(picked)
-                && !deformer.bones.is_empty()
-            {
-                heading(ui, &format!("c{:04} bones", deformer.id));
-                table(ui, &BONES, deformer.bones.len(), |ui, index| {
-                    let (name, matrix) = &deformer.bones[index];
-                    let row = |values: [f32; 4], count: usize| {
-                        values[..count]
-                            .iter()
-                            .map(|value| format!("{value:>8.3}"))
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    };
-                    let cells = [
-                        name.clone(),
-                        row(matrix[0], 3),
-                        row(matrix[1], 4),
-                        row(matrix[2], 3),
-                    ];
-                    ui.label(
-                        RichText::new(line(&BONES, cells.iter().map(String::as_str))).monospace(),
-                    );
-                });
-                ui.add_space(8.0);
-                ui.separator();
-            }
-            facts(ui, "pbd_identity", &self.identity);
+        facts(ui, "pbd_identity", &self.identity);
+
+        let picked = ui
+            .data(|data| data.get_temp::<usize>(self.picked))
+            .unwrap_or(0);
+        let Some(deformer) = self.deformers.get(picked).filter(|it| !it.bones.is_empty()) else {
+            return;
+        };
+
+        ui.add_space(8.0);
+        ui.separator();
+        heading(ui, &format!("c{:04} bones", deformer.id));
+        // The table fills whatever is left, so it goes last and carries its own scrolling.
+        table(ui, &BONES, deformer.bones.len(), |ui, index| {
+            let (name, matrix) = &deformer.bones[index];
+            let row = |values: [f32; 4], count: usize| {
+                values[..count]
+                    .iter()
+                    .map(|value| format!("{value:>8.3}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let cells = [
+                name.clone(),
+                row(matrix[0], 3),
+                row(matrix[1], 4),
+                row(matrix[2], 3),
+            ];
+            ui.label(RichText::new(line(&BONES, cells.iter().map(String::as_str))).monospace());
         });
     }
 }

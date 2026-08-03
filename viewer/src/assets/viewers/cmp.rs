@@ -242,34 +242,31 @@ impl Rendered {
             .iter()
             .map(|scale| named(ui, deps, backend, scale.clan))
             .collect();
-        ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            heading(ui, "Proportions");
-            table(ui, &SCALES, self.scales.len(), |ui, index| {
-                let scale = &self.scales[index];
-                let range = |[low, high]: [f32; 2]| format!("{low:.2} to {high:.2}");
-                let axes = |values: [f32; 3]| {
-                    values
-                        .iter()
-                        .map(|value| format!("{value:>7.2}"))
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-                let cells = [
-                    clans[index].clone(),
-                    range(scale.male_height),
-                    range(scale.male_tail),
-                    range(scale.female_height),
-                    range(scale.female_tail),
-                    axes(scale.bust[0]),
-                    axes(scale.bust[1]),
-                ];
-                ui.label(
-                    RichText::new(line(&SCALES, cells.iter().map(String::as_str))).monospace(),
-                );
-            });
-            ui.add_space(8.0);
-            ui.separator();
-            facts(ui, "cmp_identity", &self.identity);
+        facts(ui, "cmp_identity", &self.identity);
+        ui.add_space(8.0);
+        ui.separator();
+        heading(ui, "Proportions");
+        // The table fills whatever is left, so it goes last and carries its own scrolling.
+        table(ui, &SCALES, self.scales.len(), |ui, index| {
+            let scale = &self.scales[index];
+            let range = |[low, high]: [f32; 2]| format!("{low:.2} to {high:.2}");
+            let axes = |values: [f32; 3]| {
+                values
+                    .iter()
+                    .map(|value| format!("{value:>7.2}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let cells = [
+                clans[index].clone(),
+                range(scale.male_height),
+                range(scale.male_tail),
+                range(scale.female_height),
+                range(scale.female_tail),
+                axes(scale.bust[0]),
+                axes(scale.bust[1]),
+            ];
+            ui.label(RichText::new(line(&SCALES, cells.iter().map(String::as_str))).monospace());
         });
     }
 }

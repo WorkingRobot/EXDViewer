@@ -10,7 +10,7 @@ use anyhow::Result;
 use egui::{RichText, ScrollArea};
 use ironworks::file::{File, spm};
 
-use super::{Preview, facts, line, section};
+use super::{Preview, facts, line, section, table};
 
 /// Room a profile's column takes, which fits the widest value any of them holds.
 const COLUMN: usize = 9;
@@ -33,16 +33,18 @@ fn shown(value: spm::Value) -> String {
 
 pub struct Rendered {
     identity: Vec<(&'static str, String)>,
-    columns: Vec<(&'static str, usize)>,
-    /// The header, then one line per parameter, already padded to the columns.
+    /// What each column is called and how wide it is drawn.
+    columns: Vec<(String, usize)>,
+    /// One line per parameter, already padded to the columns.
     rows: Vec<String>,
 }
 
 pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     let file = spm::ShaderParameters::read(Cursor::new(bytes.to_vec()))?;
 
-    let mut columns = vec![("Parameter", NAME), ("Type", 8)];
-    columns.extend(file.rows().iter().map(|_| ("", COLUMN)));
+    let mut columns = vec![("Parameter".to_owned(), NAME), ("Type".to_owned(), 8)];
+    columns.extend((0..file.rows().len()).map(|profile| (profile.to_string(), COLUMN)));
+    let widths = borrowed(&columns);
 
     let rows = file
         .columns()
@@ -56,7 +58,7 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
                         .map(|row| file.value(row, column).map_or_else(String::new, shown)),
                 )
                 .collect::<Vec<_>>();
-            line(&columns, cells.iter().map(String::as_str))
+            line(&widths, cells.iter().map(String::as_str))
         })
         .collect::<Vec<_>>();
 
@@ -83,27 +85,19 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     })))
 }
 
+/// The columns as the table wants them, borrowed from the names they were built with.
+fn borrowed(columns: &[(String, usize)]) -> Vec<(&str, usize)> {
+    columns
+        .iter()
+        .map(|(name, width)| (name.as_str(), *width))
+        .collect()
+}
+
 pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
     section(ui, "Parameters");
-    // The grid runs wider than the panel once a file carries every profile, so it scrolls both
-    // ways rather than being clipped.
-    ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        let profiles = (0..file.columns.len() - 2).map(|index| index.to_string());
-        let header = line(
-            &file.columns,
-            ["Parameter", "Type"]
-                .into_iter()
-                .map(str::to_owned)
-                .chain(profiles)
-                .collect::<Vec<_>>()
-                .iter()
-                .map(String::as_str),
-        );
-        ui.label(RichText::new(header).monospace().weak());
-        for row in &file.rows {
-            ui.label(RichText::new(row).monospace());
-        }
+    let columns = borrowed(&file.columns);
+    table(ui, &columns, file.rows.len(), |ui, index| {
+        ui.label(RichText::new(&file.rows[index]).monospace());
     });
 }
 
