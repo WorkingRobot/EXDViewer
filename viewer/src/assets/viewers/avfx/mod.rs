@@ -6,7 +6,8 @@
 //! items over a span of frames, an emitter spawns particles and further emitters, and anything
 //! animated is a curve.
 //!
-//! Nothing in the file states the rate its frames are counted at, so times are left in frames.
+//! Nothing in the file states the rate its frames are counted at, so the rate is a setting and a
+//! curve reads out in both.
 
 use std::collections::HashSet;
 use std::io::Cursor;
@@ -19,7 +20,7 @@ use ironworks::file::{
 };
 
 use super::{Preview, facts, headers, heading, link, section};
-use crate::utils::file_name;
+use crate::{settings::AVFX_FRAME_RATE, utils::file_name};
 
 mod curve;
 
@@ -695,6 +696,23 @@ impl Rendered {
     }
 
     pub fn details_ui(&self, ui: &mut egui::Ui, follow: &mut Option<String>) {
+        let mut rate = AVFX_FRAME_RATE.get(ui.ctx());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Frame rate").weak());
+            if ui
+                .add(
+                    egui::DragValue::new(&mut rate)
+                        .speed(1.0)
+                        .range(1.0..=240.0)
+                        .suffix(" fps"),
+                )
+                .changed()
+            {
+                AVFX_FRAME_RATE.set(ui.ctx(), rate);
+            }
+        });
+        ui.separator();
+
         ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             if let Some(index) = self.selected(ui)
                 && let Some(row) = self.rows.get(index)
@@ -722,7 +740,7 @@ impl Rendered {
                     if drawn.len() > 1 || curve.name != row.label {
                         heading(ui, &curve.name);
                     }
-                    curve_ui(ui, curve, position);
+                    curve_ui(ui, curve, position, rate);
                 }
 
                 ui.add_space(8.0);
@@ -741,8 +759,8 @@ impl Rendered {
 }
 
 /// One curve: the plot, what it does either side of its keys, and every key it holds.
-fn curve_ui(ui: &mut egui::Ui, curve: &Curve, position: usize) {
-    let range = curve::plot(ui, curve);
+fn curve_ui(ui: &mut egui::Ui, curve: &Curve, position: usize, rate: f32) {
+    let range = curve::plot(ui, curve, rate);
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(format!("before {:?}, after {:?}", curve.pre, curve.post))
@@ -763,19 +781,24 @@ fn curve_ui(ui: &mut egui::Ui, curve: &Curve, position: usize) {
     ui.add_space(4.0);
 
     let columns = match curve.color {
-        true => 4,
-        false => 3,
+        true => 5,
+        false => 4,
     };
     egui::Grid::new(("avfx_keys", position))
         .num_columns(columns)
         .striped(true)
         .show(ui, |ui| {
             match curve.color {
-                true => headers(ui, &["Frame", "Kind", "", "Color"]),
-                false => headers(ui, &["Frame", "Kind", "Value"]),
+                true => headers(ui, &["Frame", "Time", "Kind", "", "Color"]),
+                false => headers(ui, &["Frame", "Time", "Kind", "Value"]),
             }
             for key in &curve.keys {
                 ui.label(RichText::new(key.time().to_string()).monospace());
+                ui.label(
+                    RichText::new(curve::seconds(f32::from(key.time()), rate))
+                        .monospace()
+                        .weak(),
+                );
                 ui.label(
                     RichText::new(format!("{:?}", key.kind()))
                         .monospace()

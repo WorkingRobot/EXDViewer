@@ -284,8 +284,13 @@ fn paint(ui: &egui::Ui, curve: &Curve, rect: Rect, detailed: bool) -> Option<(f3
     Some((low, high))
 }
 
+/// A frame count as the time it falls at, at `rate` frames a second.
+pub fn seconds(frames: f32, rate: f32) -> String {
+    format!("{:.2}s", frames / rate)
+}
+
 /// One curve, drawn large enough to read. Returns the value range it covered.
-pub fn plot(ui: &mut egui::Ui, curve: &Curve) -> Option<(f32, f32)> {
+pub fn plot(ui: &mut egui::Ui, curve: &Curve, rate: f32) -> Option<(f32, f32)> {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), PLOT), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return None;
@@ -301,12 +306,13 @@ pub fn plot(ui: &mut egui::Ui, curve: &Curve) -> Option<(f32, f32)> {
             Stroke::new(1.0, ui.visuals().weak_text_color()),
         );
         let value = curve.sample(time);
+        let at = format!("frame {time:.0}  {}", seconds(time, rate));
         response.on_hover_text(match curve.color {
             true => {
                 let [r, g, b] = value.map(|channel| (channel.clamp(0.0, 1.0) * 255.0) as u8);
-                format!("frame {time:.0}   {r}, {g}, {b}")
+                format!("{at}   {r}, {g}, {b}")
             }
-            false => format!("frame {time:.0}   {:.4}", value[2]),
+            false => format!("{at}   {:.4}", value[2]),
         });
     }
     range
