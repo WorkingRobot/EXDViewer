@@ -10,6 +10,7 @@ use egui::{
 use super::{Bytes, Channels, MAX_TEXT_PREVIEW};
 
 pub mod atch;
+pub mod avfx;
 pub mod eid;
 pub mod est;
 pub mod font;
@@ -259,6 +260,8 @@ pub enum Preview {
     Imc(Box<imc::Rendered>),
     /// A parsed attach point file.
     Atch(Box<atch::Rendered>),
+    /// A parsed visual effect.
+    Avfx(Box<avfx::Rendered>),
     /// A parsed bind point file.
     Eid(Box<eid::Rendered>),
     /// A parsed skeleton template file.
@@ -306,6 +309,7 @@ impl Preview {
             Viewer::Shcd => shcd::decode(path, bytes),
             Viewer::Imc => imc::decode(path, bytes),
             Viewer::Atch => atch::decode(path, bytes),
+            Viewer::Avfx => avfx::decode(path, bytes),
             Viewer::Eid => eid::decode(path, bytes),
             Viewer::Est => est::decode(path, bytes),
             Viewer::Skp => skp::decode(path, bytes),
@@ -354,6 +358,7 @@ impl Preview {
             Self::Shcd(code) => shcd::ui(ui, code, bytes),
             Self::Imc(change) => imc::ui(ui, change),
             Self::Atch(points) => atch::ui(ui, points),
+            Self::Avfx(effect) => follow = avfx::ui(ui, effect),
             Self::Eid(points) => follow = eid::ui(ui, points),
             Self::Est(templates) => follow = est::ui(ui, templates),
             Self::Skp(parameters) => follow = skp::ui(ui, parameters),
@@ -434,6 +439,7 @@ impl Preview {
             | Self::Imc(_)
             | Self::Stm(_)
             | Self::Atch(_)
+            | Self::Avfx(_)
             | Self::Eid(_)
             | Self::Est(_)
             | Self::Skp(_)
@@ -498,6 +504,10 @@ impl Preview {
         }
         if let Self::Atch(points) = self {
             points.details_ui(ui);
+            return None;
+        }
+        if let Self::Avfx(effect) = self {
+            effect.details_ui(ui, follow);
             return None;
         }
         if let Self::Eid(points) = self {
@@ -631,6 +641,7 @@ pub enum Viewer {
     Imc,
     Stm,
     Atch,
+    Avfx,
     Eid,
     Est,
     Skp,
@@ -652,7 +663,7 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 28] = [
+    pub const RENDERED: [Self; 29] = [
         Self::Texture,
         Self::Image,
         Self::Material,
@@ -666,6 +677,7 @@ impl Viewer {
         Self::Imc,
         Self::Stm,
         Self::Atch,
+        Self::Avfx,
         Self::Eid,
         Self::Est,
         Self::Skp,
@@ -698,6 +710,7 @@ impl Viewer {
             Self::Imc => "Image change",
             Self::Stm => "Staining template",
             Self::Atch => "Attach points",
+            Self::Avfx => "Visual effect",
             Self::Eid => "Bind points",
             Self::Est => "Skeleton template",
             Self::Skp => "Skeleton parameters",

@@ -2005,7 +2005,7 @@ const EXTENSIONS: &[(&str, &str, Viewer)] = &[
     ("phyb", "Physics bones", Viewer::Raw),
     ("eid", "Bone bindings", Viewer::Eid),
     ("atch", "Attachment points", Viewer::Atch),
-    ("avfx", "Animated VFX", Viewer::Raw),
+    ("avfx", "Animated VFX", Viewer::Avfx),
     ("uld", "UI layout", Viewer::Uld),
     ("lgb", "Layer group, a zone's placed objects", Viewer::Lgb),
     (

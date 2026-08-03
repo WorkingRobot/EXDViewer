@@ -80,7 +80,7 @@ const MAGIC: &[(&[u8], Format)] = &[
     (b"pap ", Format::Named("Animation")),
     (b"TMLB", Format::Named("Timeline")),
     (b"CUTB", Format::Named("Cutscene")),
-    (b"XFVA", Format::Named("Visual effect")),
+    (b"XFVA", Format::Shown(Viewer::Avfx)),
 ];
 
 /// What the bytes say the file is, or `None` where they say nothing. Ordered strongest test first:
