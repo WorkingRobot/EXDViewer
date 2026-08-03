@@ -177,7 +177,8 @@ fn table(
             .monospace()
             .weak(),
     );
-    let height = ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
+    // `show_rows` adds the spacing between rows itself, so what it wants is one row's own height.
+    let height = ui.text_style_height(&egui::TextStyle::Monospace);
     ScrollArea::vertical()
         .auto_shrink(false)
         .show_rows(ui, height, count, |ui, shown| {

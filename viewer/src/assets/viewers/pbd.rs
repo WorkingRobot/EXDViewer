@@ -96,13 +96,17 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
             deformer.bones.len().to_string(),
             format!("{:.3}", deformer.scale),
         ];
-        if ui
-            .selectable_label(
-                index == picked,
-                RichText::new(line(&DEFORMERS, cells.iter().map(String::as_str))).monospace(),
-            )
-            .clicked()
-        {
+        // A selectable label pads itself taller than the row the table lays out, so the picked
+        // one is drawn strong rather than boxed.
+        let text = RichText::new(line(&DEFORMERS, cells.iter().map(String::as_str))).monospace();
+        let response = ui.add(
+            egui::Label::new(match index == picked {
+                true => text.strong(),
+                false => text,
+            })
+            .sense(egui::Sense::click()),
+        );
+        if response.clicked() {
             picked = index;
         }
     });
