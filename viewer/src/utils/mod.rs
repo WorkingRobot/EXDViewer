@@ -3,6 +3,7 @@ mod cloneable_error;
 mod collapsible_side_panel;
 mod color_theme;
 mod convertible_promise;
+mod icon_loader;
 mod icon_manager;
 mod icon_modal;
 #[cfg(target_arch = "wasm32")]
@@ -24,6 +25,7 @@ pub use cloneable_error::CloneableResult;
 pub use collapsible_side_panel::{CollapsibleSidePanel, Side};
 pub use color_theme::ColorTheme;
 pub use convertible_promise::{ConvertiblePromise, PromiseKind};
+pub use icon_loader::install_tex_loader;
 pub use icon_manager::{IconManager, ManagedIcon};
 pub use icon_modal::icon_modal;
 #[cfg(target_arch = "wasm32")]

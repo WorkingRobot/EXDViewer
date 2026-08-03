@@ -1,5 +1,4 @@
 use std::io::{Cursor, Read, Seek};
-use std::sync::LazyLock;
 
 use async_trait::async_trait;
 use either::Either;
@@ -410,20 +409,4 @@ pub fn get_icon_path(
         Some(icons) => icons.path(icon_id, hires, language),
         None => icon_path(icon_id, None, hires),
     }
-}
-
-static XIVAPI_BASE_URL: LazyLock<Url> = LazyLock::new(|| {
-    Url::parse("https://v2.xivapi.com/api/asset").expect("Failed to parse XIVAPI base URL")
-});
-
-fn get_xivapi_asset_url(path: &str, format: Option<&str>) -> Url {
-    let mut url = XIVAPI_BASE_URL.clone();
-    {
-        let mut pairs = url.query_pairs_mut();
-        pairs.append_pair("path", path);
-        if let Some(format) = format {
-            pairs.append_pair("format", format);
-        }
-    }
-    url
 }

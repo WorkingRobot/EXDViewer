@@ -50,7 +50,7 @@ use crate::{
     shortcuts::{GOTO_ROW, GOTO_SHEET, PALETTE},
     utils::{
         CodeTheme, CollapsibleSidePanel, ColorTheme, ConvertiblePromise, FuzzyMatcher, IconManager,
-        Side, TrackedPromise, opt_slider, shortcut, tick_promises,
+        Side, TrackedPromise, install_tex_loader, opt_slider, shortcut, tick_promises,
     },
 };
 
@@ -1637,6 +1637,7 @@ impl App {
     #[must_use]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_image_loaders(&cc.egui_ctx);
+        install_tex_loader(&cc.egui_ctx);
         Self::apply_fonts(&cc.egui_ctx, None);
         Self::setup_theme(&cc.egui_ctx);
 
