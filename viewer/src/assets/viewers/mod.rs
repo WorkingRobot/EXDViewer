@@ -358,7 +358,7 @@ impl Preview {
             Self::Shcd(code) => shcd::ui(ui, code, bytes),
             Self::Imc(change) => imc::ui(ui, change),
             Self::Atch(points) => atch::ui(ui, points),
-            Self::Avfx(effect) => follow = avfx::ui(ui, effect),
+            Self::Avfx(effect) => follow = avfx::ui(ui, effect, backend),
             Self::Eid(points) => follow = eid::ui(ui, points),
             Self::Est(templates) => follow = est::ui(ui, templates),
             Self::Skp(parameters) => follow = skp::ui(ui, parameters),

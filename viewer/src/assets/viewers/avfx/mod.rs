@@ -6,25 +6,72 @@
 //! items over a span of frames, an emitter spawns particles and further emitters, and anything
 //! animated is a curve.
 //!
-//! Nothing in the file states the rate its frames are counted at, so the rate is a setting and a
-//! curve reads out in both.
+//! Nothing in the file states the rate its frames are counted at, so the rate is a setting: it sets
+//! how fast the preview runs, and a curve reads out in frames and in seconds both.
+//!
+//! The preview itself is [`sim`]: an emitter bursting particles, each carrying its curves forward
+//! from the frame it was spawned on. It is not the game's renderer and does not try to be.
 
-use std::collections::HashSet;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Cursor;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use egui::{RichText, ScrollArea, Sense, Vec2, collapsing_header::paint_default_icon, vec2};
+use egui::{
+    Color32, RichText, ScrollArea, Sense, TextureHandle, TextureOptions, Vec2,
+    collapsing_header::paint_default_icon, vec2,
+};
+use glam::{Mat4, Vec3, Vec4};
 use ironworks::file::{
     File,
     avfx::{Avfx, Block, Clip, Item, Model, Payload},
 };
 
 use super::{Preview, facts, headers, heading, link, section};
+use crate::backend::Backend;
+use crate::data::DecodedTexture;
+use crate::utils::TrackedPromise;
 use crate::{settings::AVFX_FRAME_RATE, utils::file_name};
 
 mod curve;
+mod gpu;
+mod sim;
 
 use curve::Curve;
+
+/// Vertical field of view.
+const FOV: f32 = 40.0_f32.to_radians();
+
+/// How much of the effect's reach the opening view stands back by.
+const MARGIN: f32 = 1.6;
+
+/// Longest edge an effect's textures are decoded to, and the bytes one effect may hold of them.
+const TEXTURE_SIZE: u16 = 256;
+const TEXTURE_BUDGET: usize = 64 << 20;
+
+enum Texture {
+    Fetching(TrackedPromise<Result<DecodedTexture>>),
+    Ready(TextureHandle),
+    Absent,
+}
+
+/// Where the camera is looking from.
+#[derive(Clone, Copy)]
+struct Camera {
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    target: Vec3,
+}
+
+impl Camera {
+    fn eye(&self) -> Vec3 {
+        let (sin_pitch, cos_pitch) = self.pitch.sin_cos();
+        let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
+        self.target + self.distance * Vec3::new(cos_pitch * sin_yaw, sin_pitch, cos_pitch * cos_yaw)
+    }
+}
 
 /// Space each level of the tree is set in by.
 const INDENT: f32 = 12.0;
@@ -66,6 +113,18 @@ pub struct Rendered {
     /// Where the open rows and the selected one are kept, since drawing takes the file by
     /// reference.
     state: egui::Id,
+
+    effect: sim::Effect,
+    gpu: Arc<Mutex<gpu::Particles>>,
+    live: RefCell<sim::State>,
+    /// Where playback has reached, which runs between frames where the rate is not the display's.
+    at: Cell<f32>,
+    playing: Cell<bool>,
+    camera: Cell<Camera>,
+    home: Camera,
+    reach: f32,
+    textures: RefCell<HashMap<String, Texture>>,
+    resident: Cell<usize>,
 }
 
 /// The first block carrying `name`.
@@ -555,12 +614,25 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     build.textures(&file);
     build.models(&file);
 
+    let mut effect = sim::Effect::read(&file);
+    let (target, reach) = effect.fit();
+    // The models are the effect's own geometry and nothing reads them again once they are on the
+    // card: a particle already carries the index it draws.
+    let models = std::mem::take(&mut effect.models);
+    let home = Camera {
+        yaw: 0.6,
+        pitch: 0.25,
+        distance: reach * MARGIN / (FOV * 0.5).tan(),
+        target,
+    };
+
     log::info!(
-        "assets/avfx: {path} {} timelines, {} emitters, {} particles, {} curves",
+        "assets/avfx: {path} {} timelines, {} emitters, {} particles, {} curves, {} frames",
         file.timelines().len(),
         file.emitters().len(),
         file.particles().len(),
-        build.curves.len()
+        build.curves.len(),
+        effect.length
     );
 
     Ok(Preview::Avfx(Box::new(Rendered {
@@ -569,10 +641,31 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
         rows: build.rows,
         curves: build.curves,
         state: egui::Id::new(path).with("avfx_tree"),
+        gpu: gpu::Particles::new(models),
+        effect,
+        live: RefCell::default(),
+        at: Cell::new(0.0),
+        playing: Cell::new(true),
+        camera: Cell::new(home),
+        home,
+        reach,
+        textures: RefCell::default(),
+        resident: Cell::new(0),
     })))
 }
 
-pub fn ui(ui: &mut egui::Ui, file: &Rendered) -> Option<String> {
+/// The preview over the tree, with the split between them draggable.
+pub fn ui(ui: &mut egui::Ui, file: &Rendered, backend: &Backend) -> Option<String> {
+    file.poll(ui, backend);
+    let follow = egui::containers::panel::Panel::bottom(file.state.with("split"))
+        .default_size((ui.available_height() * 0.4).max(120.0))
+        .show(ui, |ui| tree_ui(ui, file))
+        .inner;
+    file.preview_ui(ui);
+    follow
+}
+
+fn tree_ui(ui: &mut egui::Ui, file: &Rendered) -> Option<String> {
     let mut follow = None;
     let mut open = file.open(ui);
     let mut shown = Vec::new();
@@ -693,6 +786,257 @@ impl Rendered {
             .filter(|under| under.depth == row.depth + 1)
             .filter_map(|under| under.curve)
             .collect()
+    }
+
+    /// Asks for the textures the effect samples and hands what arrived to egui. Runs every frame; a
+    /// texture that is already resolved costs a lookup.
+    fn poll(&self, ui: &egui::Ui, backend: &Backend) {
+        let mut textures = self.textures.borrow_mut();
+        for path in &self.effect.textures {
+            if textures.contains_key(path) {
+                continue;
+            }
+            if self.resident.get() >= TEXTURE_BUDGET {
+                log::warn!("assets/avfx: {path}: past this effect's texture budget");
+                textures.insert(path.clone(), Texture::Absent);
+                continue;
+            }
+            let files = backend.files().clone();
+            let wanted = path.clone();
+            textures.insert(
+                path.clone(),
+                Texture::Fetching(TrackedPromise::spawn_local(async move {
+                    files.read_texture(&wanted, Some(TEXTURE_SIZE)).await
+                })),
+            );
+        }
+        for (path, texture) in textures.iter_mut() {
+            let Texture::Fetching(promise) = texture else {
+                continue;
+            };
+            let Some(result) = promise.try_get() else {
+                continue;
+            };
+            *texture = match result {
+                Ok(decoded) => {
+                    let size = [
+                        decoded.image.width() as usize,
+                        decoded.image.height() as usize,
+                    ];
+                    self.resident
+                        .set(self.resident.get() + size[0] * size[1] * 4);
+                    let image = egui::ColorImage::from_rgba_premultiplied(
+                        size,
+                        decoded.image.as_flat_samples().as_slice(),
+                    );
+                    Texture::Ready(ui.ctx().load_texture(
+                        format!("avfx:{path}"),
+                        image,
+                        TextureOptions {
+                            magnification: egui::TextureFilter::Linear,
+                            minification: egui::TextureFilter::Linear,
+                            wrap_mode: egui::TextureWrapMode::ClampToEdge,
+                            mipmap_mode: Some(egui::TextureFilter::Linear),
+                        },
+                    ))
+                }
+                Err(why) => {
+                    log::error!("assets/avfx: {path}: {why}");
+                    Texture::Absent
+                }
+            };
+        }
+    }
+
+    /// The playback bar, and the effect running under it.
+    fn preview_ui(&self, ui: &mut egui::Ui) {
+        let rate = AVFX_FRAME_RATE.get(ui.ctx());
+        let length = self.effect.length;
+        ui.horizontal(|ui| {
+            let playing = self.playing.get();
+            if ui
+                .selectable_label(
+                    playing,
+                    match playing {
+                        true => "Pause",
+                        false => "Play",
+                    },
+                )
+                .clicked()
+            {
+                self.playing.set(!playing);
+            }
+            if ui.button("Restart").clicked() {
+                self.at.set(0.0);
+            }
+            if ui.button("Reset view").clicked() {
+                self.camera.set(self.home);
+            }
+
+            let mut at = self.at.get();
+            ui.spacing_mut().slider_width = (ui.available_width() - 140.0).max(80.0);
+            // On the response rather than on `changed`: the slider rewrites the value it is handed
+            // every frame, so playing through it reads as the user having moved it.
+            let response =
+                ui.add(egui::Slider::new(&mut at, 0.0..=length as f32).show_value(false));
+            if response.dragged() || response.clicked() {
+                self.at.set(at);
+                self.playing.set(false);
+            }
+            ui.label(
+                RichText::new(format!("{at:.0}/{length}  {}", curve::seconds(at, rate)))
+                    .monospace()
+                    .weak(),
+            );
+        });
+
+        if let Some(why) = self.gpu.lock().unwrap().failure() {
+            ui.centered_and_justified(|ui| {
+                ui.colored_label(Color32::RED, format!("Could not build the shader: {why}"));
+            });
+            return;
+        }
+
+        if self.playing.get() {
+            let step = ui.input(|input| input.stable_dt).clamp(0.0, 0.1) * rate;
+            self.at.set((self.at.get() + step) % length as f32);
+            ui.ctx().request_repaint();
+        }
+        self.effect
+            .seek(&mut self.live.borrow_mut(), self.at.get() as i32);
+        self.viewport(ui);
+    }
+
+    /// The effect itself: an orbit camera over a paint callback.
+    fn viewport(&self, ui: &mut egui::Ui) {
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        if rect.width() < 1.0 || rect.height() < 1.0 {
+            return;
+        }
+
+        let mut camera = self.camera.get();
+        let pan = |camera: &mut Camera, delta: egui::Vec2| {
+            let (sin_yaw, cos_yaw) = camera.yaw.sin_cos();
+            let right = Vec3::new(cos_yaw, 0.0, -sin_yaw);
+            let scale = camera.distance * 0.002;
+            camera.target += (right * -delta.x + Vec3::Y * delta.y) * scale;
+        };
+        let zoom = |camera: &mut Camera, scale: f32| {
+            camera.distance = (camera.distance * scale)
+                .clamp(self.home.distance * 0.02, self.home.distance * 20.0);
+        };
+
+        // A second finger takes the gesture over: egui carries on reporting a primary drag through
+        // one, so leaving the orbit armed would spin the effect while it is being pinched.
+        let touch = ui.input(|input| input.multi_touch());
+        match touch.filter(|_| response.dragged()) {
+            Some(touch) => {
+                zoom(&mut camera, 1.0 / touch.zoom_delta);
+                pan(&mut camera, touch.translation_delta);
+            }
+            None => {
+                if response.dragged_by(egui::PointerButton::Primary) {
+                    let delta = response.drag_delta();
+                    camera.yaw -= delta.x * 0.01;
+                    camera.pitch = (camera.pitch + delta.y * 0.01).clamp(-1.5, 1.5);
+                }
+                if response.dragged_by(egui::PointerButton::Secondary) {
+                    pan(&mut camera, response.drag_delta());
+                }
+            }
+        }
+        if response.hovered() {
+            let scroll = ui.input(|input| input.smooth_scroll_delta.y);
+            if scroll != 0.0 {
+                zoom(&mut camera, 1.0 - scroll * 0.002);
+            }
+        }
+        self.camera.set(camera);
+
+        let eye = camera.eye();
+        let view = Mat4::look_at_rh(eye, camera.target, Vec3::Y);
+        let span = (eye - self.home.target).length();
+        let near = (span - self.reach).max(self.reach * 0.005);
+        let projection =
+            Mat4::perspective_rh_gl(FOV, rect.width() / rect.height(), near, span + self.reach);
+
+        // A sprite is set into the screen's plane, which is what the camera's own axes are for.
+        let axes = glam::Mat3::from_mat4(view).transpose();
+        let frame = gpu::Frame {
+            view_projection: (projection * view).to_cols_array(),
+            right: axes.x_axis.to_array(),
+            up: axes.y_axis.to_array(),
+            batches: self.batches(view),
+        };
+
+        // The context is taken from the painter rather than captured: `glow::Context` is neither
+        // `Send` nor `Sync` on wasm, and a callback has to be both.
+        let particles = self.gpu.clone();
+        ui.painter().add(egui::PaintCallback {
+            rect,
+            callback: Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
+                particles
+                    .lock()
+                    .unwrap()
+                    .draw(painter.gl(), painter, &frame);
+            })),
+        });
+    }
+
+    /// The live particles, gathered into one draw apiece per shape, texture and blend, furthest
+    /// group first. Blending reads what is already there, so the order is part of the picture.
+    fn batches(&self, view: Mat4) -> Vec<gpu::Batch> {
+        let textures = self.textures.borrow();
+        let bind = |index: usize| match self
+            .effect
+            .textures
+            .get(index)
+            .and_then(|path| textures.get(path))
+        {
+            Some(Texture::Ready(handle)) => Some(handle.id()),
+            _ => None,
+        };
+
+        let mut groups: BTreeMap<_, Vec<(f32, gpu::Instance)>> = BTreeMap::new();
+        for drawn in self.effect.drawn(&self.live.borrow()) {
+            let center = Vec3::from(drawn.center);
+            let depth = (view * Vec4::from((center, 1.0))).z;
+            groups
+                .entry((drawn.shape, drawn.texture, drawn.blend))
+                .or_default()
+                .push((
+                    depth,
+                    gpu::Instance {
+                        center: drawn.center,
+                        scale: drawn.scale,
+                        turn: drawn.turn,
+                        color: drawn.color,
+                    },
+                ));
+        }
+
+        let mut batches: Vec<(f32, gpu::Batch)> = groups
+            .into_iter()
+            .map(|((shape, texture, blend), mut instances)| {
+                instances.sort_by(|(a, _), (b, _)| a.total_cmp(b));
+                let mean =
+                    instances.iter().map(|(depth, _)| depth).sum::<f32>() / instances.len() as f32;
+                (
+                    mean,
+                    gpu::Batch {
+                        shape,
+                        texture: texture.and_then(bind),
+                        blend,
+                        instances: instances
+                            .into_iter()
+                            .map(|(_, instance)| instance)
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        batches.sort_by(|(a, _), (b, _)| a.total_cmp(b));
+        batches.into_iter().map(|(_, batch)| batch).collect()
     }
 
     pub fn details_ui(&self, ui: &mut egui::Ui, follow: &mut Option<String>) {
@@ -1062,5 +1406,183 @@ mod tests {
             .expect("the colour container");
         assert_eq!(effect.drawn(column), vec![0, 1]);
         assert_eq!(effect.drawn(column + 1), vec![0]);
+    }
+
+    fn life(frames: f32) -> Vec<u8> {
+        nest("Life", &[block("Val", &frames.to_le_bytes())])
+    }
+
+    /// One emitter, running one particle over `span`, bursting one a frame.
+    fn playing(particle: &[Vec<u8>], span: (i32, i32)) -> Rendered {
+        read(&[
+            nest(
+                "TmLn",
+                &[
+                    block("TICn", &integer(1)),
+                    block(
+                        "Item",
+                        &[
+                            block("bEna", &integer(1)),
+                            block("StTm", &integer(span.0)),
+                            block("EdTm", &integer(span.1)),
+                            block("EmNo", &integer(0)),
+                        ]
+                        .concat(),
+                    ),
+                ],
+            ),
+            nest(
+                "Emit",
+                &[
+                    block("PrCn", &integer(1)),
+                    block(
+                        "ItPr",
+                        &[
+                            block("bEnb", &integer(1)),
+                            block("TgtB", &integer(0)),
+                            block("CrCn", &integer(1)),
+                        ]
+                        .concat(),
+                    ),
+                    life(-1.0),
+                    curve("CrC", 0, 0, &scalars(&[(0, 1, 1.0)])),
+                    curve("CrI", 0, 0, &scalars(&[(0, 1, 1.0)])),
+                ],
+            ),
+            nest("Ptcl", particle),
+        ])
+    }
+
+    fn at(effect: &sim::Effect, frame: i32) -> Vec<sim::Drawn> {
+        let mut state = sim::State::default();
+        effect.seek(&mut state, frame);
+        effect.drawn(&state)
+    }
+
+    #[test]
+    fn an_emitter_runs_over_the_span_its_timeline_gives_it() {
+        let effect = &playing(&[life(2.0)], (3, 6)).effect;
+        assert!(at(effect, 2).is_empty());
+        assert_eq!(at(effect, 4).len(), 2);
+        // The last one spawns on frame six and lives two frames past it.
+        assert!(!at(effect, 8).is_empty());
+        assert!(at(effect, 9).is_empty());
+    }
+
+    /// A particle's position is the sum of every step it has taken, so seeking back has to replay.
+    #[test]
+    fn seeking_back_lands_where_playing_forward_did() {
+        let effect = &playing(&[life(4.0)], (0, 20)).effect;
+        let forward: Vec<_> = at(effect, 7)
+            .into_iter()
+            .map(|drawn| drawn.center)
+            .collect();
+
+        let mut state = sim::State::default();
+        effect.seek(&mut state, 15);
+        effect.seek(&mut state, 7);
+        let back: Vec<_> = effect
+            .drawn(&state)
+            .into_iter()
+            .map(|drawn| drawn.center)
+            .collect();
+        assert_eq!(forward, back);
+    }
+
+    #[test]
+    fn a_particle_carries_its_own_curves_from_the_frame_it_spawned_on() {
+        let effect = &playing(
+            &[
+                life(10.0),
+                nest(
+                    "Pos",
+                    &[curve("Y", 0, 0, &scalars(&[(0, 1, 0.0), (10, 1, 10.0)]))],
+                ),
+            ],
+            (0, 0),
+        )
+        .effect;
+        assert_eq!(at(effect, 0)[0].center[1], 0.0);
+        assert_eq!(at(effect, 5)[0].center[1], 5.0);
+    }
+
+    #[test]
+    fn a_particle_expires_at_the_life_the_file_gives_it() {
+        let effect = &playing(&[life(3.0)], (0, 0)).effect;
+        assert_eq!(at(effect, 3).len(), 1);
+        assert!(at(effect, 4).is_empty());
+    }
+
+    /// A life the file writes as `-1` is one the particle never reaches.
+    #[test]
+    fn a_particle_with_no_life_runs_to_the_end() {
+        let effect = &playing(&[life(-1.0)], (0, 0)).effect;
+        assert_eq!(at(effect, 200).len(), 1);
+    }
+
+    #[test]
+    fn a_model_kind_draws_the_model_it_names() {
+        let mut vertex = vec![0; 36];
+        vertex[0] = 0x3c;
+        let model = nest(
+            "Modl",
+            &[
+                block("VDrw", &vertex),
+                block("VIdx", &[0u16, 0, 0].map(u16::to_le_bytes).concat()),
+            ],
+        );
+        let effect = read(&[
+            model,
+            nest(
+                "TmLn",
+                &[block(
+                    "Item",
+                    &[block("bEna", &integer(1)), block("EmNo", &integer(0))].concat(),
+                )],
+            ),
+            nest(
+                "Emit",
+                &[
+                    block(
+                        "ItPr",
+                        &[block("bEnb", &integer(1)), block("TgtB", &integer(0))].concat(),
+                    ),
+                    life(-1.0),
+                ],
+            ),
+            nest(
+                "Ptcl",
+                &[
+                    block("PrVT", &integer(5)),
+                    block("RMT", &integer(2)),
+                    life(-1.0),
+                    nest("Data", &[block("MdNo", &[0])]),
+                ],
+            ),
+        ]);
+        let drawn = at(&effect.effect, 0);
+        assert_eq!(drawn[0].shape, sim::Shape::Model(0));
+        assert_eq!(drawn[0].blend, sim::Blend::Add);
+    }
+
+    /// A model index past what the file holds is not one, and falls back to the sprite.
+    #[test]
+    fn a_model_index_the_file_does_not_hold_draws_as_a_sprite() {
+        let effect = &playing(
+            &[
+                life(-1.0),
+                block("PrVT", &integer(5)),
+                nest("Data", &[block("MdNo", &[3])]),
+            ],
+            (0, 0),
+        )
+        .effect;
+        assert_eq!(at(effect, 0)[0].shape, sim::Shape::Sprite);
+    }
+
+    #[test]
+    fn a_particle_samples_the_texture_its_first_layer_names() {
+        let effect = &playing(&[life(-1.0), nest("TC1", &[block("TLst", &[1])])], (0, 0)).effect;
+        assert_eq!(at(effect, 0)[0].texture, Some(1));
     }
 }
