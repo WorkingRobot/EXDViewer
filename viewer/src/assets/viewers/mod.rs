@@ -566,7 +566,7 @@ impl Preview {
             return None;
         }
         if let Self::Layers(layers) = self {
-            layers.details_ui(ui, follow, backend);
+            layers.details_ui(ui, follow, deps, backend);
             return None;
         }
         if let Self::Zone(annotations) = self {

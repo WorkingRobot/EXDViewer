@@ -24,6 +24,14 @@ pub mod sgb;
 /// The sheet a scene filter names a territory of.
 const TERRITORY: &str = "TerritoryType";
 
+/// The sheets an instance names a row of. An event NPC is filed under its base id in the sheet
+/// carrying the name, and an object under the one beside its own.
+const RESIDENT: &str = "ENpcResident";
+const OBJECT: &str = "EObjName";
+const PLACE: &str = "PlaceName";
+const MAP: &str = "Map";
+const MUSIC: &str = "BGM";
+
 /// The sheet it names a duty of, where the territory is entered through one.
 const DUTY: &str = "ContentFinderCondition";
 
@@ -105,10 +113,15 @@ struct Line<'a> {
     asset: Option<&'a str>,
 }
 
-/// One field of the selected row. A path is drawn as a link, anything else as text.
+/// One field of the selected row. A path is drawn as a link, a sheet row as whatever the sheet
+/// calls it, and anything else as text.
 enum Fact {
     Text(String),
     Path(String),
+    /// A sheet and a row of it, drawn as the row's name beside its id.
+    Row(&'static str, u32),
+    /// The same where the row's text is a file, which is drawn as a link.
+    Asset(&'static str, u32),
 }
 
 #[derive(Default)]
@@ -123,6 +136,19 @@ impl Rows {
     fn path(&mut self, label: &'static str, path: &str) {
         if !path.is_empty() {
             self.0.push((label, Fact::Path(path.to_owned())));
+        }
+    }
+
+    /// Dropped where the field is zero, which is how an unset row is written.
+    fn row(&mut self, label: &'static str, sheet: &'static str, id: u32) {
+        if id != 0 {
+            self.0.push((label, Fact::Row(sheet, id)));
+        }
+    }
+
+    fn asset(&mut self, label: &'static str, sheet: &'static str, id: u32) {
+        if id != 0 {
+            self.0.push((label, Fact::Asset(sheet, id)));
         }
     }
 }
@@ -414,7 +440,7 @@ fn payload(instance: &Instance) -> Rows {
             }
         }
         InstanceData::EventNpc(npc) => {
-            rows.text("Base", npc.character().object().base_id().to_string());
+            rows.row("Base", RESIDENT, npc.character().object().base_id());
             rows.text("Character", format!("{:?}", npc.character().unknown()));
             rows.text("Unknown", format!("{:?}", npc.unknown()));
         }
@@ -482,11 +508,11 @@ fn payload(instance: &Instance) -> Rows {
         }
         InstanceData::MapRange(range) => {
             trigger(&mut rows, range.trigger(), scale);
-            rows.text("Map", range.map().to_string());
-            rows.text("Place name", range.place_name_block().to_string());
-            rows.text("Place name spot", range.place_name_spot().to_string());
+            rows.row("Map", MAP, range.map());
+            rows.row("Place name", PLACE, range.place_name_block());
+            rows.row("Place name spot", PLACE, range.place_name_spot());
             rows.text("Weather", range.weather().to_string());
-            rows.text("Music", range.bgm().to_string());
+            rows.asset("Music", MUSIC, range.bgm());
             rows.text("Housing block", range.housing_block_id().to_string());
             rows.text("Discovery", range.discovery_id().to_string());
             let switches = [
@@ -518,7 +544,7 @@ fn payload(instance: &Instance) -> Rows {
             );
         }
         InstanceData::EventObject(object) => {
-            rows.text("Base", object.object().base_id().to_string());
+            rows.row("Base", OBJECT, object.object().base_id());
             rows.text("Bound instance", object.bound_instance_id().to_string());
             rows.text("Unknown", object.unknown().to_string());
         }
@@ -982,7 +1008,13 @@ impl Rendered {
 
     /// The scene fetches from its own side of the viewer, so the backend only reaches here to keep
     /// both halves of the layer viewer on one signature.
-    pub fn details_ui(&self, ui: &mut egui::Ui, follow: &mut Option<String>, _backend: &Backend) {
+    pub fn details_ui(
+        &self,
+        ui: &mut egui::Ui,
+        follow: &mut Option<String>,
+        deps: &mut Deps,
+        backend: &Backend,
+    ) {
         if self.placed.get()
             && let Some(scene) = self.scene.borrow_mut().as_mut()
         {
@@ -1004,6 +1036,29 @@ impl Rendered {
                             match fact {
                                 Fact::Text(value) => {
                                     ui.label(RichText::new(value).monospace());
+                                }
+                                Fact::Row(sheet, id) => {
+                                    let named = deps.text(ui.ctx(), backend, sheet, id);
+                                    ui.label(
+                                        RichText::new(match named {
+                                            Some(name) => format!("{name}  ({id})"),
+                                            None => id.to_string(),
+                                        })
+                                        .monospace(),
+                                    );
+                                }
+                                Fact::Asset(sheet, id) => {
+                                    match deps.text(ui.ctx(), backend, sheet, id) {
+                                        Some(path) => {
+                                            let path = path.to_owned();
+                                            if link(ui, crate::utils::file_name(&path), &path) {
+                                                *follow = Some(path);
+                                            }
+                                        }
+                                        None => {
+                                            ui.label(RichText::new(id.to_string()).monospace());
+                                        }
+                                    }
                                 }
                                 Fact::Path(path) => {
                                     if link(ui, crate::utils::file_name(&path), &path) {
