@@ -53,6 +53,10 @@ fn axes(values: [f32; 3]) -> String {
 /// A `.gzd`, decoded and ready to draw.
 pub struct Zone {
     identity: Vec<(&'static str, String)>,
+    /// The grids in space, built on the first switch to the scene.
+    scene: RefCell<Option<placed::View>>,
+    /// Whether the tables or the scene is showing.
+    placed: Cell<bool>,
     /// Where the zone's own directory sits, which is what its names are relative to.
     directory: String,
     color_maps: Vec<String>,
@@ -111,6 +115,8 @@ pub fn zone(path: &str, bytes: &[u8]) -> Result<Preview> {
 
     Ok(Preview::GrassZone(Box::new(Zone {
         identity,
+        scene: RefCell::new(None),
+        placed: Cell::new(false),
         color_maps: file
             .color_map()
             .iter()
@@ -201,6 +207,23 @@ pub fn zone_ui(
     backend: &Backend,
 ) -> Option<String> {
     let mut follow = None;
+    ui.horizontal(|ui| {
+        for (scene, label) in [(false, "Files"), (true, "Scene")] {
+            if ui
+                .selectable_label(file.placed.get() == scene, label)
+                .clicked()
+            {
+                file.placed.set(scene);
+            }
+        }
+    });
+    ui.add_space(4.0);
+
+    if file.placed.get() {
+        let mut held = file.scene.borrow_mut();
+        held.get_or_insert_with(|| file.build()).ui(ui);
+        return None;
+    }
 
     if !file.color_maps.is_empty() {
         section(ui, "Color maps");
@@ -291,6 +314,30 @@ pub fn grid_ui(ui: &mut egui::Ui, file: &Grid) {
 }
 
 impl Zone {
+    /// Every grid as the sphere it is culled by, one color per level of detail, so the coverage
+    /// of a zone reads at a glance.
+    fn build(&self) -> placed::View {
+        let batches = [gzd::Detail::High, gzd::Detail::Medium, gzd::Detail::Low]
+            .into_iter()
+            .enumerate()
+            .map(|(index, detail)| placed::Batch {
+                shape: placed::Shape::Wire,
+                instances: self
+                    .file
+                    .grids(detail)
+                    .iter()
+                    .map(|grid| placed::Instance {
+                        center: grid.center(),
+                        scale: [grid.radius(); 3],
+                        turn: [0.0, 0.0, 0.0, 1.0],
+                        color: placed::tint(index * 3),
+                    })
+                    .collect(),
+            })
+            .collect();
+        placed::View::new(batches)
+    }
+
     pub fn details_ui(&self, ui: &mut egui::Ui) {
         ScrollArea::vertical()
             .auto_shrink(false)
