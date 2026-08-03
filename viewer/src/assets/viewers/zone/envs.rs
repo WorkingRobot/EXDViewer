@@ -73,11 +73,14 @@ struct Line<'a> {
     detail: String,
 }
 
-fn color(colour: &envs::Colour) -> Color32 {
+/// Values a keyframe's row shows before it runs out of room.
+const PREVIEW: usize = 4;
+
+fn color(colour: envs::Colour) -> Color32 {
     Color32::from_rgb(colour.red(), colour.green(), colour.blue())
 }
 
-fn described(colour: &envs::Colour) -> String {
+fn described(colour: envs::Colour) -> String {
     format!(
         "{}, {}, {}, {} x {:.3}",
         colour.red(),
@@ -86,6 +89,41 @@ fn described(colour: &envs::Colour) -> String {
         colour.alpha(),
         colour.intensity()
     )
+}
+
+/// One value of a keyframe, without the name it is filed under.
+fn shown(value: &envs::Value) -> String {
+    match value {
+        envs::Value::Float(value) => format!("{value:.3}"),
+        envs::Value::Unsigned(value) => value.to_string(),
+        envs::Value::Flag(on) => match on {
+            true => "yes".to_owned(),
+            false => "no".to_owned(),
+        },
+        envs::Value::Colour(colour) => described(*colour),
+        envs::Value::Path(path) => path.clone(),
+    }
+}
+
+/// A field name as the format writes it, spaced out for a label.
+fn titled(name: &str) -> String {
+    let mut title = name.replace('_', " ");
+    if let Some(first) = title.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    title
+}
+
+/// The scalars of a keyframe, which are the ones neither the color chips nor the asset links
+/// already carry.
+fn scalars(keyframe: &envs::Keyframe) -> impl Iterator<Item = (&'static str, &envs::Value)> {
+    keyframe.fields().iter().filter_map(|(name, value)| {
+        matches!(
+            value,
+            envs::Value::Float(_) | envs::Value::Unsigned(_) | envs::Value::Flag(_)
+        )
+        .then_some((*name, value))
+    })
 }
 
 pub struct Rendered {
@@ -123,9 +161,9 @@ fn rendered(path: &str, source: Source) -> Preview {
     let options = set
         .options()
         .iter()
-        .enumerate()
-        .filter(|(_, on)| **on)
-        .map(|(index, _)| index.to_string())
+        .zip(envs::OPTIONS)
+        .filter(|(on, _)| **on)
+        .map(|(_, name)| name)
         .collect::<Vec<_>>();
     if !options.is_empty() {
         identity.push(("Options", options.join(", ")));
@@ -310,7 +348,7 @@ impl Rendered {
             At::Set(weather, index) => {
                 let set = self.set(weather, index);
                 Line {
-                    label: format!("kind {}", set.kind()),
+                    label: set.name().unwrap_or("Unnamed").to_owned(),
                     colors: Vec::new(),
                     asset: None,
                     detail: format!("{} keyframes", set.keyframes().len()),
@@ -318,17 +356,20 @@ impl Rendered {
             }
             At::Keyframe(weather, set, index) => {
                 let keyframe = self.keyframe(weather, set, index);
-                let detail = match keyframe.unknown().is_empty() {
-                    true => String::new(),
-                    false => format!("{} bytes unread", keyframe.unknown().len()),
-                };
+                let mut detail = scalars(keyframe)
+                    .take(PREVIEW)
+                    .map(|(_, value)| shown(value))
+                    .collect::<Vec<_>>()
+                    .join("  ");
+                if scalars(keyframe).count() > PREVIEW {
+                    detail.push('…');
+                }
+                let mut named = keyframe.paths().filter(|path| !path.is_empty());
+                let first = named.next();
                 Line {
                     label: clock(keyframe.time()),
-                    colors: keyframe.colours().iter().map(color).collect(),
-                    asset: keyframe
-                        .paths()
-                        .first()
-                        .map(|path| (path.as_str(), keyframe.paths().len() - 1)),
+                    colors: keyframe.colours().map(color).collect(),
+                    asset: first.map(|path| (path, named.count())),
                     detail,
                 }
             }
@@ -336,55 +377,71 @@ impl Rendered {
     }
 
     /// Everything the selected row carries beside its colors and the files it names.
-    fn fields(&self, at: At) -> Vec<(&'static str, String)> {
+    fn fields(&self, at: At) -> Vec<(String, String)> {
         match at {
             At::Weather(index) => {
                 let weather = self.weather(index);
-                vec![
+                [
                     ("Weather", weather.id().to_string()),
                     ("Length", format!("{:.0}s", weather.length())),
                     ("Sets", weather.sets().len().to_string()),
-                    ("Unknown A", weather.unknown_a().to_string()),
-                    ("Unknown B", format!("{:.3}", weather.unknown_b())),
+                    ("Parameter", weather.parameter().to_string()),
+                    ("Weight", format!("{:.3}", weather.weight())),
                 ]
+                .map(|(label, value)| (label.to_owned(), value))
+                .into()
             }
             At::Set(weather, index) => {
                 let set = self.set(weather, index);
-                vec![
+                [
+                    ("Animates", set.name().unwrap_or("Unnamed").to_owned()),
                     ("Kind", set.kind().to_string()),
                     ("Keyframes", set.keyframes().len().to_string()),
                 ]
+                .map(|(label, value)| (label.to_owned(), value))
+                .into()
             }
             At::Keyframe(weather, set, index) => {
                 let keyframe = self.keyframe(weather, set, index);
-                let mut fields = vec![("Time", clock(keyframe.time()))];
-                if !keyframe.unknown().is_empty() {
-                    fields.push(("Unread", format!("{} bytes", keyframe.unknown().len())));
-                }
-                fields
+                std::iter::once(("Time".to_owned(), clock(keyframe.time())))
+                    .chain(scalars(keyframe).map(|(name, value)| (titled(name), shown(value))))
+                    .collect()
             }
         }
     }
 
     /// The files the selected row names, which for a weather are the two it may carry itself.
     fn assets(&self, at: At) -> Vec<&str> {
-        let paths: &[String] = match at {
-            At::Weather(index) => self.weather(index).paths(),
-            At::Set(..) => &[],
-            At::Keyframe(weather, set, index) => self.keyframe(weather, set, index).paths(),
-        };
-        paths
-            .iter()
-            .filter(|path| !path.is_empty())
-            .map(String::as_str)
-            .collect()
+        match at {
+            At::Weather(index) => self
+                .weather(index)
+                .paths()
+                .iter()
+                .map(String::as_str)
+                .collect(),
+            At::Set(..) => Vec::new(),
+            At::Keyframe(weather, set, index) => {
+                self.keyframe(weather, set, index).paths().collect()
+            }
+        }
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .collect()
     }
 
-    fn colors(&self, at: At) -> &[envs::Colour] {
-        match at {
-            At::Keyframe(weather, set, index) => self.keyframe(weather, set, index).colours(),
-            _ => &[],
-        }
+    /// The colors the selected row reaches, under the names the format files them by.
+    fn colors(&self, at: At) -> Vec<(&'static str, envs::Colour)> {
+        let At::Keyframe(weather, set, index) = at else {
+            return Vec::new();
+        };
+        self.keyframe(weather, set, index)
+            .fields()
+            .iter()
+            .filter_map(|(name, value)| match value {
+                envs::Value::Colour(colour) => Some((*name, *colour)),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn details_ui(&self, ui: &mut egui::Ui, follow: &mut Option<String>) {
@@ -399,7 +456,7 @@ impl Rendered {
                     .striped(true)
                     .show(ui, |ui| {
                         for (label, value) in self.fields(at) {
-                            ui.label(RichText::new(label).weak());
+                            ui.label(RichText::new(&label).weak());
                             ui.label(RichText::new(value).monospace());
                             ui.allocate_space(vec2(ui.available_width(), 0.0));
                             ui.end_row();
@@ -413,11 +470,12 @@ impl Rendered {
                     ui.label(RichText::new("Colors").weak());
                     ui.add_space(4.0);
                     egui::Grid::new("envs_colors")
-                        .num_columns(2)
+                        .num_columns(3)
                         .striped(true)
                         .show(ui, |ui| {
-                            for colour in colors {
+                            for (name, colour) in colors {
                                 chip(ui, color(colour));
+                                ui.label(RichText::new(titled(name)).weak());
                                 ui.label(RichText::new(described(colour)).monospace());
                                 ui.allocate_space(vec2(ui.available_width(), 0.0));
                                 ui.end_row();

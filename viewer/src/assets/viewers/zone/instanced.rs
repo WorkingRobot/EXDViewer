@@ -2,7 +2,8 @@
 //! clipped against, and the settings the zone takes underwater.
 //!
 //! `.svb` and `.lcb` key every entry by an instance one of the zone's layer groups placed. `.uwb`
-//! shares their container and nothing else: its groups carry twenty values the format does not name.
+//! shares their container and nothing else: one group holds the whole of how a zone looks under
+//! water.
 
 use std::collections::HashSet;
 use std::io::Cursor;
@@ -23,7 +24,68 @@ const VISIBILITY: [(&str, usize); 3] = [("Instance", 10), ("Member", 9), ("Visib
 
 const CLIP: [(&str, usize); 4] = [("Instance", 10), ("Member", 9), ("Min", 26), ("Max", 26)];
 
-const UNDERWATER: [(&str, usize); 2] = [("Field", 5), ("Value", 12)];
+const UNDERWATER: [(&str, usize); 2] = [("Setting", 34), ("Value", 12)];
+
+/// Everything one underwater group sets, in the order the format writes it.
+fn settings(group: uwb::Group) -> Vec<(String, String)> {
+    let fog = |depth: &str, fog: uwb::Fog| {
+        [
+            (format!("{depth} fog fade upper"), fog.vertical_fade_upper()),
+            (format!("{depth} fog fade lower"), fog.vertical_fade_lower()),
+            (
+                format!("{depth} fog attenuation"),
+                fog.vertical_attenuation_strength(),
+            ),
+        ]
+    };
+
+    let scalars = [
+        ("Water surface Y".to_owned(), group.water_surface_y()),
+        (
+            "Depth transition start".to_owned(),
+            group.depth_transition_start(),
+        ),
+        (
+            "Depth transition range".to_owned(),
+            group.depth_transition_range(),
+        ),
+    ]
+    .into_iter()
+    .chain(fog("Shallow", group.fog_shallow()))
+    .chain(fog("Deep", group.fog_deep()))
+    .chain([
+        (
+            "Caustics fade start".to_owned(),
+            group.caustics_distance_fade_start(),
+        ),
+        (
+            "Caustics fade range".to_owned(),
+            group.caustics_distance_fade_range(),
+        ),
+        ("Caustics UV size 1".to_owned(), group.caustics_uv_size()[0]),
+        ("Caustics UV size 2".to_owned(), group.caustics_uv_size()[1]),
+        (
+            "Caustics scroll speed".to_owned(),
+            group.caustics_scroll_speed(),
+        ),
+        ("Caustics intensity".to_owned(), group.caustics_intensity()),
+        ("Sun size".to_owned(), group.sun_size()),
+        ("Sun fade start".to_owned(), group.sun_fade_start()),
+        (
+            "Lighting multiplier".to_owned(),
+            group.lighting_multiplier(),
+        ),
+    ])
+    .map(|(name, value)| (name, format!("{value:.3}")));
+
+    std::iter::once(("Version".to_owned(), group.version().to_string()))
+        .chain(scalars)
+        .chain(std::iter::once((
+            "Unknown".to_owned(),
+            group.unknown().to_string(),
+        )))
+        .collect()
+}
 
 /// The file the table was read from, which it keeps rather than copying every entry out.
 enum Source {
@@ -38,7 +100,7 @@ impl Source {
         match self {
             Self::Sky(file) => file.groups().iter().map(|g| g.entries().len()).collect(),
             Self::Clip(file) => file.groups().iter().map(|g| g.entries().len()).collect(),
-            Self::Underwater(file) => file.groups().iter().map(|g| g.unknown().len()).collect(),
+            Self::Underwater(file) => file.groups().iter().map(|g| settings(*g).len()).collect(),
         }
     }
 
@@ -61,10 +123,10 @@ impl Source {
                     axes(entry.max()),
                 ]
             }
-            Self::Underwater(file) => vec![
-                index.to_string(),
-                format!("{:.3}", file.groups()[group].unknown()[index]),
-            ],
+            Self::Underwater(file) => {
+                let (name, value) = settings(file.groups()[group])[index].clone();
+                vec![name, value]
+            }
         }
     }
 
@@ -86,6 +148,45 @@ impl Source {
             Self::Underwater(_) => return None,
         };
         Some(keys.len())
+    }
+
+    /// The version every group of the file declares, where they agree on one.
+    fn version(&self) -> Option<i32> {
+        let mut versions = match self {
+            Self::Sky(file) => file
+                .groups()
+                .iter()
+                .map(svb::Group::version)
+                .collect::<Vec<_>>(),
+            Self::Clip(file) => file.groups().iter().map(lcb::Group::version).collect(),
+            Self::Underwater(file) => file.groups().iter().map(uwb::Group::version).collect(),
+        }
+        .into_iter();
+        let first = versions.next()?;
+        versions.all(|it| it == first).then_some(first)
+    }
+
+    /// How much sky the entries let through, which is the whole of what a `.svb` says.
+    fn spread(&self) -> Option<(f32, f32, usize)> {
+        let Self::Sky(file) = self else {
+            return None;
+        };
+        let visibility = file
+            .groups()
+            .iter()
+            .flat_map(|group| group.entries())
+            .map(|entry| entry.visibility());
+        let mut count = 0;
+        let mut open = 0;
+        let mut total = 0.0;
+        let mut least = f32::INFINITY;
+        for value in visibility {
+            count += 1;
+            total += value;
+            least = least.min(value);
+            open += usize::from(value >= 1.0);
+        }
+        (count > 0).then(|| (least, total / count as f32, open))
     }
 }
 
@@ -130,10 +231,19 @@ fn rendered(
         false => columns.to_vec(),
     };
 
-    let mut identity = vec![("Groups", lengths.len().to_string())];
+    let mut identity = Vec::new();
+    if let Some(version) = source.version() {
+        identity.push(("Version", version.to_string()));
+    }
+    identity.push(("Groups", lengths.len().to_string()));
     if let Some(instances) = source.instances() {
         identity.push(("Entries", rows.len().to_string()));
         identity.push(("Instances", instances.to_string()));
+    }
+    if let Some((least, mean, open)) = source.spread() {
+        identity.push(("Least visibility", format!("{least:.3}")));
+        identity.push(("Mean visibility", format!("{mean:.3}")));
+        identity.push(("Fully open", open.to_string()));
     }
 
     log::info!("assets/zone: {path} {} rows", rows.len());
