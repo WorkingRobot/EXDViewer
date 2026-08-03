@@ -4,6 +4,10 @@
 //! on, and the second the variant of that body. `human.pbd`'s own tree agrees with the split — every
 //! male body derives from a male one, Hrothgar from Roegadyn, and the scales it carries rank
 //! Roegadyn tallest and Lalafell smallest.
+//!
+//! The adult and child variants are the ones the game dresses; the two beside them are older
+//! bodies nothing is filed under any more. The child body is one shape shared by every race, which
+//! is why the two bodies outside the playable range only appear as children.
 
 /// The bodies a code's first pair names, from `01`.
 const BODIES: [(&str, &str); 18] = [
@@ -27,11 +31,12 @@ const BODIES: [(&str, &str); 18] = [
     ("Viera", "female"),
 ];
 
-/// The two bodies the game keeps outside the playable range, which only NPCs are built on.
-const UNPLAYABLE: [(u16, (&str, &str)); 2] = [(91, ("Padjal", "male")), (92, ("Padjal", "female"))];
+/// The two bodies outside the playable range, which carry faces and hair and no body of their own.
+/// They follow the same male-then-female pairing as the rest.
+const UNPLAYABLE: [(u16, (&str, &str)); 2] = [(91, ("NPC", "male")), (92, ("NPC", "female"))];
 
 /// The variants a code's second pair names. Anything else is shown as its own number.
-const VARIANTS: [(u16, &str); 2] = [(1, ""), (4, "NPC")];
+const VARIANTS: [(u16, &str); 2] = [(1, ""), (4, "child")];
 
 /// What a code stands for, or `None` where it names a body the game does not use.
 pub fn name(code: u16) -> Option<String> {
@@ -76,10 +81,10 @@ mod tests {
     /// The second pair is the variant, and the file carries three the game does not name.
     #[test]
     fn names_the_variants_apart() {
-        assert_eq!(name(104).as_deref(), Some("Hyur Midlander male (NPC)"));
+        assert_eq!(name(104).as_deref(), Some("Hyur Midlander male (child)"));
         assert_eq!(name(102).as_deref(), Some("Hyur Midlander male (2)"));
-        assert_eq!(name(9104).as_deref(), Some("Padjal male (NPC)"));
-        assert_eq!(name(9204).as_deref(), Some("Padjal female (NPC)"));
+        assert_eq!(name(9104).as_deref(), Some("NPC male (child)"));
+        assert_eq!(name(9204).as_deref(), Some("NPC female (child)"));
     }
 
     #[test]
