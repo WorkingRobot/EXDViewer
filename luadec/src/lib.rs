@@ -255,6 +255,9 @@ mod tests {
     const FORLOOP: u32 = 31;
     const MOVE: u32 = 0;
     const TEST: u32 = 26;
+    const SETGLOBAL: u32 = 7;
+    const NEWTABLE: u32 = 10;
+    const SETLIST: u32 = 34;
 
     fn source(main: Proto) -> String {
         decompile(&chunk(main)).lines.join("\n")
@@ -555,6 +558,56 @@ mod tests {
             text.lines().all(|line| line.trim_start().starts_with("--")),
             "{text}"
         );
+    }
+
+    /// A short circuit leaving its value where it tested for it is written as a plain test rather
+    /// than one that stores, and a run of them is one expression however many the compiler wrote.
+    #[test]
+    fn a_run_of_tests_on_one_register_reads_as_an_or() {
+        let held = Proto {
+            code: vec![
+                abx(GETGLOBAL, 0, 0),
+                abc(CALL, 0, 1, 2),
+                abc(TEST, 0, 0, 1),
+                asbx(JMP, 0, 6),
+                abx(GETGLOBAL, 0, 1),
+                abc(CALL, 0, 1, 2),
+                abc(TEST, 0, 0, 1),
+                asbx(JMP, 0, 2),
+                abx(GETGLOBAL, 0, 2),
+                abc(CALL, 0, 1, 2),
+                abc(RETURN, 0, 2, 0),
+                abc(RETURN, 0, 1, 0),
+            ],
+            constants: vec![Value::Text("f"), Value::Text("g"), Value::Text("h")],
+            stack: 2,
+            ..Proto::default()
+        };
+        assert_eq!(source(held), "return f() or g() or h()");
+    }
+
+    /// A list set on a table that is an item of another leaves that other one still waiting, so
+    /// neither of them outlived the statement they are both part of.
+    #[test]
+    fn a_table_built_inside_another_reads_as_one_expression() {
+        let held = Proto {
+            code: vec![
+                abc(NEWTABLE, 0, 2, 0),
+                abc(NEWTABLE, 1, 1, 0),
+                abx(LOADK, 2, 0),
+                abc(SETLIST, 1, 1, 1),
+                abc(NEWTABLE, 2, 1, 0),
+                abx(LOADK, 3, 1),
+                abc(SETLIST, 2, 1, 1),
+                abc(SETLIST, 0, 2, 1),
+                abx(SETGLOBAL, 0, 2),
+                abc(RETURN, 0, 1, 0),
+            ],
+            constants: vec![Value::Number(1.0), Value::Number(2.0), Value::Text("t")],
+            stack: 4,
+            ..Proto::default()
+        };
+        assert_eq!(source(held), "t = { { 1 }, { 2 } }");
     }
 
     #[test]

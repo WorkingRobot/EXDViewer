@@ -378,6 +378,83 @@ fn valued(held: &Function, pseudo: &[bool]) -> Vec<bool> {
     valued
 }
 
+/// Whether `lo..hi` only works a value out, and leaves it in `register`.
+fn settles_into(
+    code: &[Instruction],
+    pseudo: &[bool],
+    lo: usize,
+    hi: usize,
+    register: usize,
+) -> bool {
+    let mut last = None;
+    let mut reads = Vec::new();
+    let mut at = lo;
+    while at < hi {
+        let Some(held) = code.get(at) else {
+            return false;
+        };
+        let settles = matches!(
+            held.opcode(),
+            Opcode::SetGlobal
+                | Opcode::SetTable
+                | Opcode::SetUpval
+                | Opcode::Return
+                | Opcode::TailCall
+                | Opcode::ForPrep
+                | Opcode::ForLoop
+                | Opcode::TForLoop
+                | Opcode::SetList
+        ) || (held.opcode() == Opcode::Call && held.c() == 1);
+        if settles {
+            return false;
+        }
+        reads.clear();
+        if let Some(top) = touches(*held, &mut reads) {
+            if top < register {
+                return false;
+            }
+            last = Some(top);
+        }
+        at += 1;
+        while pseudo.get(at) == Some(&true) {
+            at += 1;
+        }
+    }
+    last == Some(register)
+}
+
+/// Where the two paths of a short circuit meet, and the register the value ends up in.
+///
+/// A conditional whose jump goes past nothing but the working out of a value into the register the
+/// conditional itself named is `and` or `or` standing as a value. Both paths write that register, so
+/// where they meet it has not crossed a jump however many jumps land there.
+fn merges(held: &Function, pseudo: &[bool]) -> Vec<Option<usize>> {
+    let code = held.code();
+    let mut merges = vec![None; code.len() + 1];
+    for (pc, instruction) in code.iter().enumerate() {
+        if pseudo.get(pc).copied().unwrap_or(false)
+            || !matches!(instruction.opcode(), Opcode::Test | Opcode::TestSet)
+        {
+            continue;
+        }
+        let jump = pc + 1;
+        if code.get(jump).map(|held| held.opcode()) != Some(Opcode::Jmp) {
+            continue;
+        }
+        let Ok(target) = usize::try_from(jump as i64 + 1 + i64::from(code[jump].sbx())) else {
+            continue;
+        };
+        let register = usize::from(instruction.a());
+        if target > jump + 1
+            && target <= code.len()
+            && settles_into(code, pseudo, jump + 1, target, register)
+        {
+            merges[target] = Some(register);
+        }
+    }
+    merges
+}
+
 fn labels(held: &Function, pseudo: &[bool]) -> Vec<bool> {
     let code = held.code();
     let mut labels = vec![false; code.len() + 1];
@@ -428,8 +505,10 @@ fn sticky(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<Option<usize
     let mut active = usize::from(held.parameters()) + usize::from(held.has_arg());
     let mut start = true;
     let mut seen = vec![0usize; 256];
+    let mut waiting = Vec::new();
     let mut reads = Vec::new();
     let valued = valued(held, pseudo);
+    let merges = merges(held, pseudo);
     for (pc, instruction) in code.iter().enumerate() {
         if pseudo.get(pc).copied().unwrap_or(false) {
             continue;
@@ -437,6 +516,13 @@ fn sticky(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<Option<usize
         let inside = valued.get(pc).copied().unwrap_or(false);
         if labels.get(pc).copied().unwrap_or(false) && !inside {
             era += 1;
+        }
+        // The register a short circuit settled arrives with the era it was written in, so only the
+        // rest of them count as having crossed the jumps that meet here.
+        if let Some(register) = merges.get(pc).copied().flatten()
+            && let Some(Some((at, _))) = written.get(register).copied()
+        {
+            written[register] = Some((at, era));
         }
         // A method lookup reserves its two registers before it works out the key, so a key that
         // needed a register of its own lands above where the locals stop rather than at it.
@@ -486,7 +572,23 @@ fn sticky(held: &Function, pseudo: &[bool], labels: &[bool]) -> Vec<Option<usize
             }
             let _ = top;
         }
-        start = settles(*instruction) || labels.get(pc + 1).copied().unwrap_or(false);
+        // A table takes its items in the registers above itself, so a list set on one that is an
+        // item of another leaves that other one still waiting, and the statement they are both part
+        // of unfinished. Only a table with an array part is ever filled by a list.
+        match instruction.opcode() {
+            Opcode::NewTable if instruction.b() != 0 => waiting.push(usize::from(instruction.a())),
+            Opcode::SetList => {
+                while waiting
+                    .last()
+                    .is_some_and(|held| *held >= usize::from(instruction.a()))
+                {
+                    waiting.pop();
+                }
+            }
+            _ => (),
+        }
+        start = (settles(*instruction) && waiting.is_empty())
+            || labels.get(pc + 1).copied().unwrap_or(false);
         // A loop opens a scope over its three workings and the variables it counts, and closes it
         // where it ends. A generic one opens at the jump into it, which is where its body begins.
         match instruction.opcode() {
@@ -1161,11 +1263,7 @@ impl<'a> Reader<'a> {
         if let Some(next) = self.joined(tests, count, pc, body_at, false_target)? {
             return Ok(next);
         }
-        // Only where the chain is one conditional: a longer one the condition already explains is a
-        // condition, and reading it as a value would swallow the arms it decides between.
-        if count == 1
-            && let Some(next) = self.shortcut(tests, pc, hi)?
-        {
+        if let Some(next) = self.shortcut(tests, pc, hi)? {
             return Ok(next);
         }
 
@@ -1248,6 +1346,9 @@ impl<'a> Reader<'a> {
 
     /// A conditional whose two paths leave a value in one register, which is `and` or `or` standing
     /// as a value rather than deciding a statement.
+    ///
+    /// Only the first conditional of a chain is taken here; the rest of it is the value that one
+    /// falls through to, so a run of them comes back one operand at a time.
     fn shortcut(&mut self, tests: &[Test], pc: usize, hi: usize) -> Reading<Option<usize>> {
         let Some(test) = tests.first().copied() else {
             return Ok(None);
@@ -1265,37 +1366,19 @@ impl<'a> Reader<'a> {
 
         // The far side has to build a value rather than run statements, and leave it where the
         // near side left its own.
+        if !settles_into(self.code(), &self.pseudo, test.after, end, target) {
+            return Ok(None);
+        }
+        // A jump out of the far side decides something wider than this value, so what stands here
+        // is that decision rather than one operand of it.
         let mut at = test.after;
-        let mut last = None;
-        let mut reads = Vec::new();
         while at < end {
-            let held = self.at(at)?;
-            let settles = matches!(
-                held.opcode(),
-                Opcode::SetGlobal
-                    | Opcode::SetTable
-                    | Opcode::SetUpval
-                    | Opcode::Return
-                    | Opcode::TailCall
-                    | Opcode::ForPrep
-                    | Opcode::ForLoop
-                    | Opcode::TForLoop
-                    | Opcode::SetList
-            ) || (held.opcode() == Opcode::Call && held.c() == 1);
-            if settles {
+            if self.at(at)?.opcode() == Opcode::Jmp
+                && !(test.after..=end).contains(&self.target(at)?)
+            {
                 return Ok(None);
             }
-            reads.clear();
-            if let Some(top) = touches(held, &mut reads) {
-                if top < target {
-                    return Ok(None);
-                }
-                last = Some(top);
-            }
             at = self.after(at);
-        }
-        if last != Some(target) {
-            return Ok(None);
         }
 
         let mut at = pc;
@@ -1387,7 +1470,7 @@ impl<'a> Reader<'a> {
             return Ok(None);
         }
         let register = usize::from(self.at(pair)?.a());
-        if !self.settles_into(body_at, over, register)? {
+        if !settles_into(self.code(), &self.pseudo, body_at, over, register) {
             return Ok(None);
         }
 
@@ -1410,40 +1493,6 @@ impl<'a> Reader<'a> {
             Expr::Binary(Binary::And, Box::new(condition), Box::new(right)),
         )?;
         Ok(Some(pair + 2))
-    }
-
-    /// Whether `lo..hi` only works a value out, and leaves it in `register`.
-    fn settles_into(&self, lo: usize, hi: usize, register: usize) -> Reading<bool> {
-        let mut at = lo;
-        let mut last = None;
-        let mut reads = Vec::new();
-        while at < hi {
-            let held = self.at(at)?;
-            let settles = matches!(
-                held.opcode(),
-                Opcode::SetGlobal
-                    | Opcode::SetTable
-                    | Opcode::SetUpval
-                    | Opcode::Return
-                    | Opcode::TailCall
-                    | Opcode::ForPrep
-                    | Opcode::ForLoop
-                    | Opcode::TForLoop
-                    | Opcode::SetList
-            ) || (held.opcode() == Opcode::Call && held.c() == 1);
-            if settles {
-                return Ok(false);
-            }
-            reads.clear();
-            if let Some(top) = touches(held, &mut reads) {
-                if top < register {
-                    return Ok(false);
-                }
-                last = Some(top);
-            }
-            at = self.after(at);
-        }
-        Ok(last == Some(register))
     }
 
     // -- straight-line code ------------------------------------------------------------------
