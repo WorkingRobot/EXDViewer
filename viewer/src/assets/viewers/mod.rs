@@ -11,20 +11,24 @@ use super::{Bytes, Channels, MAX_TEXT_PREVIEW};
 
 pub mod atch;
 pub mod avfx;
+pub mod cmp;
 pub mod eid;
 pub mod est;
 pub mod font;
+pub mod grass;
 pub mod icons;
 pub mod imc;
 pub mod layer;
 pub mod luab;
 pub mod material;
 pub mod mdl;
+pub mod pbd;
 pub mod png;
 mod shader;
 pub mod shcd;
 pub mod shpk;
 pub mod skp;
+pub mod spm;
 pub mod stm;
 pub mod tera;
 pub mod texture;
@@ -186,6 +190,16 @@ fn table(
 
 /// Half-float colors are linear and can exceed 1.0, so they are tone-mapped rather than clamped;
 /// otherwise every bright row renders as flat white.
+/// Side of the square a color is drawn in.
+const CHIP: f32 = 10.0;
+
+/// One color, drawn beside the numbers it came from.
+fn chip(ui: &mut egui::Ui, color: Color32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(CHIP), Sense::hover());
+    ui.painter().rect_filled(rect, 2.0, color);
+    response
+}
+
 fn swatch(color: [f32; 3]) -> Color32 {
     let map = |v: f32| ((v / (1.0 + v)).clamp(0.0, 1.0) * 255.0) as u8;
     Color32::from_rgb(map(color[0]), map(color[1]), map(color[2]))
@@ -280,6 +294,16 @@ pub enum Preview {
     Environments(Box<zone::envs::Rendered>),
     /// A parsed ambient light file.
     Ambient(Box<zone::amb::Rendered>),
+    /// A parsed shader parameter map.
+    Spm(Box<spm::Rendered>),
+    /// A parsed pre-bone deformer.
+    Pbd(Box<pbd::Rendered>),
+    /// A parsed character make parameter file.
+    Cmp(Box<cmp::Rendered>),
+    /// A parsed index of a zone's grass grids.
+    GrassZone(Box<grass::Zone>),
+    /// A parsed grass grid.
+    GrassGrid(Box<grass::Grid>),
     /// Nothing to render; an empty message means the type simply has no viewer.
     Failed(String),
 }
@@ -325,6 +349,11 @@ impl Preview {
             Viewer::Obsb => zone::envs::object_behavior(path, bytes),
             Viewer::Essb => zone::envs::sound(path, bytes),
             Viewer::Amb => zone::amb::decode(path, bytes),
+            Viewer::Spm => spm::decode(path, bytes),
+            Viewer::Pbd => pbd::decode(path, bytes),
+            Viewer::Cmp => cmp::decode(path, bytes),
+            Viewer::Gzd => grass::zone(path, bytes),
+            Viewer::Ggd => grass::grid(path, bytes),
             Viewer::Raw => return Self::Failed(String::new()),
         };
         result.unwrap_or_else(|e| Self::Failed(e.to_string()))
@@ -367,6 +396,11 @@ impl Preview {
             Self::Zone(annotations) => follow = zone::instanced::ui(ui, annotations),
             Self::Environments(set) => follow = zone::envs::ui(ui, set, deps, backend),
             Self::Ambient(light) => follow = zone::amb::ui(ui, light),
+            Self::Spm(parameters) => spm::ui(ui, parameters),
+            Self::Pbd(deformers) => pbd::ui(ui, deformers),
+            Self::Cmp(parameters) => cmp::ui(ui, parameters),
+            Self::GrassZone(zone) => follow = grass::zone_ui(ui, zone),
+            Self::GrassGrid(grid) => grass::grid_ui(ui, grid),
             Self::Stm(templates) => stm::ui(ui, templates, deps, backend),
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
@@ -447,7 +481,12 @@ impl Preview {
             | Self::Layers(_)
             | Self::Zone(_)
             | Self::Environments(_)
-            | Self::Ambient(_) => true,
+            | Self::Ambient(_)
+            | Self::Spm(_)
+            | Self::Pbd(_)
+            | Self::Cmp(_)
+            | Self::GrassZone(_)
+            | Self::GrassGrid(_) => true,
             _ => false,
         }
     }
@@ -540,6 +579,26 @@ impl Preview {
         }
         if let Self::Ambient(light) = self {
             light.details_ui(ui);
+            return None;
+        }
+        if let Self::Spm(parameters) = self {
+            parameters.details_ui(ui);
+            return None;
+        }
+        if let Self::Pbd(deformers) = self {
+            deformers.details_ui(ui);
+            return None;
+        }
+        if let Self::Cmp(parameters) = self {
+            parameters.details_ui(ui);
+            return None;
+        }
+        if let Self::GrassZone(zone) = self {
+            zone.details_ui(ui);
+            return None;
+        }
+        if let Self::GrassGrid(grid) = self {
+            grid.details_ui(ui);
             return None;
         }
         let Self::Image {
@@ -656,6 +715,11 @@ pub enum Viewer {
     Obsb,
     Essb,
     Amb,
+    Spm,
+    Pbd,
+    Cmp,
+    Gzd,
+    Ggd,
     Text,
     Raw,
 }
@@ -663,7 +727,7 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 29] = [
+    pub const RENDERED: [Self; 34] = [
         Self::Texture,
         Self::Image,
         Self::Material,
@@ -692,6 +756,11 @@ impl Viewer {
         Self::Obsb,
         Self::Essb,
         Self::Amb,
+        Self::Spm,
+        Self::Pbd,
+        Self::Cmp,
+        Self::Gzd,
+        Self::Ggd,
         Self::Text,
     ];
 
@@ -725,6 +794,11 @@ impl Viewer {
             Self::Obsb => "Object behavior",
             Self::Essb => "Environment sound",
             Self::Amb => "Ambient light",
+            Self::Spm => "Shader parameters",
+            Self::Pbd => "Bone deformers",
+            Self::Cmp => "Character make",
+            Self::Gzd => "Grass zone",
+            Self::Ggd => "Grass grid",
             Self::Text => "Text",
             Self::Raw => "Bytes",
         }

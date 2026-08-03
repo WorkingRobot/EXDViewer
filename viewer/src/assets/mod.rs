@@ -1996,7 +1996,8 @@ const EXTENSIONS: &[(&str, &str, Viewer)] = &[
     ("shpk", "Shader package", Viewer::Shpk),
     ("shcd", "Shader code", Viewer::Shcd),
     ("scd", "Sound container", Viewer::Raw),
-    ("ggd", "Grass grid data", Viewer::Raw),
+    ("ggd", "Grass grid data", Viewer::Ggd),
+    ("gzd", "Grass zone data", Viewer::Gzd),
     ("pcb", "Player collision binary", Viewer::Raw),
     ("sklb", "Skeleton", Viewer::Raw),
     ("skp", "Skeleton parameters", Viewer::Skp),
@@ -2028,15 +2029,16 @@ const EXTENSIONS: &[(&str, &str, Viewer)] = &[
     ("gmp", "Gimmick parameters", Viewer::Raw),
     ("est", "Equipment skeleton template", Viewer::Est),
     ("evp", "Equipment VFX parameters", Viewer::Raw),
-    ("pbd", "Bone deformers", Viewer::Raw),
+    ("pbd", "Bone deformers", Viewer::Pbd),
     ("amb", "Ambient light", Viewer::Amb),
     ("tera", "Terrain", Viewer::Tera),
     ("hwc", "Handware cursor", Viewer::Raw),
     ("fdt", "Font data table", Viewer::Font),
     ("gfd", "Graphics font data", Viewer::Icons),
     ("stm", "Stain map", Viewer::Stm),
-    ("cmp", "Character make parameters", Viewer::Raw),
+    ("cmp", "Character make parameters", Viewer::Cmp),
     ("plt", "PAP load table", Viewer::Raw),
+    ("spm", "Shader parameter map", Viewer::Spm),
 ];
 
 /// `exd/item_0_en.exd` -> `Item`, `exd/content/foo_0_en.exd` -> `content/Foo`.

@@ -65,9 +65,9 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
                 ("Tracks", format!("{used} of {}", amb::TRACK_COUNT)),
                 ("Keyframes", rows.len().to_string()),
                 (
-                    "Unknown",
+                    "Sky visibility",
                     location
-                        .unknown()
+                        .sky_visibility()
                         .iter()
                         .map(|value| format!("{value:.3}"))
                         .collect::<Vec<_>>()
