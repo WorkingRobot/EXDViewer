@@ -58,6 +58,12 @@ const CUTOUT: f32 = 0.5;
 /// Bit 0 of a material's shader flags.
 const HIDE_BACKFACES: u32 = 1;
 
+/// Packages this viewer has nothing to draw with. One is occlusion geometry the game never shows as
+/// a surface; the other takes its color from the wearer's customization, which no file the browser
+/// can reach from a model carries. Shading either of them lights bare geometry into a white shell
+/// over the face it belongs to.
+const UNDRAWN: [&str; 2] = ["characterocclusion.shpk", "charactertattoo.shpk"];
+
 pub struct Material {
     shader: String,
     family: Family,
@@ -162,6 +168,10 @@ impl Material {
         self.family
     }
 
+    pub fn drawn(&self) -> bool {
+        !UNDRAWN.contains(&self.shader.as_str())
+    }
+
     pub fn textures(&self) -> impl Iterator<Item = &String> {
         self.textures.iter().flatten()
     }
@@ -193,6 +203,9 @@ impl Material {
     }
 
     pub fn summary(&self) -> String {
+        if !self.drawn() {
+            return format!("{}, not drawn", self.shader);
+        }
         let named = self.textures.iter().flatten().count();
         match self.rows {
             0 => format!("{}, {named} textures", self.shader),

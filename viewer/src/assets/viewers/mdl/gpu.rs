@@ -7,6 +7,7 @@
 //! graveyard the next callback drains.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use egui::TextureId;
@@ -38,29 +39,44 @@ struct Buffers {
     layout: glow::VertexArray,
     vertices: glow::Buffer,
     indices: glow::Buffer,
-    count: i32,
 }
 
 /// GL objects with nothing left to draw them, waiting for a context to delete them under. A viewer
 /// is dropped between frames, where there is no context, so its objects outlive it by one callback.
 static GRAVEYARD: OnceLock<Mutex<Vec<Dead>>> = OnceLock::new();
 
-enum Dead {
+pub enum Dead {
     Layout(glow::VertexArray),
     Buffer(glow::Buffer),
     Texture(glow::Texture),
     Program(glow::Program),
 }
 
-fn graveyard() -> &'static Mutex<Vec<Dead>> {
+pub fn graveyard() -> &'static Mutex<Vec<Dead>> {
     GRAVEYARD.get_or_init(Default::default)
+}
+
+/// Deletes what an earlier viewer left behind. Called at the top of a draw, because that is the
+/// only moment a context exists.
+pub fn bury(gl: &glow::Context) {
+    for dead in graveyard().lock().unwrap().drain(..) {
+        unsafe {
+            match dead {
+                Dead::Layout(layout) => gl.delete_vertex_array(layout),
+                Dead::Buffer(buffer) => gl.delete_buffer(buffer),
+                Dead::Texture(texture) => gl.delete_texture(texture),
+                Dead::Program(program) => gl.delete_program(program),
+            }
+        }
+    }
 }
 
 /// What one draw call needs beyond its geometry: the material it uses, and the egui textures that
 /// material resolved to.
-#[derive(Clone, Copy)]
 pub struct Surface {
     pub material: usize,
+    /// Which of the mesh's indices to draw, so a hidden part costs no triangles.
+    pub runs: Vec<Range<i32>>,
     pub family: Family,
     pub normal: Option<TextureId>,
     pub index: Option<TextureId>,
@@ -79,6 +95,7 @@ impl Default for Surface {
     fn default() -> Self {
         Self {
             material: 0,
+            runs: Vec::new(),
             family: Family::Background,
             normal: None,
             index: None,
@@ -135,6 +152,8 @@ pub struct Model {
     /// Color tables arrive with their materials, which is long after the geometry, so they queue
     /// rather than travelling with it.
     queued: Vec<(usize, Vec<f32>)>,
+    /// Meshes whose indices a shape key rewrote, waiting for a context to upload them under.
+    rewritten: Vec<(usize, Vec<u16>)>,
     tables: BTreeMap<usize, (glow::Texture, f32)>,
     /// Why the shader would not build, kept so the viewer can say so rather than draw nothing.
     failure: Option<String>,
@@ -147,6 +166,7 @@ impl Model {
             program: None,
             meshes: Vec::new(),
             queued: Vec::new(),
+            rewritten: Vec::new(),
             tables: BTreeMap::new(),
             failure: None,
         }))
@@ -161,8 +181,13 @@ impl Model {
         self.queued.push((material, values));
     }
 
+    /// Hands a mesh's indices over for the next draw to upload, replacing the ones it holds.
+    pub fn queue_indices(&mut self, mesh: usize, indices: Vec<u16>) {
+        self.rewritten.push((mesh, indices));
+    }
+
     pub fn draw(&mut self, gl: &glow::Context, painter: &egui_glow::Painter, frame: &Frame) {
-        self.drain(gl);
+        bury(gl);
         if self.failure.is_some() {
             return;
         }
@@ -171,6 +196,23 @@ impl Model {
         {
             self.failure = Some(why);
             return;
+        }
+        for (mesh, indices) in std::mem::take(&mut self.rewritten) {
+            let Some(buffers) = self.meshes.get(mesh) else {
+                continue;
+            };
+            // Through the mesh's own vertex array, since binding an element buffer rewrites
+            // whichever array is current, and egui leaves its own bound around a callback.
+            unsafe {
+                gl.bind_vertex_array(Some(buffers.layout));
+                gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(buffers.indices));
+                gl.buffer_data_u8_slice(
+                    glow::ELEMENT_ARRAY_BUFFER,
+                    bytemuck::cast_slice(&indices),
+                    glow::STATIC_DRAW,
+                );
+                gl.bind_vertex_array(None);
+            }
         }
         for (material, values) in std::mem::take(&mut self.queued) {
             let rows = values.len() as i32 / (TABLE_COLUMNS * 4);
@@ -233,6 +275,9 @@ impl Model {
             let scale = gl.get_uniform_location(program, "u_normal_scale");
 
             for (at, (buffers, surface)) in self.meshes.iter().zip(&frame.surfaces).enumerate() {
+                if surface.runs.is_empty() {
+                    continue;
+                }
                 match surface.cull {
                     true => {
                         gl.enable(glow::CULL_FACE);
@@ -269,7 +314,15 @@ impl Model {
                 gl.uniform_1_f32(scale.as_ref(), surface.normal_scale);
 
                 gl.bind_vertex_array(Some(buffers.layout));
-                gl.draw_elements(glow::TRIANGLES, buffers.count, glow::UNSIGNED_SHORT, 0);
+                for run in &surface.runs {
+                    let offset = run.start * size_of::<u16>() as i32;
+                    gl.draw_elements(
+                        glow::TRIANGLES,
+                        run.end - run.start,
+                        glow::UNSIGNED_SHORT,
+                        offset,
+                    );
+                }
             }
 
             gl.bind_vertex_array(None);
@@ -292,21 +345,6 @@ impl Model {
             self.meshes.push(upload_mesh(gl, vertices, indices)?);
         }
         Ok(())
-    }
-
-    /// Deletes what earlier viewers left behind. Runs at the top of every draw, because that is the
-    /// only moment a context exists.
-    fn drain(&self, gl: &glow::Context) {
-        for dead in graveyard().lock().unwrap().drain(..) {
-            unsafe {
-                match dead {
-                    Dead::Layout(layout) => gl.delete_vertex_array(layout),
-                    Dead::Buffer(buffer) => gl.delete_buffer(buffer),
-                    Dead::Texture(texture) => gl.delete_texture(texture),
-                    Dead::Program(program) => gl.delete_program(program),
-                }
-            }
-        }
     }
 }
 
@@ -376,7 +414,6 @@ fn upload_mesh(
             layout,
             vertices: held,
             indices: drawn,
-            count: indices.len() as i32,
         })
     }
 }

@@ -15,6 +15,7 @@ pub mod est;
 pub mod font;
 pub mod icons;
 pub mod imc;
+pub mod layer;
 pub mod luab;
 pub mod material;
 pub mod mdl;
@@ -27,6 +28,7 @@ pub mod stm;
 pub mod tera;
 pub mod texture;
 pub mod uld;
+pub mod zone;
 
 /// Space kept around whatever a grid cell holds.
 const PADDING: f32 = 6.0;
@@ -267,6 +269,14 @@ pub enum Preview {
     Tera(Box<tera::Rendered>),
     /// A parsed staining template file.
     Stm(Box<stm::Rendered>),
+    /// A parsed layer group, from either of the two files that hold one.
+    Layers(Box<layer::Rendered>),
+    /// A parsed annotation of what a zone's layers placed.
+    Zone(Box<zone::instanced::Rendered>),
+    /// A parsed environment set.
+    Environments(Box<zone::envs::Rendered>),
+    /// A parsed ambient light file.
+    Ambient(Box<zone::amb::Rendered>),
     /// Nothing to render; an empty message means the type simply has no viewer.
     Failed(String),
 }
@@ -301,6 +311,16 @@ impl Preview {
             Viewer::Skp => skp::decode(path, bytes),
             Viewer::Tera => tera::decode(path, bytes),
             Viewer::Stm => stm::decode(path, bytes),
+            Viewer::Lgb => layer::lgb::decode(path, bytes),
+            Viewer::Sgb => layer::sgb::decode(path, bytes),
+            Viewer::Lvb => layer::lvb::decode(path, bytes),
+            Viewer::Svb => zone::instanced::sky_visibility(path, bytes),
+            Viewer::Lcb => zone::instanced::clip_boxes(path, bytes),
+            Viewer::Uwb => zone::instanced::underwater(path, bytes),
+            Viewer::Envb => zone::envs::environment(path, bytes),
+            Viewer::Obsb => zone::envs::object_behavior(path, bytes),
+            Viewer::Essb => zone::envs::sound(path, bytes),
+            Viewer::Amb => zone::amb::decode(path, bytes),
             Viewer::Raw => return Self::Failed(String::new()),
         };
         result.unwrap_or_else(|e| Self::Failed(e.to_string()))
@@ -338,6 +358,10 @@ impl Preview {
             Self::Est(templates) => follow = est::ui(ui, templates),
             Self::Skp(parameters) => follow = skp::ui(ui, parameters),
             Self::Tera(terrain) => follow = tera::ui(ui, terrain),
+            Self::Layers(layers) => follow = layer::ui(ui, layers, backend),
+            Self::Zone(annotations) => follow = zone::instanced::ui(ui, annotations),
+            Self::Environments(set) => follow = zone::envs::ui(ui, set, deps, backend),
+            Self::Ambient(light) => follow = zone::amb::ui(ui, light),
             Self::Stm(templates) => stm::ui(ui, templates, deps, backend),
             Self::Failed(e) if e.is_empty() => {
                 ui.centered_and_justified(|ui| {
@@ -413,7 +437,11 @@ impl Preview {
             | Self::Eid(_)
             | Self::Est(_)
             | Self::Skp(_)
-            | Self::Tera(_) => true,
+            | Self::Tera(_)
+            | Self::Layers(_)
+            | Self::Zone(_)
+            | Self::Environments(_)
+            | Self::Ambient(_) => true,
             _ => false,
         }
     }
@@ -486,6 +514,22 @@ impl Preview {
         }
         if let Self::Tera(terrain) = self {
             terrain.details_ui(ui);
+            return None;
+        }
+        if let Self::Layers(layers) = self {
+            layers.details_ui(ui, follow, backend);
+            return None;
+        }
+        if let Self::Zone(annotations) = self {
+            annotations.details_ui(ui);
+            return None;
+        }
+        if let Self::Environments(set) = self {
+            set.details_ui(ui, follow);
+            return None;
+        }
+        if let Self::Ambient(light) = self {
+            light.details_ui(ui);
             return None;
         }
         let Self::Image {
@@ -591,6 +635,16 @@ pub enum Viewer {
     Est,
     Skp,
     Tera,
+    Lgb,
+    Sgb,
+    Lvb,
+    Svb,
+    Lcb,
+    Uwb,
+    Envb,
+    Obsb,
+    Essb,
+    Amb,
     Text,
     Raw,
 }
@@ -598,7 +652,7 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 18] = [
+    pub const RENDERED: [Self; 28] = [
         Self::Texture,
         Self::Image,
         Self::Material,
@@ -616,6 +670,16 @@ impl Viewer {
         Self::Est,
         Self::Skp,
         Self::Tera,
+        Self::Lgb,
+        Self::Sgb,
+        Self::Lvb,
+        Self::Svb,
+        Self::Lcb,
+        Self::Uwb,
+        Self::Envb,
+        Self::Obsb,
+        Self::Essb,
+        Self::Amb,
         Self::Text,
     ];
 
@@ -638,6 +702,16 @@ impl Viewer {
             Self::Est => "Skeleton template",
             Self::Skp => "Skeleton parameters",
             Self::Tera => "Terrain",
+            Self::Lgb => "Layer group",
+            Self::Sgb => "Shared group",
+            Self::Lvb => "Level",
+            Self::Svb => "Sky visibility",
+            Self::Lcb => "Light culling",
+            Self::Uwb => "Underwater",
+            Self::Envb => "Environment",
+            Self::Obsb => "Object behavior",
+            Self::Essb => "Environment sound",
+            Self::Amb => "Ambient light",
             Self::Text => "Text",
             Self::Raw => "Bytes",
         }

@@ -7,14 +7,17 @@
 //! The shading approximates the game's rather than reproducing it: a color table row is picked the
 //! way the game picks one and drives a diffuse color, a specular color and a specular exponent, the
 //! mask map scales all three, and everything is lit by three lights that follow the camera instead
-//! of by the scene's. Skinning, shape keys, submesh visibility, dyes and decals are all absent, so
-//! a character stands in bind pose with every part of it visible.
+//! of by the scene's. Skinning, dyes and decals are all absent, so a character stands in bind pose.
+//!
+//! Shape keys are applied by rewriting the indices they name, which is what the file states rather
+//! than a blend, so a shape is either on or off.
 
-mod gpu;
-mod material;
+pub(super) mod gpu;
+pub(super) mod material;
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -79,11 +82,43 @@ impl Camera {
     }
 }
 
+/// One part of a mesh, drawn with the rest of it but hideable on its own.
+struct Part {
+    range: Range<usize>,
+    shown: bool,
+    /// What the model's attribute table calls this part, which is the only name it carries. Empty
+    /// where the part claims no attribute.
+    attributes: String,
+}
+
 /// One mesh of the model, as far as the browser cares about it.
 struct Mesh {
     material: usize,
     vertices: usize,
     triangles: usize,
+    /// The runs of indices the file splits the mesh into, and whether each draws. A mesh the file
+    /// does not split holds the one run covering all of them.
+    parts: Vec<Part>,
+    /// The mesh's indices as the file lists them, kept only where the model has a shape key that
+    /// could rewrite them, since applying one is a rewrite of these rather than of what is on the
+    /// card.
+    base: Vec<u16>,
+}
+
+/// One shape key, and where it rewrites the geometry.
+struct Shape {
+    name: String,
+    /// Which of the level's meshes the shape touches, and for each the indices it replaces.
+    rewrites: Vec<(usize, Vec<(u16, u16)>)>,
+}
+
+/// Shape keys the file names as variants of one thing, which the browser offers as alternatives
+/// rather than as switches that stack. A name carrying no variant stands in a group of its own.
+struct Group {
+    /// The file's own abbreviation, left as it writes it. Empty for a shape standing alone.
+    category: String,
+    /// Positions in [`Level::shapes`], each with the variant its name ends in.
+    variants: Vec<(usize, String)>,
 }
 
 /// A texture, from the moment it is asked for to the moment it can be bound.
@@ -105,6 +140,10 @@ enum Slot {
 struct Level {
     identity: Vec<(&'static str, String)>,
     meshes: Vec<Mesh>,
+    /// Shape keys reaching this detail level, in the order the file declares them.
+    shapes: Vec<Shape>,
+    /// The same shapes, gathered by the category their names share.
+    groups: Vec<Group>,
     /// Material paths, in the order meshes index them.
     materials: Vec<String>,
     /// Meshes the file lists but whose vertices would not read, with why.
@@ -123,7 +162,12 @@ pub struct Rendered {
     path: String,
     bytes: Vec<u8>,
     lod: Cell<u8>,
+    /// Which detail levels the file draws anything at.
+    drawn: [bool; 3],
     level: RefCell<Level>,
+    /// Shape keys the user has switched on, by name: a detail level built later carries its own
+    /// shapes, and the names are what survives the switch.
+    shapes: RefCell<BTreeSet<String>>,
     slots: RefCell<Vec<Option<Slot>>>,
     textures: RefCell<BTreeMap<String, Texture>>,
     camera: Cell<Camera>,
@@ -133,13 +177,22 @@ pub struct Rendered {
 }
 
 pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
-    let level = read_level(path, bytes, 0)?;
+    let container = ModelContainer::read(Cursor::new(bytes.to_vec()))?;
+    let level = read_level(path, &container, 0)?;
     let camera = level.home;
     Ok(Preview::Model(Box::new(Rendered {
         path: path.to_owned(),
         bytes: bytes.to_vec(),
         lod: Cell::new(0),
+        drawn: std::array::from_fn(|lod| {
+            container
+                .model(detail(lod as u8))
+                .meshes()
+                .iter()
+                .any(|mesh| mesh.kinds().contains(&MeshKind::Standard))
+        }),
         slots: RefCell::new((0..level.materials.len()).map(|_| None).collect()),
+        shapes: Default::default(),
         level: RefCell::new(level),
         textures: Default::default(),
         camera: Cell::new(camera),
@@ -148,14 +201,16 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     })))
 }
 
-fn read_level(path: &str, bytes: &[u8], lod: u8) -> Result<Level> {
-    let container = ModelContainer::read(Cursor::new(bytes.to_vec()))?;
-    let level = match lod {
+pub(super) fn detail(lod: u8) -> Lod {
+    match lod {
         0 => Lod::High,
         1 => Lod::Medium,
         _ => Lod::Low,
-    };
-    let model = container.model(level);
+    }
+}
+
+fn read_level(path: &str, container: &ModelContainer, lod: u8) -> Result<Level> {
+    let model = container.model(detail(lod));
 
     let mut names: Vec<String> = Vec::new();
     let mut meshes = Vec::new();
@@ -163,6 +218,11 @@ fn read_level(path: &str, bytes: &[u8], lod: u8) -> Result<Level> {
     let mut pending = gpu::Pending::default();
     let mut low = Vec3::splat(f32::INFINITY);
     let mut high = Vec3::splat(f32::NEG_INFINITY);
+
+    let attributes = model.attribute_names().unwrap_or_default();
+    let declared = model.shapes();
+    let mut rewrites: Vec<Vec<(usize, Vec<(u16, u16)>)>> =
+        declared.iter().map(|_| Vec::new()).collect();
 
     let mut skipped: Vec<MeshKind> = Vec::new();
     for (index, mesh) in model.meshes().into_iter().enumerate() {
@@ -201,10 +261,37 @@ fn read_level(path: &str, bytes: &[u8], lod: u8) -> Result<Level> {
                 names.push(resolved);
                 names.len() - 1
             });
+        let submeshes = mesh.submeshes();
+        let parts = match submeshes.is_empty() {
+            true => vec![Part {
+                range: 0..indices.len(),
+                shown: true,
+                attributes: String::new(),
+            }],
+            false => submeshes
+                .iter()
+                .map(|part| Part {
+                    range: part.start..part.start + part.count,
+                    shown: true,
+                    attributes: named(&attributes, part.attributes),
+                })
+                .collect(),
+        };
+        for (shape, touched) in declared.iter().zip(&mut rewrites) {
+            let values = shape.rewrites(&mesh);
+            if !values.is_empty() {
+                touched.push((meshes.len(), values));
+            }
+        }
         meshes.push(Mesh {
             material,
             vertices: vertices.len(),
             triangles: indices.len() / 3,
+            parts,
+            base: match declared.is_empty() {
+                true => Vec::new(),
+                false => indices.clone(),
+            },
         });
         pending.meshes.push((vertices, indices));
     }
@@ -236,6 +323,16 @@ fn read_level(path: &str, bytes: &[u8], lod: u8) -> Result<Level> {
         };
         anyhow::bail!(why);
     }
+
+    let shapes = declared
+        .iter()
+        .zip(rewrites)
+        .filter(|(_, touched)| !touched.is_empty())
+        .map(|(shape, touched)| Shape {
+            name: shape.name().unwrap_or_default(),
+            rewrites: touched,
+        })
+        .collect::<Vec<_>>();
 
     let center = (low + high) * 0.5;
     let radius = ((high - low).length() * 0.5).max(0.01);
@@ -277,7 +374,9 @@ fn read_level(path: &str, bytes: &[u8], lod: u8) -> Result<Level> {
 
     Ok(Level {
         identity,
+        groups: group(&shapes),
         meshes,
+        shapes,
         materials: names,
         unreadable,
         home,
@@ -288,7 +387,7 @@ fn read_level(path: &str, bytes: &[u8], lod: u8) -> Result<Level> {
 
 /// Interleaves the attributes a mesh declares into the one buffer the shader reads. A mesh missing
 /// a normal, tangent, UV or color gets a default rather than being dropped.
-fn build(
+pub(super) fn build(
     attributes: &[ironworks::file::mdl::VertexAttribute],
     indices: Vec<u16>,
 ) -> Result<(Vec<Vertex>, Vec<u16>), String> {
@@ -384,6 +483,60 @@ fn uv(values: &VertexValues, at: usize) -> Option<[f32; 2]> {
         VertexValues::Vector4(held) => held.get(at).map(|value| [value[0], value[1]]),
         _ => None,
     }
+}
+
+/// Shapes gathered by category, in the order the file declares them. A name is read as
+/// `shp_<category>_<variant>`; most carry no variant, and each of those stands alone.
+fn group(shapes: &[Shape]) -> Vec<Group> {
+    let mut groups: Vec<Group> = Vec::new();
+    for (at, shape) in shapes.iter().enumerate() {
+        let (category, variant) = match shape
+            .name
+            .strip_prefix("shp_")
+            .and_then(|rest| rest.rsplit_once('_'))
+        {
+            Some((category, variant)) => (category.to_owned(), variant.to_owned()),
+            None => (String::new(), shape.name.clone()),
+        };
+        match groups
+            .iter_mut()
+            .find(|group| !group.category.is_empty() && group.category == category)
+        {
+            Some(group) => group.variants.push((at, variant)),
+            None => groups.push(Group {
+                category,
+                variants: vec![(at, variant)],
+            }),
+        }
+    }
+    groups
+}
+
+/// What the model's attribute table calls the bits a part sets. The mask is 32 bits wide however
+/// many names the table holds.
+fn named(attributes: &[String], mask: u32) -> String {
+    attributes
+        .iter()
+        .take(32)
+        .enumerate()
+        .filter(|(bit, _)| mask & (1 << bit) != 0)
+        .map(|(_, name)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The parts still showing, as the fewest runs that cover them. A file lists a mesh's parts in
+/// index order, so two neighbours that both draw are one call rather than two.
+fn shown(parts: &[Part]) -> Vec<Range<i32>> {
+    let mut runs: Vec<Range<i32>> = Vec::new();
+    for part in parts.iter().filter(|part| part.shown) {
+        let run = part.range.start as i32..part.range.end as i32;
+        match runs.last_mut() {
+            Some(last) if last.end == run.start => last.end = run.end,
+            _ => runs.push(run),
+        }
+    }
+    runs
 }
 
 /// What the debug row offers, in the order it offers it.
@@ -520,7 +673,11 @@ impl Rendered {
                     ];
                     self.resident
                         .set(self.resident.get() + size[0] * size[1] * 4);
-                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                    // Taken as premultiplied, which is the one path that copies the bytes through
+                    // untouched. These are looked up channel by channel rather than composited, and
+                    // a normal or mask map carrying anything but opacity in its alpha has its other
+                    // three channels scaled away by the unmultiplied path.
+                    let image = egui::ColorImage::from_rgba_premultiplied(
                         size,
                         decoded.image.as_flat_samples().as_slice(),
                     );
@@ -555,24 +712,40 @@ impl Rendered {
 
         let level = self.level.borrow();
         let mut camera = self.camera.get();
-        if response.dragged_by(egui::PointerButton::Primary) {
-            let delta = response.drag_delta();
-            camera.yaw -= delta.x * 0.01;
-            camera.pitch = (camera.pitch + delta.y * 0.01).clamp(-1.5, 1.5);
-        }
-        if response.dragged_by(egui::PointerButton::Secondary) {
-            let delta = response.drag_delta();
+        let pan = |camera: &mut Camera, delta: egui::Vec2| {
             let (sin_yaw, cos_yaw) = camera.yaw.sin_cos();
             let right = Vec3::new(cos_yaw, 0.0, -sin_yaw);
-            let up = Vec3::Y;
             let scale = camera.distance * 0.002;
-            camera.target += (right * -delta.x + up * delta.y) * scale;
+            camera.target += (right * -delta.x + Vec3::Y * delta.y) * scale;
+        };
+        let zoom = |camera: &mut Camera, scale: f32| {
+            camera.distance = (camera.distance * scale)
+                .clamp(level.home.distance * 0.02, level.home.distance * 20.0);
+        };
+
+        // A second finger takes the gesture over: egui carries on reporting a primary drag through
+        // one, so leaving the orbit armed would spin the model while it is being pinched.
+        let touch = ui.input(|input| input.multi_touch());
+        match touch.filter(|_| response.dragged()) {
+            Some(touch) => {
+                zoom(&mut camera, 1.0 / touch.zoom_delta);
+                pan(&mut camera, touch.translation_delta);
+            }
+            None => {
+                if response.dragged_by(egui::PointerButton::Primary) {
+                    let delta = response.drag_delta();
+                    camera.yaw -= delta.x * 0.01;
+                    camera.pitch = (camera.pitch + delta.y * 0.01).clamp(-1.5, 1.5);
+                }
+                if response.dragged_by(egui::PointerButton::Secondary) {
+                    pan(&mut camera, response.drag_delta());
+                }
+            }
         }
         if response.hovered() {
             let scroll = ui.input(|input| input.smooth_scroll_delta.y);
             if scroll != 0.0 {
-                camera.distance = (camera.distance * (1.0 - scroll * 0.002))
-                    .clamp(level.home.distance * 0.02, level.home.distance * 20.0);
+                zoom(&mut camera, 1.0 - scroll * 0.002);
             }
         }
         self.camera.set(camera);
@@ -609,14 +782,23 @@ impl Rendered {
             .meshes
             .iter()
             .map(|mesh| {
+                let runs = shown(&mesh.parts);
                 let Some(Some(Slot::Ready(material))) = slots.get(mesh.material) else {
+                    return gpu::Surface {
+                        material: mesh.material,
+                        runs,
+                        ..Default::default()
+                    };
+                };
+                if !material.drawn() {
                     return gpu::Surface {
                         material: mesh.material,
                         ..Default::default()
                     };
-                };
+                }
                 gpu::Surface {
                     material: mesh.material,
+                    runs,
                     family: material.family(),
                     normal: bind(material.texture(Role::Normal)),
                     index: bind(material.texture(Role::Index)),
@@ -651,10 +833,52 @@ impl Rendered {
         });
     }
 
+    /// Rewrites every touched mesh's indices from the file's own, so switching a shape off restores
+    /// what it replaced and two shapes over the same mesh both land.
+    fn apply(&self) {
+        let level = self.level.borrow();
+        let enabled = self.shapes.borrow();
+        let mut rewritten: BTreeMap<usize, Vec<u16>> = BTreeMap::new();
+        for shape in level
+            .shapes
+            .iter()
+            .filter(|shape| enabled.contains(&shape.name))
+        {
+            for (mesh, values) in &shape.rewrites {
+                let indices = rewritten
+                    .entry(*mesh)
+                    .or_insert_with(|| level.meshes[*mesh].base.clone());
+                for (offset, vertex) in values {
+                    if let Some(held) = indices.get_mut(usize::from(*offset)) {
+                        *held = *vertex;
+                    }
+                }
+            }
+        }
+        // A mesh a shape has just stopped touching still holds that shape's indices, so every mesh
+        // any shape reaches is uploaded rather than only the ones still rewritten.
+        let mut gpu = level.gpu.lock().unwrap();
+        for mesh in level
+            .shapes
+            .iter()
+            .flat_map(|shape| &shape.rewrites)
+            .map(|(mesh, _)| *mesh)
+            .collect::<BTreeSet<_>>()
+        {
+            let indices = rewritten
+                .remove(&mesh)
+                .unwrap_or_else(|| level.meshes[mesh].base.clone());
+            gpu.queue_indices(mesh, indices);
+        }
+    }
+
     /// Draws another detail level of the same file. The materials and textures already fetched are
     /// kept, matched to the new geometry by path, so nothing is asked for twice and nothing pops.
     fn switch(&self, lod: u8) {
-        let level = match read_level(&self.path, &self.bytes, lod) {
+        let read = ModelContainer::read(Cursor::new(self.bytes.clone()))
+            .map_err(anyhow::Error::from)
+            .and_then(|container| read_level(&self.path, &container, lod));
+        let level = match read {
             Ok(level) => level,
             Err(why) => {
                 log::error!("assets/mdl: {}: detail level {lod}: {why}", self.path);
@@ -688,23 +912,107 @@ impl Rendered {
 
         self.lod.set(lod);
         *self.level.borrow_mut() = level;
+        self.apply();
     }
 
     pub fn details_ui(&self, ui: &mut egui::Ui, follow: &mut Option<String>) {
         let mut picked = None;
+        let mut toggled = None;
+        let mut picked_shape = None;
         ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             let level = self.level.borrow();
             facts(ui, "mdl_identity", &level.identity);
-            ui.add_space(8.0);
-            section(ui, "Detail");
-            let lod = self.lod.get();
-            ui.horizontal(|ui| {
-                for (level, label) in [(0, "High"), (1, "Medium"), (2, "Low")] {
-                    if ui.selectable_label(lod == level, label).clicked() && lod != level {
-                        picked = Some(level);
+            // A file drawing at one detail level has nothing to pick between.
+            if self.drawn.iter().filter(|drawn| **drawn).count() > 1 {
+                ui.add_space(8.0);
+                section(ui, "Detail");
+                let lod = self.lod.get();
+                ui.horizontal(|ui| {
+                    for (level, label) in [(0, "High"), (1, "Medium"), (2, "Low")] {
+                        let picker = ui.add_enabled(
+                            self.drawn[usize::from(level)],
+                            egui::Button::selectable(lod == level, label),
+                        );
+                        if picker.clicked() && lod != level {
+                            picked = Some(level);
+                        }
                     }
+                });
+            }
+            if !level.shapes.is_empty() {
+                ui.add_space(8.0);
+                section(ui, "Shapes");
+                let enabled = self.shapes.borrow();
+                let on = |at: usize| enabled.contains(&level.shapes[at].name);
+                let hover = |at: usize| {
+                    let shape = &level.shapes[at];
+                    format!("{}\n{} meshes rewritten", shape.name, shape.rewrites.len())
+                };
+                // Clicking the variant already showing is what turns its category off, so a
+                // category needs no entry of its own for having nothing applied.
+                let chip = |ui: &mut egui::Ui, at: usize, label: &str| {
+                    ui.selectable_label(on(at), label)
+                        .on_hover_text(hover(at))
+                        .clicked()
+                };
+                for (index, group) in level.groups.iter().enumerate() {
+                    if group.category.is_empty() {
+                        continue;
+                    }
+                    ui.label(RichText::new(&group.category).weak());
+                    ui.horizontal_wrapped(|ui| {
+                        for (at, variant) in &group.variants {
+                            if chip(ui, *at, variant) {
+                                picked_shape = Some((index, (!on(*at)).then_some(*at)));
+                            }
+                        }
+                    });
                 }
-            });
+                // Whatever the file names without a variant, which is most of what a model
+                // deforms. Each stands on its own, so they share one row rather than taking a
+                // heading each.
+                if level.groups.iter().any(|group| group.category.is_empty()) {
+                    ui.horizontal_wrapped(|ui| {
+                        for (index, group) in level.groups.iter().enumerate() {
+                            if !group.category.is_empty() {
+                                continue;
+                            }
+                            let (at, name) = &group.variants[0];
+                            if chip(ui, *at, name) {
+                                picked_shape = Some((index, (!on(*at)).then_some(*at)));
+                            }
+                        }
+                    });
+                }
+            }
+
+            ui.add_space(8.0);
+            section(ui, "Meshes");
+            for (index, mesh) in level.meshes.iter().enumerate() {
+                ui.horizontal_wrapped(|ui| {
+                    let drawn = mesh.parts.iter().any(|part| part.shown);
+                    if ui
+                        .selectable_label(drawn, RichText::new(format!("Mesh {index}")).weak())
+                        .on_hover_text(format!(
+                            "{}\n{} triangles",
+                            crate::utils::file_name(&level.materials[mesh.material]),
+                            mesh.triangles
+                        ))
+                        .clicked()
+                    {
+                        toggled = Some((index, None));
+                    }
+                    for (part, held) in mesh.parts.iter().enumerate() {
+                        let label = match held.attributes.is_empty() {
+                            true => part.to_string(),
+                            false => held.attributes.clone(),
+                        };
+                        if ui.selectable_label(held.shown, label).clicked() {
+                            toggled = Some((index, Some(part)));
+                        }
+                    }
+                });
+            }
             ui.add_space(8.0);
             section(ui, "Materials");
             let slots = self.slots.borrow();
@@ -726,6 +1034,32 @@ impl Rendered {
                 ui.add_space(4.0);
             }
         });
+        if let Some((mesh, part)) = toggled {
+            let mut level = self.level.borrow_mut();
+            let parts = &mut level.meshes[mesh].parts;
+            match part {
+                Some(part) => parts[part].shown = !parts[part].shown,
+                None => {
+                    let hide = parts.iter().any(|part| part.shown);
+                    for part in parts.iter_mut() {
+                        part.shown = !hide;
+                    }
+                }
+            }
+        }
+        if let Some((group, variant)) = picked_shape {
+            {
+                let level = self.level.borrow();
+                let mut enabled = self.shapes.borrow_mut();
+                for (at, _) in &level.groups[group].variants {
+                    enabled.remove(&level.shapes[*at].name);
+                }
+                if let Some(at) = variant {
+                    enabled.insert(level.shapes[at].name.clone());
+                }
+            }
+            self.apply();
+        }
         if let Some(lod) = picked {
             self.switch(lod);
         }

@@ -135,11 +135,20 @@ void main() {
 		}
 	}
 
+	vec4 painted = vec4(1.0);
+	if (has(HAVE_DIFFUSE)) {
+		painted = texture(u_diffuse_map, v_uv);
+	}
+
 	float opacity = v_color.a;
 	// Only a character normal map carries opacity here; a background one has a third normal channel
-	// in the same place.
+	// in the same place and keeps its cutout in the diffuse map's alpha instead, which is what clips
+	// a leaf out of the quad it is painted on.
 	if (has(HAVE_NORMAL) && u_family != BACKGROUND) {
 		opacity *= sampled.b;
+	}
+	if (has(HAVE_DIFFUSE) && u_family == BACKGROUND) {
+		opacity *= painted.a;
 	}
 	if (opacity < u_alpha_threshold) {
 		discard;
@@ -200,7 +209,7 @@ void main() {
 	}
 
 	if (has(HAVE_DIFFUSE)) {
-		vec3 diffuse = to_linear(texture(u_diffuse_map, v_uv).rgb);
+		vec3 diffuse = to_linear(painted.rgb);
 		// A compatibility row states a diffuse color of its own beside the map's, and taking both
 		// lights the surface at the product of two albedos.
 		albedo = u_family == LEGACY ? diffuse : albedo * diffuse;
@@ -233,8 +242,12 @@ void main() {
 	colors[1] = FILL_COLOR;
 	colors[2] = RIM_COLOR;
 	for (int i = 0; i < 3; ++i) {
-		diffuse_light += colors[i] * max(dot(normal, u_lights[i]), 0.0);
-		specular_light += colors[i] * pow(max(dot(mirror, u_lights[i]), 0.0), shininess);
+		// Gated on the same incidence as the diffuse, so a light behind the surface leaves no
+		// highlight on the front of it.
+		float incidence = max(dot(normal, u_lights[i]), 0.0);
+		diffuse_light += colors[i] * incidence;
+		specular_light +=
+			colors[i] * incidence * pow(max(dot(mirror, u_lights[i]), 0.0), shininess);
 	}
 
 	// A hemisphere fill, so a surface facing away from every light still reads as a surface.
