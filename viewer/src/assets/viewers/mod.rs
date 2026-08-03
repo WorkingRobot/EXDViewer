@@ -392,13 +392,13 @@ impl Preview {
             Self::Est(templates) => follow = est::ui(ui, templates),
             Self::Skp(parameters) => follow = skp::ui(ui, parameters),
             Self::Tera(terrain) => follow = tera::ui(ui, terrain),
-            Self::Layers(layers) => follow = layer::ui(ui, layers, backend),
+            Self::Layers(layers) => follow = layer::ui(ui, layers, deps, backend),
             Self::Zone(annotations) => follow = zone::instanced::ui(ui, annotations),
             Self::Environments(set) => follow = zone::envs::ui(ui, set, deps, backend),
             Self::Ambient(light) => follow = zone::amb::ui(ui, light),
             Self::Spm(parameters) => spm::ui(ui, parameters),
             Self::Pbd(deformers) => pbd::ui(ui, deformers),
-            Self::Cmp(parameters) => cmp::ui(ui, parameters),
+            Self::Cmp(parameters) => cmp::ui(ui, parameters, deps, backend),
             Self::GrassZone(zone) => follow = grass::zone_ui(ui, zone),
             Self::GrassGrid(grid) => grass::grid_ui(ui, grid),
             Self::Stm(templates) => stm::ui(ui, templates, deps, backend),
@@ -590,7 +590,7 @@ impl Preview {
             return None;
         }
         if let Self::Cmp(parameters) = self {
-            parameters.details_ui(ui);
+            parameters.details_ui(ui, deps, backend);
             return None;
         }
         if let Self::GrassZone(zone) = self {

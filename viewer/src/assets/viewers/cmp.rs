@@ -12,6 +12,11 @@ use egui::{Color32, RichText, ScrollArea};
 use ironworks::file::{File, cmp};
 
 use super::{Preview, chip, facts, heading, line, section, table};
+use crate::assets::deps::Deps;
+use crate::backend::Backend;
+
+/// The sheet the colour blocks are ordered by, one row per clan from 1.
+const TRIBE: &str = "Tribe";
 
 /// The clans the color blocks run through, two blocks each for a male and a female character.
 const CLANS: [&str; 16] = [
@@ -43,6 +48,13 @@ const SCALES: [(&str, usize); 7] = [
     ("Bust max", 26),
 ];
 
+/// One of the file's color blocks: the clan and gender it covers, where it covers one rather than
+/// being one of the two the whole game shares, and the palettes inside it.
+struct Block {
+    clan: Option<(usize, &'static str)>,
+    palettes: Vec<Palette>,
+}
+
 /// One run of colors the file offers under a name.
 struct Palette {
     name: &'static str,
@@ -51,7 +63,7 @@ struct Palette {
 
 /// The range one clan's proportions can be adjusted over.
 struct Scale {
-    clan: &'static str,
+    clan: usize,
     male_height: [f32; 2],
     male_tail: [f32; 2],
     female_height: [f32; 2],
@@ -61,11 +73,18 @@ struct Scale {
 
 pub struct Rendered {
     identity: Vec<(&'static str, String)>,
-    /// The blocks a picker chooses between, each holding its own palettes.
-    blocks: Vec<(String, Vec<Palette>)>,
+    /// The blocks a picker chooses between.
+    blocks: Vec<Block>,
     scales: Vec<Scale>,
     /// Which block is on show, kept per file the way the staining viewer keeps its templates.
     picked: egui::Id,
+}
+
+/// What the sheet calls a clan, falling back to the fixed order until it arrives.
+fn named(ui: &egui::Ui, deps: &mut Deps, backend: &Backend, clan: usize) -> String {
+    deps.text(ui.ctx(), backend, TRIBE, clan as u32 + 1)
+        .unwrap_or(CLANS[clan])
+        .to_owned()
 }
 
 fn color(color: cmp::Color) -> Color32 {
@@ -101,14 +120,19 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     let file = cmp::CharacterMakeParameters::read(Cursor::new(bytes.to_vec()))?;
 
     let mut blocks = vec![
-        ("Colors".to_owned(), palettes(file.colors())),
-        ("Interface".to_owned(), palettes(file.interface_colors())),
+        Block {
+            clan: None,
+            palettes: palettes(file.colors()),
+        },
+        Block {
+            clan: None,
+            palettes: palettes(file.interface_colors()),
+        },
     ];
     for (index, clan) in file.races().iter().enumerate() {
-        let (name, gender) = (CLANS[index / 2], ["male", "female"][index % 2]);
-        blocks.push((
-            format!("{name} {gender}"),
-            vec![
+        blocks.push(Block {
+            clan: Some((index / 2, ["male", "female"][index % 2])),
+            palettes: vec![
                 Palette {
                     name: "Skin",
                     colors: clan.skin().iter().copied().map(color).collect(),
@@ -134,7 +158,7 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
                     colors: clan.hair_interface().iter().copied().map(color).collect(),
                 },
             ],
-        ));
+        });
     }
 
     // A race's group holds ten slots and fills only the two its clans use.
@@ -142,8 +166,8 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
         .scales()
         .iter()
         .flat_map(|group| &group[..2])
-        .zip(CLANS)
-        .map(|(scale, clan)| Scale {
+        .enumerate()
+        .map(|(clan, scale)| Scale {
             clan,
             male_height: [scale.male_min_height(), scale.male_max_height()],
             male_tail: [scale.male_min_tail(), scale.male_max_tail()],
@@ -160,7 +184,7 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
             "Colors",
             blocks
                 .iter()
-                .flat_map(|(_, palettes)| palettes)
+                .flat_map(|block| &block.palettes)
                 .map(|palette| palette.colors.len())
                 .sum::<usize>()
                 .to_string(),
@@ -177,14 +201,18 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<Preview> {
     })))
 }
 
-pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
+pub fn ui(ui: &mut egui::Ui, file: &Rendered, deps: &mut Deps, backend: &Backend) {
     section(ui, "Colors");
     let mut picked = ui
         .data(|data| data.get_temp::<usize>(file.picked))
         .unwrap_or(0)
         .min(file.blocks.len().saturating_sub(1));
     ui.horizontal_wrapped(|ui| {
-        for (index, (name, _)) in file.blocks.iter().enumerate() {
+        for (index, block) in file.blocks.iter().enumerate() {
+            let name = match &block.clan {
+                Some((clan, gender)) => format!("{} {gender}", named(ui, deps, backend, *clan)),
+                None => ["Colors", "Interface"][index].to_owned(),
+            };
             if ui.selectable_label(index == picked, name).clicked() {
                 picked = index;
             }
@@ -195,7 +223,7 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
     ui.add_space(8.0);
     ui.separator();
     ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-        for palette in file.blocks[picked].1.iter() {
+        for palette in &file.blocks[picked].palettes {
             heading(ui, palette.name);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
@@ -208,7 +236,12 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered) {
 }
 
 impl Rendered {
-    pub fn details_ui(&self, ui: &mut egui::Ui) {
+    pub fn details_ui(&self, ui: &mut egui::Ui, deps: &mut Deps, backend: &Backend) {
+        let clans: Vec<String> = self
+            .scales
+            .iter()
+            .map(|scale| named(ui, deps, backend, scale.clan))
+            .collect();
         ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             heading(ui, "Proportions");
             table(ui, &SCALES, self.scales.len(), |ui, index| {
@@ -222,7 +255,7 @@ impl Rendered {
                         .join(" ")
                 };
                 let cells = [
-                    scale.clan.to_owned(),
+                    clans[index].clone(),
                     range(scale.male_height),
                     range(scale.male_tail),
                     range(scale.female_height),

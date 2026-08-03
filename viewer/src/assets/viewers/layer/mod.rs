@@ -12,6 +12,7 @@ use ironworks::file::layer::{Colour, Instance, InstanceData, LayerGroup, Scene, 
 use ironworks::file::{lgb::LayerGroupFile, lvb::LevelFile, sgb::SharedGroupFile};
 
 use super::{facts, link, section};
+use crate::assets::deps::Deps;
 use crate::backend::Backend;
 
 pub mod lgb;
@@ -20,6 +21,12 @@ pub mod scene;
 pub mod sgb;
 
 /// Space each level of the tree is set in by.
+/// The sheet a scene filter names a territory of.
+const TERRITORY: &str = "TerritoryType";
+
+/// The sheet it names a duty of, where the territory is entered through one.
+const DUTY: &str = "ContentFinderCondition";
+
 const INDENT: f32 = 12.0;
 
 /// Room the expander takes, kept on rows without one so their labels still line up.
@@ -125,6 +132,8 @@ pub struct Rendered {
     identity: Vec<(&'static str, String)>,
     /// The files the scene names, each of which the browser can open.
     files: Vec<(&'static str, String)>,
+    /// The territories the scene is used from, and the duty each is entered through.
+    filters: Vec<(u16, u16)>,
     source: Source,
     rows: Vec<At>,
     /// Instance kinds and how many of each.
@@ -661,6 +670,16 @@ fn rendered(path: &str, mut identity: Vec<(&'static str, String)>, source: Sourc
         path: path.to_owned(),
         identity,
         files: source.scene().map(files).unwrap_or_default(),
+        filters: source
+            .scene()
+            .map(|scene| {
+                scene
+                    .filters()
+                    .iter()
+                    .map(|filter| (filter.territory_type(), filter.content_finder_condition()))
+                    .collect()
+            })
+            .unwrap_or_default(),
         source,
         rows,
         kinds,
@@ -670,7 +689,12 @@ fn rendered(path: &str, mut identity: Vec<(&'static str, String)>, source: Sourc
     }
 }
 
-pub fn ui(ui: &mut egui::Ui, file: &Rendered, backend: &Backend) -> Option<String> {
+pub fn ui(
+    ui: &mut egui::Ui,
+    file: &Rendered,
+    deps: &mut Deps,
+    backend: &Backend,
+) -> Option<String> {
     ui.horizontal(|ui| {
         for (placed, label) in [(false, "Tree"), (true, "Scene")] {
             if ui
@@ -703,6 +727,34 @@ pub fn ui(ui: &mut egui::Ui, file: &Rendered, backend: &Backend) -> Option<Strin
                     ui.label(RichText::new(*label).weak());
                     if link(ui, crate::utils::file_name(path), path) {
                         follow = Some(path.clone());
+                    }
+                    ui.allocate_space(vec2(ui.available_width(), 0.0));
+                    ui.end_row();
+                }
+            });
+        ui.add_space(8.0);
+        ui.separator();
+    }
+
+    if !file.filters.is_empty() {
+        section(ui, "Used by");
+        egui::Grid::new("layer_filters")
+            .num_columns(3)
+            .striped(true)
+            .show(ui, |ui| {
+                for &(territory, duty) in &file.filters {
+                    ui.label(RichText::new(format!("Territory {territory}")).weak());
+                    let named = deps.text(ui.ctx(), backend, TERRITORY, u32::from(territory));
+                    ui.label(RichText::new(named.unwrap_or_default()).monospace());
+                    if duty > 0 {
+                        let named = deps.text(ui.ctx(), backend, DUTY, u32::from(duty));
+                        ui.label(
+                            RichText::new(named.map_or_else(
+                                || format!("duty {duty}"),
+                                |name| format!("{name} ({duty})"),
+                            ))
+                            .monospace(),
+                        );
                     }
                     ui.allocate_space(vec2(ui.available_width(), 0.0));
                     ui.end_row();
