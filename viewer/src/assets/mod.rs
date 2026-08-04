@@ -1944,24 +1944,6 @@ impl AssetBrowser {
             self.preview = Some(preview);
         }
     }
-
-    fn sheet_shortcut(&mut self, ui: &mut egui::Ui, backend: &Backend, path: &str) {
-        let sheet = sheet_name(backend.excel().get_entries(), path);
-        ui.vertical_centered(|ui| match sheet {
-            Some(sheet) => {
-                ui.label("Excel sheet data.");
-                ui.add_space(8.0);
-                if ui.button(format!("Open “{sheet}” in Sheets")).clicked() {
-                    self.goto = Some(format!("/sheet/{sheet}"));
-                }
-            }
-            None => {
-                ui.label("Excel sheet data.");
-                ui.add_space(8.0);
-                ui.label(RichText::new("Couldn't work out which sheet this belongs to.").weak());
-            }
-        });
-    }
 }
 
 /// Whether a file is reachable from the Sheets tab, which is the only thing its extension decides

@@ -51,10 +51,10 @@ const TEXTURE_SIZE: u16 = 256;
 const TEXTURE_BUDGET: usize = 128 << 20;
 
 /// Requests of each kind in flight at once.
-const FILES: usize = 4;
+const FILES: usize = 12;
 const MODELS: usize = 6;
-const MATERIALS: usize = 6;
-const TEXTURES: usize = 6;
+const MATERIALS: usize = 16;
+const TEXTURES: usize = 16;
 
 /// Files parsed and models decoded in one frame. Both happen on the thread that draws, so they are
 /// spread rather than done as they arrive.
@@ -69,15 +69,15 @@ const STEP: f32 = 8.0;
 const DETAIL: [f32; 2] = [0.04, 0.012];
 
 /// What the load distance may be set to, and where it starts.
-const NEAREST: f32 = 40.0;
-const FURTHEST: f32 = 4000.0;
-const LOADED: f32 = 400.0;
+const NEAREST: f32 = 400.0;
+const FURTHEST: f32 = 16000.0;
+const LOADED: f32 = 4000.0;
 
 /// The share of the load distance spent fading into the background.
 const FADE: f32 = 0.25;
 
 /// How far the eye travels a second, before the user's multiplier.
-const SPEED: f32 = 40.0;
+const SPEED: f32 = 100.0;
 
 /// Where the key light stands.
 const KEY: Vec3 = Vec3::new(-0.45, 0.82, 0.36);
