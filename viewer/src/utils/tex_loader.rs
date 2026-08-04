@@ -56,8 +56,8 @@ pub fn decode(texture: tex::Texture, path: &str) -> Result<DynamicImage> {
     decode_mip(&texture, 0, path)
 }
 
-/// Decode one mipmap level. A volume texture comes back with its slices stacked vertically; picking
-/// one is a matter of which band the caller draws, not of decoding again.
+/// Decode one mipmap level. A volume, cube or array texture comes back with its slices tiled into a
+/// grid; picking one is a matter of which cell the caller draws, not of decoding again.
 pub fn decode_mip(texture: &tex::Texture, level: u8, path: &str) -> Result<DynamicImage> {
     if matches!(
         texture.kind(),
@@ -115,7 +115,43 @@ pub fn decode_mip(texture: &tex::Texture, level: u8, path: &str) -> Result<Dynam
         }
     };
 
-    Ok(buffer)
+    Ok(retile(buffer, slice_height, texture.layers(level)))
+}
+
+/// A layer count's grid layout, roughly square. Shared between decoding (to build the grid) and
+/// drawing (to find a slice's cell), so the two never disagree on where a slice landed.
+pub fn grid_layout(layers: u16) -> (u16, u16) {
+    let columns = (f64::from(layers).sqrt().ceil() as u16).max(1);
+    (columns, layers.div_ceil(columns).max(1))
+}
+
+/// Layers decode as a tall single-column stack (see [`read_texture_bc`]), which can reach a height
+/// well past the GPU's max texture side before any single layer would -- 64 layers of a 512-tall
+/// array reach 32768px. Repacking into a grid instead bounds both sides by roughly the layer
+/// count's square root.
+fn retile(image: DynamicImage, slice_height: u16, layers: u16) -> DynamicImage {
+    if layers <= 1 {
+        return image;
+    }
+    let (columns, rows) = grid_layout(layers);
+    let width = image.width();
+    let slice_height = u32::from(slice_height);
+    let mut grid = DynamicImage::new(
+        width * u32::from(columns),
+        slice_height * u32::from(rows),
+        image.color(),
+    );
+    for layer in 0..layers {
+        let slice = image.crop_imm(0, u32::from(layer) * slice_height, width, slice_height);
+        let (column, row) = (layer % columns, layer / columns);
+        image::imageops::replace(
+            &mut grid,
+            &slice,
+            i64::from(u32::from(column) * width),
+            i64::from(u32::from(row) * slice_height),
+        );
+    }
+    grid
 }
 
 fn read_gray8(width: u16, height: u16, data: &[u8]) -> Result<DynamicImage> {
@@ -274,7 +310,8 @@ fn read_bgra8(width: u16, height: u16, data: &[u8]) -> Result<DynamicImage> {
 
 /// The game stores a level's cube faces, volume slices and array elements one after another, where
 /// image_dds expects each layer's whole mip chain before the next layer's. So a level is decoded on
-/// its own, a slice at a time, and the slices are stacked into the tall image the caller draws.
+/// its own, a slice at a time, and the slices are stacked into a tall image here; `decode_mip`
+/// retiles that stack into a grid before handing it back.
 ///
 /// Slices are decoded apart rather than as one tall image because each is compressed independently:
 /// down the mip chain a slice shrinks past the 4x4 block grid and is padded back up to it, so a 2x2
