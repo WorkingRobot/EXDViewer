@@ -431,7 +431,7 @@ impl Preview {
             Self::Ambient(light) => follow = zone::amb::ui(ui, light),
             Self::Spm(parameters) => spm::ui(ui, parameters),
             Self::Pbd(deformers) => pbd::ui(ui, deformers),
-            Self::Pcb(collision) => follow = pcb::ui(ui, collision),
+            Self::Pcb(collision) => follow = pcb::ui(ui, collision, backend),
             Self::Cmp(parameters) => cmp::ui(ui, parameters, deps, backend),
             Self::GrassZone(zone) => follow = grass::zone_ui(ui, zone, deps, backend),
             Self::GrassGrid(grid) => grass::grid_ui(ui, grid),
@@ -458,16 +458,22 @@ impl Preview {
                 depth,
                 ..
             } => {
-                // The whole volume is resident, so changing slice is only a different uv rect.
-                let depth = f32::from((*depth).max(1));
-                let top = f32::from(slice) / depth;
+                // The whole volume is resident as a grid of slices, so changing slice is only a
+                // different uv rect into the cell it landed in.
+                let (columns, rows) = crate::utils::tex_loader::grid_layout((*depth).max(1));
+                let (column, row) = (slice % columns, slice / columns);
+                let (columns, rows) = (f32::from(columns), f32::from(rows));
+                let (left, top) = (f32::from(column) / columns, f32::from(row) / rows);
                 let uv = egui::Rect::from_min_max(
-                    egui::pos2(0.0, top),
-                    egui::pos2(1.0, top + 1.0 / depth),
+                    egui::pos2(left, top),
+                    egui::pos2(left + 1.0 / columns, top + 1.0 / rows),
                 );
                 // `uv` only changes what is sampled; the widget still sizes itself from the whole
                 // texture unless the source size is stated as one slice.
-                let slice_size = egui::vec2(size[0] as f32, (size[1] as f32 / depth).max(1.0));
+                let slice_size = egui::vec2(
+                    (size[0] as f32 / columns).max(1.0),
+                    (size[1] as f32 / rows).max(1.0),
+                );
                 ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                     let align = if slice_size.x < ui.available_width() {
                         Align::Center
