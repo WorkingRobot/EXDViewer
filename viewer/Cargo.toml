@@ -63,6 +63,7 @@ ironworks = { version = "0.4.1", features = [
     "amb",
     "spm",
     "pbd",
+    "pcb",
     "cmp",
     "gzd",
     "ggd",

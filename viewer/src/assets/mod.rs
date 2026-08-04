@@ -1998,7 +1998,7 @@ const EXTENSIONS: &[(&str, &str, Viewer)] = &[
     ("scd", "Sound container", Viewer::Raw),
     ("ggd", "Grass grid data", Viewer::Ggd),
     ("gzd", "Grass zone data", Viewer::Gzd),
-    ("pcb", "Player collision binary", Viewer::Raw),
+    ("pcb", "Player collision binary", Viewer::Pcb),
     ("sklb", "Skeleton", Viewer::Raw),
     ("skp", "Skeleton parameters", Viewer::Skp),
     ("pap", "Animation", Viewer::Raw),

@@ -24,6 +24,7 @@ pub mod luab;
 pub mod material;
 pub mod mdl;
 pub mod pbd;
+pub mod pcb;
 pub mod placed;
 pub mod png;
 mod shader;
@@ -327,6 +328,8 @@ pub enum Preview {
     Spm(Box<spm::Rendered>),
     /// A parsed pre-bone deformer.
     Pbd(Box<pbd::Rendered>),
+    /// A parsed collision file.
+    Pcb(Box<pcb::Rendered>),
     /// A parsed character make parameter file.
     Cmp(Box<cmp::Rendered>),
     /// A parsed index of a zone's grass grids.
@@ -380,6 +383,7 @@ impl Preview {
             Viewer::Amb => zone::amb::decode(path, bytes),
             Viewer::Spm => spm::decode(path, bytes),
             Viewer::Pbd => pbd::decode(path, bytes),
+            Viewer::Pcb => pcb::decode(path, bytes),
             Viewer::Cmp => cmp::decode(path, bytes),
             Viewer::Gzd => grass::zone(path, bytes),
             Viewer::Ggd => grass::grid(path, bytes),
@@ -427,6 +431,7 @@ impl Preview {
             Self::Ambient(light) => follow = zone::amb::ui(ui, light),
             Self::Spm(parameters) => spm::ui(ui, parameters),
             Self::Pbd(deformers) => pbd::ui(ui, deformers),
+            Self::Pcb(collision) => follow = pcb::ui(ui, collision),
             Self::Cmp(parameters) => cmp::ui(ui, parameters, deps, backend),
             Self::GrassZone(zone) => follow = grass::zone_ui(ui, zone, deps, backend),
             Self::GrassGrid(grid) => grass::grid_ui(ui, grid),
@@ -513,6 +518,7 @@ impl Preview {
             | Self::Ambient(_)
             | Self::Spm(_)
             | Self::Pbd(_)
+            | Self::Pcb(_)
             | Self::Cmp(_)
             | Self::GrassZone(_)
             | Self::GrassGrid(_) => true,
@@ -616,6 +622,10 @@ impl Preview {
         }
         if let Self::Pbd(deformers) = self {
             deformers.details_ui(ui);
+            return None;
+        }
+        if let Self::Pcb(collision) = self {
+            collision.details_ui(ui);
             return None;
         }
         if let Self::Cmp(parameters) = self {
@@ -746,6 +756,7 @@ pub enum Viewer {
     Amb,
     Spm,
     Pbd,
+    Pcb,
     Cmp,
     Gzd,
     Ggd,
@@ -756,7 +767,7 @@ pub enum Viewer {
 impl Viewer {
     /// Everything except `Raw`, which the dropdown offers separately. Fixed order, so a given
     /// viewer sits in the same place whatever file is selected.
-    pub const RENDERED: [Self; 34] = [
+    pub const RENDERED: [Self; 35] = [
         Self::Texture,
         Self::Image,
         Self::Material,
@@ -787,6 +798,7 @@ impl Viewer {
         Self::Amb,
         Self::Spm,
         Self::Pbd,
+        Self::Pcb,
         Self::Cmp,
         Self::Gzd,
         Self::Ggd,
@@ -825,6 +837,7 @@ impl Viewer {
             Self::Amb => "Ambient light",
             Self::Spm => "Shader parameters",
             Self::Pbd => "Bone deformers",
+            Self::Pcb => "Collision",
             Self::Cmp => "Character make",
             Self::Gzd => "Grass zone",
             Self::Ggd => "Grass grid",
